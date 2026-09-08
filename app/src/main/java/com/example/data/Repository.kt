@@ -1,5 +1,6 @@
 package com.example.data
 
+import com.example.data.api.NetworkClient
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -8,9 +9,11 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import android.util.Log
 
 class Repository {
-    private val scope = CoroutineScope(Dispatchers.Default)
+    private val scope = CoroutineScope(Dispatchers.IO)
+    private val api = NetworkClient.apiService
 
     private val _projects = MutableStateFlow<List<Project>>(emptyList())
     val projects: StateFlow<List<Project>> = _projects.asStateFlow()
@@ -28,7 +31,7 @@ class Repository {
     val jobs: StateFlow<List<GenerationJob>> = _jobs.asStateFlow()
 
     init {
-        // Pre-populate some mock data
+        // Pre-populate some mock data in case network fails
         val defaultProject = Project(name = "My AI Series", description = "Arabic comedy series")
         _projects.update { it + defaultProject }
 
@@ -43,44 +46,71 @@ class Repository {
         _scenes.update { it + s1 + s2 }
     }
 
-    fun addProject(name: String, description: String) {
-        val p = Project(name = name, description = description)
-        _projects.update { it + p }
+    suspend fun addProject(name: String, description: String) {
+        try {
+            val response = api.createProject(ProjectCreateRequest(name, description))
+            _projects.update { it + response }
+        } catch (e: Exception) {
+            Log.e("Repository", "Network failed, using local fallback", e)
+            val p = Project(name = name, description = description)
+            _projects.update { it + p }
+        }
     }
 
-    fun addSeries(projectId: String, title: String) {
-        val s = Series(projectId = projectId, title = title)
-        _series.update { it + s }
+    suspend fun addSeries(projectId: String, title: String) {
+        try {
+            val response = api.createSeries(SeriesCreateRequest(projectId = projectId, title = title))
+            _series.update { it + response }
+        } catch (e: Exception) {
+            Log.e("Repository", "Network failed, using local fallback", e)
+            val s = Series(projectId = projectId, title = title)
+            _series.update { it + s }
+        }
     }
 
-    fun addEpisode(seriesId: String, number: Int, title: String) {
-        val e = Episode(seriesId = seriesId, number = number, title = title)
-        _episodes.update { it + e }
+    suspend fun addEpisode(seriesId: String, number: Int, title: String) {
+        try {
+            val response = api.createEpisode(EpisodeCreateRequest(seriesId = seriesId, number = number, title = title))
+            _episodes.update { it + response }
+        } catch (e: Exception) {
+            Log.e("Repository", "Network failed, using local fallback", e)
+            val eLocal = Episode(seriesId = seriesId, number = number, title = title)
+            _episodes.update { it + eLocal }
+        }
     }
 
-    fun generateScene(sceneId: String) {
+    suspend fun generateScene(sceneId: String) {
         val scene = _scenes.value.find { it.id == sceneId } ?: return
         
-        // Update scene status
         _scenes.update { scenes ->
             scenes.map { if (it.id == sceneId) it.copy(status = "VIDEO_PENDING") else it }
         }
 
-        val job = GenerationJob(
-            jobType = "SCENE_GENERATION",
-            targetType = "SCENE",
-            targetId = sceneId,
-            provider = "mock"
-        )
-        _jobs.update { it + job }
+        try {
+            val response = api.generateScene(sceneId)
+            _jobs.update { it + response }
+            // In a real app we would poll the job status here or use WebSockets
+            simulateJobProgress(response, sceneId)
+        } catch (e: Exception) {
+            Log.e("Repository", "Network failed, using local fallback", e)
+            val job = GenerationJob(
+                jobType = "SCENE_GENERATION",
+                targetType = "SCENE",
+                targetId = sceneId,
+                provider = "mock"
+            )
+            _jobs.update { it + job }
+            simulateJobProgress(job, sceneId)
+        }
+    }
 
-        // Mock job execution
+    private fun simulateJobProgress(job: GenerationJob, sceneId: String) {
         scope.launch {
             _jobs.update { jobs ->
                 jobs.map { if (it.id == job.id) it.copy(status = JobStatus.RUNNING, progress = 5) else it }
             }
             for (progress in listOf(20, 40, 60, 80, 100)) {
-                delay(800) // Simulate processing time
+                delay(800)
                 _jobs.update { jobs ->
                     jobs.map { if (it.id == job.id) it.copy(progress = progress) else it }
                 }
