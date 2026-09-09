@@ -1,0 +1,101 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Callable
+
+from ..domain.job_events import JobEvent
+from ..domain.jobs import GenerationJob, JobOutput, JobStatus
+from ..domain.repositories import JobRepository
+from ..workers.registry import WorkerRegistry
+from .job_state import transition
+from .queue import JobLease, JobQueue, Worker, WorkerContext
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionResult:
+    job: GenerationJob
+    status: JobStatus
+    retried: bool = False
+
+
+class JobExecutor:
+    """Runs a leased GenerationJob and durably records its lifecycle."""
+
+    def __init__(self, jobs: JobRepository, queue: JobQueue, workers: WorkerRegistry, events: Callable[[JobEvent], None] | None = None) -> None:
+        self.jobs = jobs
+        self.queue = queue
+        self.workers = workers
+        self.emit = events or (lambda _event: None)
+
+    def execute_claimed(self, job: GenerationJob, lease: JobLease, *, worker_id: str | None = None) -> ExecutionResult:
+        worker_id = worker_id or lease.worker_id
+        worker: Worker = self.workers.get(worker_id)
+        if not worker.health_check():
+            return self._fail(job, lease, "WORKER_UNHEALTHY", "Worker health check failed", retryable=True)
+
+        if job.status is not JobStatus.RUNNING:
+            raise ValueError(f"Job must be RUNNING before execution: {job.status}")
+
+        self._event(job, "JOB_STARTED", {"workerId": worker_id, "attempt": job.attempt})
+        job.progress = 0.05
+        self.jobs.update(job)
+        self._event(job, "JOB_PROGRESS", {"stage": "worker_execution"})
+
+        try:
+            result = worker.execute(
+                job,
+                WorkerContext(worker_id=worker_id, lease_id=lease.lease_id, metadata={"attempt": job.attempt}),
+            )
+        except Exception as exc:  # worker boundary converts unexpected failures into controlled job failures
+            return self._fail(job, lease, "WORKER_EXCEPTION", str(exc), retryable=True)
+
+        if result.success:
+            if not result.asset_ids:
+                return self._fail(job, lease, "MISSING_OUTPUT_ASSET", "Successful worker execution returned no assets", retryable=False)
+            job.output = JobOutput(
+                asset_ids=list(result.asset_ids),
+                metrics=dict(result.metrics),
+                provider_run_id=result.provider_run_id,
+            )
+            job.error_code = None
+            job.error_message = None
+            transition(job, JobStatus.COMPLETED)
+            self.jobs.update(job)
+            self.queue.acknowledge(lease, JobStatus.COMPLETED)
+            self._event(job, "JOB_COMPLETED", {"assetIds": result.asset_ids, "providerRunId": result.provider_run_id})
+            return ExecutionResult(job, JobStatus.COMPLETED)
+
+        return self._fail(job, lease, result.error_code or "WORKER_FAILED", result.error_message or "Worker execution failed", result.retryable)
+
+    def cancel_claimed(self, job: GenerationJob, lease: JobLease, worker_id: str | None = None) -> ExecutionResult:
+        worker = self.workers.get(worker_id or lease.worker_id)
+        worker.cancel(job.id)
+        transition(job, JobStatus.CANCELLED)
+        job.error_code = "CANCELLED"
+        job.error_message = "Cancellation requested"
+        self.jobs.update(job)
+        self.queue.acknowledge(lease, JobStatus.CANCELLED)
+        self._event(job, "JOB_CANCELLED", {})
+        return ExecutionResult(job, JobStatus.CANCELLED)
+
+    def _fail(self, job: GenerationJob, lease: JobLease, code: str, message: str, retryable: bool) -> ExecutionResult:
+        job.error_code = code
+        job.error_message = message
+        can_retry = retryable and job.attempt < job.max_attempts
+        if can_retry:
+            transition(job, JobStatus.RETRYING)
+            self.jobs.update(job)
+            self.queue.acknowledge(lease, JobStatus.RETRYING)
+            transition(job, JobStatus.QUEUED)
+            self.jobs.update(job)
+            self._event(job, "JOB_RETRY_SCHEDULED", {"errorCode": code, "attempt": job.attempt, "maxAttempts": job.max_attempts})
+            return ExecutionResult(job, JobStatus.QUEUED, retried=True)
+
+        transition(job, JobStatus.FAILED)
+        self.jobs.update(job)
+        self.queue.acknowledge(lease, JobStatus.FAILED)
+        self._event(job, "JOB_FAILED", {"errorCode": code, "retryable": retryable, "attempt": job.attempt})
+        return ExecutionResult(job, JobStatus.FAILED)
+
+    def _event(self, job: GenerationJob, event_type: str, payload: dict[str, object]) -> None:
+        self.emit(JobEvent.create(job.id, job.project_id, event_type, job.status.value, job.progress, payload))
