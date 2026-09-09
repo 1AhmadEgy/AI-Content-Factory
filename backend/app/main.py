@@ -1,4 +1,16 @@
+from __future__ import annotations
+
+import os
+
 from fastapi import FastAPI
+
+from .api.jobs import build_router
+from .infrastructure.sqlite import SQLiteJobRepository, SQLiteRepositories
+
+
+DATABASE_PATH = os.getenv("AICF_DATABASE_PATH", "./data/factory.db")
+repositories = SQLiteRepositories(DATABASE_PATH)
+job_repository = SQLiteJobRepository(repositories.store)
 
 app = FastAPI(
     title="AI Content Factory API",
@@ -7,6 +19,7 @@ app = FastAPI(
     redoc_url="/api/v1/redoc",
     openapi_url="/api/v1/openapi.json",
 )
+app.include_router(build_router(job_repository))
 
 
 @app.get("/api/v1/health", tags=["system"])
@@ -16,5 +29,8 @@ def health() -> dict[str, str]:
 
 @app.get("/api/v1/readiness", tags=["system"])
 def readiness() -> dict[str, str]:
-    # Persistence/queue checks will be added before this endpoint is used for production traffic.
-    return {"status": "ready", "service": "ai-content-factory-backend"}
+    try:
+        repositories.store.connection.execute("SELECT 1").fetchone()
+        return {"status": "ready", "service": "ai-content-factory-backend"}
+    except Exception:
+        return {"status": "not_ready", "service": "ai-content-factory-backend"}
