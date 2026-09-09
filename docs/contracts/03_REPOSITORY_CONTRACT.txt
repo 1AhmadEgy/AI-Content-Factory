@@ -1,0 +1,45 @@
+AI CONTENT FACTORY — REPOSITORY CONTRACT
+
+PURPOSE
+Repositories own durable data access. They hide Room/PostgreSQL/HTTP details from domain and application layers.
+
+RULES
+1. Repository interfaces live in domain/application-facing packages.
+2. Implementations live in data/infrastructure.
+3. UI never calls DAOs directly.
+4. Domain never depends on Room entities, Retrofit, SQL, or provider SDKs.
+5. Reads return current persisted truth.
+6. Writes are transactional when multiple records must change together.
+7. Missing entities use stable NOT_FOUND errors.
+8. Updates must protect against lost concurrent writes where required.
+9. Deletes must define cascade/reference behavior explicitly.
+10. Repository operations must be idempotent when their contract says so.
+
+CANONICAL EXAMPLE
+interface ProjectRepository {
+    fun observeProjects(): Flow<List<Project>>
+    suspend fun getProject(id: String): Result<Project>
+    suspend fun createProject(project: Project): Result<Project>
+    suspend fun updateProject(project: Project): Result<Project>
+    suspend fun deleteProject(id: String): Result<Unit>
+}
+
+PERSISTENCE
+Room is the Android local source of truth. Backend PostgreSQL is the server source of truth. Sync logic must not bypass repository contracts.
+
+TRANSACTIONS
+Operations affecting dependent records must use transactions. Partial writes must be recoverable and auditable.
+
+ERRORS
+Map storage exceptions to AppError. Never expose SQL/driver exceptions to domain consumers.
+
+TESTING
+Test CRUD, not-found, constraints, transactions, concurrency, mapping, offline behavior, and idempotency.
+
+ACCEPTANCE
+[ ] No UI→DAO dependency
+[ ] No domain→Room dependency
+[ ] Persistent implementation exists
+[ ] Errors normalized
+[ ] Transactions tested
+[ ] Concurrency policy defined
