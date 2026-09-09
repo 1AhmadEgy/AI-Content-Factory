@@ -10,10 +10,6 @@ class WorkerDescriptor:
     worker: Worker
     capabilities: frozenset[str] = field(default_factory=frozenset)
 
-    @property
-    def worker_id(self) -> str:
-        return self.worker.worker_type
-
 
 class WorkerRegistry:
     """Capability-based registry over the canonical orchestrator Worker contract."""
@@ -21,11 +17,16 @@ class WorkerRegistry:
     def __init__(self) -> None:
         self._workers: dict[str, WorkerDescriptor] = {}
 
-    def register(self, worker: Worker, capabilities: set[str] | frozenset[str] | None = None) -> None:
-        worker_id = worker.worker_type
-        if worker_id in self._workers:
-            raise ValueError(f"Worker already registered: {worker_id}")
-        self._workers[worker_id] = WorkerDescriptor(worker, frozenset(capabilities or set()))
+    def register(
+        self,
+        worker: Worker,
+        capabilities: set[str] | frozenset[str] | None = None,
+        worker_id: str | None = None,
+    ) -> None:
+        key = worker_id or worker.worker_type
+        if key in self._workers:
+            raise ValueError(f"Worker already registered: {key}")
+        self._workers[key] = WorkerDescriptor(worker, frozenset(capabilities or set()))
 
     def get(self, worker_id: str) -> Worker:
         return self._workers[worker_id].worker
