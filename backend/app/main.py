@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from .api.jobs import build_router as build_job_router
 from .api.projects import build_router as build_project_router
+from .api.v1.pipeline import router as pipeline_router
 from .infrastructure.sqlite import SQLiteJobRepository, SQLiteProjectRepository, SQLiteRepositories
 
 
@@ -23,6 +24,7 @@ app = FastAPI(
 )
 app.include_router(build_project_router(project_repository))
 app.include_router(build_job_router(job_repository))
+app.include_router(pipeline_router)
 
 
 @app.get("/api/v1/health", tags=["system"])
