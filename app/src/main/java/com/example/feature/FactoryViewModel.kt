@@ -1,14 +1,11 @@
-package com.example.ui.viewmodels
+package com.example.feature
+
+import com.example.core.model.*
+import com.example.data.repository.*
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.launch
-import com.example.data.Graph
-import com.example.data.Project
-import com.example.data.Series
-import com.example.data.Episode
-import com.example.data.Scene
-import com.example.data.GenerationJob
 import kotlinx.coroutines.flow.StateFlow
 
 class FactoryViewModel : ViewModel() {

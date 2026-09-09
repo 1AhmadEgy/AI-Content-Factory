@@ -1,4 +1,4 @@
-package com.example.ui.theme
+package com.example.core.theme
 
 import android.app.Activity
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -37,6 +37,7 @@ fun AppTheme(
 
     MaterialTheme(
         colorScheme = colorScheme,
+        typography = Typography,
         content = content
     )
 }

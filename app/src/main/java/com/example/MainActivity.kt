@@ -18,11 +18,11 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.example.ui.screens.*
-import com.example.ui.theme.AppTheme
-import com.example.ui.theme.DarkBlue
-import com.example.ui.theme.PrimaryCyan
-import com.example.ui.viewmodels.FactoryViewModel
+import com.example.feature.*
+import com.example.core.theme.*
+import com.example.core.theme.*
+import com.example.core.theme.*
+import com.example.feature.*
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {

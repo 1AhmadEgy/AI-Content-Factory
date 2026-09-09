@@ -1,4 +1,6 @@
-package com.example.data.api
+package com.example.data.remote
+
+import com.example.core.model.*
 
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory

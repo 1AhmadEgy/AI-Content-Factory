@@ -1,4 +1,7 @@
-package com.example.ui.screens
+package com.example.feature
+
+import com.example.core.model.*
+import com.example.core.theme.*
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -19,9 +22,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.*
-import com.example.ui.viewmodels.FactoryViewModel
-import com.example.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -337,9 +337,9 @@ fun QueueScreen(viewModel: FactoryViewModel) {
                     Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         when (job.status) {
                             JobStatus.COMPLETED -> Icon(Icons.Filled.CheckCircle, "Done", tint = SuccessGreen, modifier = Modifier.size(32.dp))
-                            JobStatus.RUNNING -> Icon(Icons.Filled.Autorenew, "Running", tint = PrimaryCyan, modifier = Modifier.size(32.dp))
-                            JobStatus.QUEUED -> Icon(Icons.Filled.Autorenew, "Queued", tint = TextMuted, modifier = Modifier.size(32.dp))
-                            JobStatus.FAILED -> Icon(Icons.Filled.Autorenew, "Failed", tint = WarningOrange, modifier = Modifier.size(32.dp))
+                            JobStatus.RUNNING, JobStatus.RETRYING -> Icon(Icons.Filled.Autorenew, "Running", tint = PrimaryCyan, modifier = Modifier.size(32.dp))
+                            JobStatus.QUEUED, JobStatus.CREATED, JobStatus.PAUSED -> Icon(Icons.Filled.Autorenew, "Queued/Paused", tint = TextMuted, modifier = Modifier.size(32.dp))
+                            JobStatus.FAILED, JobStatus.CANCELLED -> Icon(Icons.Filled.Autorenew, "Failed/Cancelled", tint = WarningOrange, modifier = Modifier.size(32.dp))
                         }
                         Spacer(modifier = Modifier.width(16.dp))
                         Column(modifier = Modifier.weight(1f)) {

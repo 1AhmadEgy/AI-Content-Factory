@@ -1,6 +1,7 @@
-package com.example.data.api
+package com.example.data.remote
 
-import com.example.data.*
+import com.example.core.model.*
+
 import retrofit2.http.*
 
 interface FactoryApiService {
