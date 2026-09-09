@@ -8,12 +8,14 @@ from .api.jobs import build_router as build_job_router
 from .api.projects import build_router as build_project_router
 from .api.v1.pipeline import router as pipeline_router
 from .infrastructure.sqlite import SQLiteJobRepository, SQLiteProjectRepository, SQLiteRepositories
+from .orchestrator.runtime import OrchestratorRuntime
 
 
 DATABASE_PATH = os.getenv("AICF_DATABASE_PATH", "./data/factory.db")
 repositories = SQLiteRepositories(DATABASE_PATH)
 job_repository = SQLiteJobRepository(repositories.store)
 project_repository = SQLiteProjectRepository(repositories.store)
+orchestrator_runtime = OrchestratorRuntime(repositories)
 
 app = FastAPI(
     title="AI Content Factory API",
@@ -23,7 +25,7 @@ app = FastAPI(
     openapi_url="/api/v1/openapi.json",
 )
 app.include_router(build_project_router(project_repository))
-app.include_router(build_job_router(job_repository))
+app.include_router(build_job_router(job_repository, runtime=orchestrator_runtime, events=orchestrator_runtime.events))
 app.include_router(pipeline_router)
 
 
