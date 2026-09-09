@@ -1,0 +1,35 @@
+AI CONTENT FACTORY — DOMAIN CONTRACT
+
+PURPOSE
+Define dependency-safe domain boundaries for Projects, Series, Episodes, Characters, Worlds, Locations, Scenes, Shots, Dialogues, Assets and Jobs.
+
+RULES
+1. Domain models contain business meaning, not persistence concerns.
+2. Domain code is deterministic where possible.
+3. No Android UI classes.
+4. No Room annotations/entities.
+5. No Retrofit/HTTP types.
+6. No provider SDKs.
+7. No filesystem-specific paths unless represented by an explicit domain value.
+8. IDs are stable and opaque.
+9. Timestamps use a consistent instant representation.
+10. State transitions are validated by domain rules.
+
+CORE RELATIONSHIPS
+Project→Series→Episode→Scene→Shot.
+Series→Characters/World/Locations.
+Scene→Dialogue/Shot.
+Shot→GenerationJob/Asset.
+
+INVARIANTS
+Scene order is unique within an episode. Shot order is unique within a scene. A job target must exist. Cross-project references are forbidden. Terminal jobs cannot return to active states without an explicit new execution.
+
+VERSIONING
+Domain schema changes require migration review and compatibility tests.
+
+ACCEPTANCE
+[ ] Domain has no infrastructure dependencies
+[ ] Invariants are encoded/tested
+[ ] IDs and timestamps are consistent
+[ ] State transitions are explicit
+[ ] Cross-project isolation is enforced
