@@ -14,12 +14,18 @@ def test_model_router_honors_explicit_model():
 
 def test_scheduler_does_not_tick_until_started():
     class Queue:
-        def claim_next(self):
+        def claim_next(self, worker_id):
             raise AssertionError("must not claim while stopped")
 
-    class Executor:
-        def execute(self, job):
-            raise AssertionError("must not execute while stopped")
+        def release_expired(self):
+            raise AssertionError("must not recover while stopped")
 
-    scheduler = JobScheduler(Queue(), Executor())
+    class Workers:
+        def get(self, worker_id):
+            raise AssertionError("must not initialize while stopped")
+
+    class Executor:
+        workers = Workers()
+
+    scheduler = JobScheduler(Queue(), Executor(), "worker-1")
     assert scheduler.tick().claimed == 0
