@@ -1,0 +1,20 @@
+AI CONTENT FACTORY — DEPENDENCY CONTRACT
+
+Jobs may form a directed acyclic dependency graph.
+
+CANONICAL PIPELINE
+Story → Characters → Scenes → Shots → Video → LipSync → QC → Render.
+
+RULES
+- Dependencies must be persisted.
+- Cycles are invalid and must be rejected.
+- A required dependency must be COMPLETED before dependent execution.
+- FAILED/CANCELLED/BLOCKED dependencies block dependent jobs unless an explicit fallback policy resolves them.
+- Dependency checks are transactional with dispatch decisions where required.
+- Original dependency failure remains traceable.
+
+DEPENDENCY STATES
+WAITING, READY, BLOCKED, SATISFIED, FAILED.
+
+ACCEPTANCE
+[ ] DAG validation [ ] Cycle detection [ ] Persistent edges [ ] Failure propagation [ ] Fallback handling [ ] Dependency tests

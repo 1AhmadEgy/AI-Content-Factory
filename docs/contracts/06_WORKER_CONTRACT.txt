@@ -1,0 +1,29 @@
+AI CONTENT FACTORY — WORKER CONTRACT
+
+GenerationWorker is the execution boundary between Job Engine and a concrete workload implementation.
+
+CANONICAL INTERFACE
+interface GenerationWorker {
+ suspend fun initialize(): Result<Unit>
+ suspend fun healthCheck(): Result<HealthStatus>
+ suspend fun execute(job: GenerationJob): Result<WorkerOutput>
+ suspend fun cancel(jobId: String): Result<Unit>
+ suspend fun shutdown()
+}
+
+RULES
+- Worker owns execution, not global scheduling policy.
+- Worker never updates UI directly.
+- Worker never decides whether a job is globally retryable.
+- execute must be safe to repeat when the job contract permits it.
+- Output must identify generated artifacts and metadata.
+- Provider/model/runtime must be recorded.
+- Health must be checked before expensive execution when practical.
+- Cancellation must be cooperative and observable.
+- Worker crashes must become WORKER_PROCESS_CRASHED or a more precise stable error.
+
+OUTPUT
+WorkerOutput must identify persisted or persistable output, provenance, metadata and warnings/errors required by the Job Engine.
+
+ACCEPTANCE
+[ ] Interface centralized [ ] No UI dependency [ ] Health check [ ] Cancellation [ ] Output verification [ ] Failure normalization [ ] Worker tests

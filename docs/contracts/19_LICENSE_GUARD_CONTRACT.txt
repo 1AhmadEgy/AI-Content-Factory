@@ -1,0 +1,21 @@
+AI CONTENT FACTORY — LICENSE GUARD CONTRACT
+
+License Guard prevents production execution when model/provider/software/voice licensing is unacceptable.
+
+STATES
+VERIFIED, UNKNOWN, RESTRICTED, BLOCKED.
+
+INTERFACE
+LicenseDecision evaluate(componentId, useCase, distributionMode)
+
+RULES
+- UNKNOWN != VERIFIED.
+- BLOCKED components cannot execute in production.
+- RESTRICTED components require explicit policy satisfaction.
+- Evidence/source and verification date are recorded.
+- License decisions are auditable.
+- Job execution records the license state used at selection time.
+- Changes in license terms may invalidate future execution without rewriting historical provenance.
+
+ACCEPTANCE
+[ ] Central guard [ ] Evidence metadata [ ] Production policy [ ] Blocking [ ] Audit trail [ ] Router integration [ ] Tests

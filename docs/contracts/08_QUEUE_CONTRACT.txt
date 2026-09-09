@@ -1,0 +1,23 @@
+AI CONTENT FACTORY — QUEUE CONTRACT
+
+Queue owns durable waiting work and delivery semantics.
+
+CONTRACT
+enqueue(jobId, priority, availableAt)
+dequeue(workerCapabilities)
+ack(jobId, executionId)
+nack(jobId, executionId, reason)
+requeue(jobId, availableAt)
+inspect(jobId)
+
+RULES
+- Queue messages identify durable jobs; payloads must not become the source of truth.
+- Delivery is at-least-once unless a stronger guarantee is explicitly implemented.
+- Consumers must be idempotent.
+- Priority and fairness are deterministic.
+- Acknowledgement occurs only after the execution state is safely persisted.
+- Poison jobs are routed to dead-letter handling.
+- Queue outage must not corrupt job state.
+
+ACCEPTANCE
+[ ] Durable semantics [ ] At-least-once documented [ ] Idempotent consumer [ ] Priority [ ] Requeue [ ] Dead-letter path [ ] Queue tests

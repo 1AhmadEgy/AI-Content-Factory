@@ -1,0 +1,29 @@
+AI CONTENT FACTORY — JOB CONTRACT
+
+GenerationJob is the durable contract for every asynchronous operation.
+
+FIELDS
+id, parentJobId, type, targetType, targetId, priority, status, progress, attempt, maxAttempts, provider, model, input, output, errorCode, errorMessage, createdAt, startedAt, completedAt, updatedAt.
+
+STATES
+CREATED, QUEUED, RUNNING, PAUSED, RETRYING, COMPLETED, FAILED, CANCELLED, BLOCKED.
+
+RULES
+- jobId remains stable across retries; each retry creates a new executionId.
+- COMPLETED requires persisted, verified output and required QC.
+- FAILED requires a stable error code.
+- CANCELLED is distinct from FAILED.
+- BLOCKED means execution cannot proceed until a condition changes.
+- Progress is monotonic within an execution unless explicitly reset.
+- Terminal states cannot silently return to RUNNING.
+- Provider/model are recorded for every AI execution.
+- Inputs/outputs are traceable and auditable.
+
+IDEMPOTENCY
+Duplicate creation with the same idempotency key resolves to one logical job.
+
+AUDIT
+Every transition records timestamp, actor/system component, reason and execution identity.
+
+ACCEPTANCE
+[ ] Durable model [ ] Explicit state machine [ ] Retry identity preserved [ ] Completion verification [ ] Audit trail [ ] Contract tests

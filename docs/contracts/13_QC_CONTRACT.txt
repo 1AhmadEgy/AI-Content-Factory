@@ -1,0 +1,23 @@
+AI CONTENT FACTORY — QC CONTRACT
+
+QC validates generated/imported outputs before downstream acceptance.
+
+INTERFACE
+interface QcValidator { suspend fun validate(asset: Asset): QcResult }
+
+TECHNICAL VALIDATORS
+FileExistsValidator, MimeValidator, VideoValidator, AudioValidator, ResolutionValidator, DurationValidator.
+
+FUTURE SEMANTIC VALIDATORS
+FaceConsistencyValidator, CharacterConsistencyValidator, LipSyncValidator, PromptComplianceValidator, VisualQualityValidator.
+
+RULES
+- Required QC must run before terminal completion.
+- Each validator returns pass/fail plus stable code and diagnostics.
+- Validators must not mutate source assets.
+- Failed QC is auditable.
+- Critical QC failure blocks dependent production steps.
+- Validator versions are recorded for reproducibility.
+
+ACCEPTANCE
+[ ] Validator interface [ ] Technical checks [ ] Stable QC codes [ ] Versioned validators [ ] Persistence [ ] Pipeline integration [ ] Tests

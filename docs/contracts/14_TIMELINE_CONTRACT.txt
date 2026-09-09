@@ -1,0 +1,23 @@
+AI CONTENT FACTORY — TIMELINE CONTRACT
+
+Timeline is the canonical edit representation before rendering.
+
+TRACK TYPES
+VIDEO, AUDIO, DIALOGUE, MUSIC, SFX, SUBTITLE, TRANSITION, EFFECT.
+
+CLIP FIELDS
+assetId, startMs, durationMs, sourceInMs, sourceOutMs, trackId, volume, transform, metadata.
+
+RULES
+- Timeline time uses one canonical unit: milliseconds in domain APIs.
+- Clips on a track have deterministic ordering.
+- Invalid overlaps are rejected unless the track explicitly supports overlap.
+- Referenced assets must exist and be accessible.
+- Timeline must be reproducible from persisted data.
+- Renderers consume timeline contracts; they do not invent business semantics.
+
+TARGET SOCIAL OUTPUT
+1080x1920, 9:16, MP4, H.264 video, AAC audio unless a project profile overrides it.
+
+ACCEPTANCE
+[ ] Deterministic timeline [ ] Asset references validated [ ] Track model [ ] Duration validation [ ] Renderer-independent [ ] Timeline tests

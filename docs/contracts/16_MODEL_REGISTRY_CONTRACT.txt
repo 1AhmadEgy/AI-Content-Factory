@@ -1,0 +1,22 @@
+AI CONTENT FACTORY — MODEL REGISTRY CONTRACT
+
+Model Registry is the canonical inventory of executable AI models.
+
+FIELDS
+name, version, category, provider, runtime, hardwareRequirements, capabilities, license, quality, speed, cost, enabled.
+
+RULES
+- Model identity includes provider and version.
+- Capability declarations must be explicit.
+- Hardware requirements are machine-readable.
+- License state is separate from availability.
+- UNKNOWN license is not VERIFIED.
+- Disabled models cannot be selected for production execution.
+- Registry changes are auditable.
+- Model versions must be reproducible for historical jobs.
+
+CATEGORIES
+LLM, IMAGE, VIDEO, TTS, LIPSYNC, MUSIC, SFX, EMBEDDING, OTHER.
+
+ACCEPTANCE
+[ ] Registry persistence [ ] Version identity [ ] Capabilities [ ] Hardware requirements [ ] License status [ ] Enable/disable [ ] Tests

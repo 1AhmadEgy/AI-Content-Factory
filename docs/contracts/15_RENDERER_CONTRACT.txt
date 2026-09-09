@@ -1,0 +1,24 @@
+AI CONTENT FACTORY — RENDERER CONTRACT
+
+Renderer converts a validated Timeline into a final media artifact.
+
+INTERFACE
+interface Renderer {
+ suspend fun validate(request: RenderRequest): Result<RenderPlan>
+ suspend fun render(plan: RenderPlan): Result<RenderOutput>
+ suspend fun cancel(renderId: String): Result<Unit>
+}
+
+IMPLEMENTATIONS
+MockRenderer for tests; FfmpegRenderer for production local rendering. Additional renderers are adapters.
+
+RULES
+- Renderer does not modify domain source assets.
+- Renderer records renderer/version and FFmpeg version where applicable.
+- Render completion requires a verifiable output Asset.
+- Output must pass required technical QC.
+- Temporary files must be isolated and cleaned safely.
+- Render jobs are cancellable and auditable.
+
+ACCEPTANCE
+[ ] Stable interface [ ] Mock renderer [ ] FFmpeg adapter [ ] Output verification [ ] Technical QC [ ] Cancellation [ ] Renderer tests

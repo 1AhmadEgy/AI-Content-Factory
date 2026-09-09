@@ -1,0 +1,29 @@
+AI CONTENT FACTORY — PROVIDER CONTRACT
+
+A Provider adapts an external/local AI capability to a stable application contract.
+
+REQUIRED CAPABILITIES
+- providerId
+- modelId/version
+- capabilities
+- health
+- generate/execute operation
+- cancellation where supported
+- normalized errors
+- license metadata
+
+RULES
+1. Provider SDK types never cross into Domain.
+2. Provider credentials remain infrastructure secrets.
+3. Provider success does not equal application completion.
+4. Provider output must be verified and persisted by the owning pipeline.
+5. Provider-specific failures map to AppError.
+6. Provider availability is observable.
+7. Provider must declare supported tasks and constraints.
+8. Provider adapters must be replaceable without UI changes.
+
+LOCAL AND CLOUD
+Local providers are first-class. Cloud providers are optional adapters and must never become mandatory dependencies for Local-first operation.
+
+ACCEPTANCE
+[ ] Stable interface [ ] Capability declaration [ ] Health [ ] Error mapping [ ] License metadata [ ] No UI binding [ ] Provider contract tests

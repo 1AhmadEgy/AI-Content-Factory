@@ -1,0 +1,22 @@
+AI CONTENT FACTORY — ASSET CONTRACT
+
+Asset is the durable representation of generated/imported media.
+
+FIELDS
+assetId, type, path/storageRef, mime, size, duration, width, height, sha256, provider, model, promptRef, sourceAssetIds, createdAt.
+
+RULES
+- Every production output becomes an Asset before completion.
+- Asset identity is immutable.
+- sha256 verifies content identity where applicable.
+- Provenance records source assets, provider, model and generation context.
+- Storage paths are internal references, not unrestricted API paths.
+- Assets are scoped to a project.
+- Deletion must respect references and retention policy.
+- Temporary outputs must be marked temporary and cleaned safely.
+
+TYPES
+IMAGE, VIDEO, AUDIO, VOICE, MUSIC, SFX, SUBTITLE, THUMBNAIL, DOCUMENT, OTHER.
+
+ACCEPTANCE
+[ ] Durable metadata [ ] Hash [ ] Provenance [ ] Project isolation [ ] Secure storage access [ ] Cleanup policy [ ] Asset tests

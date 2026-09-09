@@ -1,0 +1,28 @@
+AI CONTENT FACTORY — MODEL ROUTER CONTRACT
+
+Model Router selects an executable model/provider for a task.
+
+INPUTS
+task, quality target, hardware state, provider availability, license policy, speed, cost, capability constraints.
+
+DECISION ORDER
+1. Required capability
+2. License eligibility
+3. Hardware compatibility
+4. Availability/health
+5. Quality threshold
+6. Speed/cost policy
+7. Project preference
+
+RULES
+- Router never selects BLOCKED license states.
+- Router must explain its decision with a machine-readable reason.
+- Router must not silently downgrade below a required quality threshold.
+- Fallback choices are explicit.
+- Routing decisions are recorded with model/provider/version.
+
+OUTPUT
+RouteDecision(selectedProvider, selectedModel, reason, alternatives, constraints, timestamp).
+
+ACCEPTANCE
+[ ] Deterministic policy [ ] License gate [ ] Hardware gate [ ] Health gate [ ] Quality policy [ ] Explainable decision [ ] Tests

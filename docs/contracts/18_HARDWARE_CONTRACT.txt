@@ -1,0 +1,24 @@
+AI CONTENT FACTORY — HARDWARE CONTRACT
+
+Hardware Detector describes the execution environment for routing and resource decisions.
+
+FIELDS
+CPU model/cores, RAM total/available, GPU model, VRAM total/available, CUDA/ROCm support, OS, runtime versions, disk total/available.
+
+INTERFACE
+HardwareSnapshot detect()
+HealthStatus validateRuntime(requirements)
+
+RULES
+- Detection must be read-only.
+- Values are timestamped.
+- Unknown capability is not assumed available.
+- VRAM/RAM checks are explicit.
+- Driver/runtime incompatibility is reported separately.
+- Hardware data is operational metadata and must not contain secrets.
+
+USE
+Model Router, Scheduler, Resource Manager and diagnostics consume the snapshot.
+
+ACCEPTANCE
+[ ] CPU/RAM [ ] GPU/VRAM [ ] accelerator detection [ ] disk [ ] runtime compatibility [ ] timestamp [ ] tests

@@ -1,0 +1,23 @@
+AI CONTENT FACTORY — RETRY CONTRACT
+
+Retry is a Job Engine policy, not a Worker decision.
+
+RULES
+- jobId is preserved.
+- attempt increments for every execution attempt.
+- each attempt receives a unique executionId.
+- maxAttempts is explicit.
+- only retryable/conditionally-retryable failures may retry.
+- exponential backoff with jitter is recommended.
+- cancellation overrides retry.
+- license and invalid-input failures normally do not retry.
+- hardware failures may retry only after routing/resource changes.
+- every retry is audited and emits JOB_RETRYING.
+
+RECOMMENDED FORMULA
+backoff = min(maxBackoff, baseBackoff * 2^(attempt-1)) + jitter
+
+A retry must not duplicate durable output or corrupt asset provenance.
+
+ACCEPTANCE
+[ ] attempt tracked [ ] executionId unique [ ] maxAttempts enforced [ ] backoff [ ] cancellation override [ ] audit [ ] tests

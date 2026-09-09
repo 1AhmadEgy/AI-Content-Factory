@@ -1,0 +1,22 @@
+AI CONTENT FACTORY — SCHEDULER CONTRACT
+
+Scheduler decides when a queued job may execute.
+
+INPUTS
+job status, priority, availableAt, dependencies, worker capability, provider health, hardware state, resource limits, license state, concurrency limits.
+
+RULES
+1. Scheduler never bypasses dependencies.
+2. Scheduler never executes BLOCKED jobs.
+3. Scheduler respects cancellation.
+4. Scheduler checks resource and capability constraints.
+5. Scheduler must avoid duplicate active executions for non-concurrent jobs.
+6. Scheduling decisions are observable.
+7. Fairness must prevent low-priority starvation.
+8. Retry backoff is enforced by availableAt.
+
+OUTPUT
+A scheduling decision is either dispatch, defer, block, cancel, or fail with a stable reason.
+
+ACCEPTANCE
+[ ] Dependency-aware [ ] Resource-aware [ ] Priority-aware [ ] Cancellation-aware [ ] Observable [ ] Scheduler tests

@@ -1,0 +1,24 @@
+AI CONTENT FACTORY — OBSERVABILITY CONTRACT
+
+Observability provides traceability without exposing project secrets.
+
+CANONICAL IDENTIFIERS
+executionId, jobId, workerId, provider, model, traceId, requestId, projectId.
+
+EVENTS/METRICS
+job duration, queue wait, attempts, provider latency, model latency, success/failure, QC result, render duration, GPU/VRAM usage where available.
+
+RULES
+- Every asynchronous execution has an executionId.
+- Logs correlate jobId and traceId.
+- Metrics use bounded labels; do not use raw prompts as labels.
+- Secrets never enter logs.
+- Generated media is referenced by assetId, not embedded in logs.
+- Operational events are structured.
+- Audit records are retained according to policy.
+
+TRACING
+Request → Job → Execution → Worker → Provider/Model → Asset/QC/Render.
+
+ACCEPTANCE
+[ ] Structured logs [ ] Correlation IDs [ ] Metrics [ ] Trace linkage [ ] Secret redaction [ ] Asset references [ ] Observability tests
