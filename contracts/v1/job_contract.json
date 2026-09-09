@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-content-factory.dev/contracts/v1/job_contract.json",
+  "title": "AI Content Factory Generation Job",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "projectId", "type", "targetType", "status", "progress", "attempt", "maxAttempts", "input", "createdAt", "updatedAt"],
+  "properties": {
+    "schemaVersion": {"const": "1.0"},
+    "id": {"type": "string", "minLength": 1},
+    "parentJobId": {"type": ["string", "null"]},
+    "projectId": {"type": "string", "minLength": 1},
+    "type": {"type": "string", "enum": ["STORY", "CHARACTER", "WORLD", "SCENE", "SHOT", "IMAGE", "VIDEO", "TTS", "LIPSYNC", "MUSIC", "SFX", "UPSCALE", "INTERPOLATION", "QC", "TIMELINE", "RENDER", "SUBTITLE", "THUMBNAIL", "METADATA", "PUBLISH"]},
+    "targetType": {"type": "string", "minLength": 1},
+    "targetId": {"type": ["string", "null"]},
+    "priority": {"type": "integer", "minimum": 0, "maximum": 1000, "default": 100},
+    "status": {"type": "string", "enum": ["PENDING", "QUEUED", "RUNNING", "PAUSED", "RETRYING", "COMPLETED", "FAILED", "CANCELLED"]},
+    "progress": {"type": "number", "minimum": 0, "maximum": 1},
+    "attempt": {"type": "integer", "minimum": 0},
+    "maxAttempts": {"type": "integer", "minimum": 1},
+    "provider": {"type": ["string", "null"]},
+    "model": {"type": ["string", "null"]},
+    "input": {"$ref": "#/$defs/jobInput"},
+    "output": {"anyOf": [{"$ref": "#/$defs/jobOutput"}, {"type": "null"}]},
+    "errorCode": {"type": ["string", "null"]},
+    "errorMessage": {"type": ["string", "null"]},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "startedAt": {"type": ["string", "null"], "format": "date-time"},
+    "completedAt": {"type": ["string", "null"], "format": "date-time"},
+    "updatedAt": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "jobInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "parameters", "referenceAssetIds", "constraints", "deterministic"],
+      "properties": {
+        "schemaVersion": {"const": "1.0"},
+        "parameters": {"type": "object"},
+        "referenceAssetIds": {"type": "array", "items": {"type": "string"}},
+        "constraints": {"type": "object"},
+        "seed": {"type": ["integer", "null"]},
+        "deterministic": {"type": "boolean"}
+      }
+    },
+    "jobOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "assetIds"],
+      "properties": {
+        "schemaVersion": {"const": "1.0"},
+        "assetIds": {"type": "array", "items": {"type": "string"}},
+        "metrics": {"type": "object"},
+        "providerRunId": {"type": ["string", "null"]}
+      }
+    }
+  }
+}
