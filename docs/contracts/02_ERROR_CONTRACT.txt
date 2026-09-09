@@ -1,0 +1,894 @@
+AI CONTENT FACTORY
+CONTRACT SPECIFICATION
+FILE: docs/contracts/02_ERROR_CONTRACT.txt
+
+============================================================
+1. PURPOSE
+============================================================
+
+This document defines the canonical error model for AI Content Factory.
+
+The error system MUST provide:
+
+- Stable machine-readable error codes
+- Consistent error categories
+- Retry classification
+- Safe diagnostic information
+- API-compatible error responses
+- Event-compatible error information
+- Provider/worker failure normalization
+- Operational traceability
+- Security-safe error handling
+- Compatibility across application versions
+
+============================================================
+2. DESIGN PRINCIPLES
+============================================================
+
+1. Errors are data.
+2. Error codes are stable contracts.
+3. Human-readable messages are not machine contracts.
+4. Retryability is explicit.
+5. Internal exceptions must be normalized.
+6. Secrets must never appear in external errors.
+7. Errors must be traceable.
+8. Errors must preserve enough context for recovery.
+9. Errors must not contain unnecessary sensitive content.
+10. Error handling must be deterministic.
+11. Error categories must remain centrally governed.
+12. Error semantics must be consistent across Android and backend.
+
+============================================================
+3. CANONICAL ERROR STRUCTURE
+============================================================
+
+Recommended canonical implementation:
+
+data class AppError(
+    val category: ErrorCategory,
+    val code: String,
+    val message: String,
+    val retryable: Boolean,
+    val details: Map<String, String> = emptyMap(),
+    val cause: Throwable? = null
+)
+
+Additional internal metadata MAY be introduced when required.
+
+External API representations SHOULD NOT expose Throwable.
+
+============================================================
+4. ERROR CATEGORY
+============================================================
+
+Canonical categories:
+
+VALIDATION
+NETWORK
+PERSISTENCE
+PROVIDER
+WORKER
+QC
+LICENSE
+HARDWARE
+AUTHENTICATION
+AUTHORIZATION
+CONFLICT
+TIMEOUT
+CANCELLATION
+DEPENDENCY
+RESOURCE
+CONFIGURATION
+UNKNOWN
+
+New categories MUST be reviewed before introduction.
+
+============================================================
+5. VALIDATION ERRORS
+============================================================
+
+Examples:
+
+VALIDATION_INVALID_INPUT
+VALIDATION_REQUIRED_FIELD
+VALIDATION_INVALID_ID
+VALIDATION_INVALID_FORMAT
+VALIDATION_INVALID_DURATION
+VALIDATION_INVALID_RESOLUTION
+VALIDATION_INVALID_STATE
+VALIDATION_DUPLICATE_NAME
+VALIDATION_UNSUPPORTED_OPERATION
+
+Default:
+retryable = false
+
+============================================================
+6. NETWORK ERRORS
+============================================================
+
+Examples:
+
+NETWORK_UNAVAILABLE
+NETWORK_TIMEOUT
+NETWORK_CONNECTION_FAILED
+NETWORK_DNS_FAILED
+NETWORK_TLS_FAILED
+NETWORK_INTERRUPTED
+
+Usually retryable.
+
+Authentication failures returned over a network MUST be classified
+as AUTHENTICATION rather than generic NETWORK.
+
+============================================================
+7. PERSISTENCE ERRORS
+============================================================
+
+Examples:
+
+PERSISTENCE_NOT_FOUND
+PERSISTENCE_READ_FAILED
+PERSISTENCE_WRITE_FAILED
+PERSISTENCE_DELETE_FAILED
+PERSISTENCE_TRANSACTION_FAILED
+PERSISTENCE_CONSTRAINT_VIOLATION
+PERSISTENCE_MIGRATION_FAILED
+
+Retryability depends on the failure.
+
+============================================================
+8. PROVIDER ERRORS
+============================================================
+
+Examples:
+
+PROVIDER_UNAVAILABLE
+PROVIDER_TIMEOUT
+PROVIDER_RATE_LIMITED
+PROVIDER_AUTH_FAILED
+PROVIDER_INVALID_REQUEST
+PROVIDER_INVALID_RESPONSE
+PROVIDER_MODEL_NOT_FOUND
+PROVIDER_CAPABILITY_UNSUPPORTED
+PROVIDER_CONTENT_REJECTED
+PROVIDER_INTERNAL_ERROR
+
+Provider-specific codes MAY exist internally, but canonical
+application codes MUST remain stable.
+
+============================================================
+9. WORKER ERRORS
+============================================================
+
+Examples:
+
+WORKER_INITIALIZATION_FAILED
+WORKER_EXECUTION_FAILED
+WORKER_OUTPUT_MISSING
+WORKER_OUTPUT_INVALID
+WORKER_PROCESS_CRASHED
+WORKER_HEALTH_CHECK_FAILED
+WORKER_CONFIGURATION_INVALID
+WORKER_DEPENDENCY_MISSING
+
+Worker failures MUST contain enough context for retry/fallback
+classification.
+
+============================================================
+10. QC ERRORS
+============================================================
+
+Examples:
+
+QC_FAILED
+QC_FILE_MISSING
+QC_INVALID_MIME
+QC_INVALID_VIDEO
+QC_INVALID_AUDIO
+QC_INVALID_RESOLUTION
+QC_INVALID_DURATION
+QC_FACE_INCONSISTENCY
+QC_CHARACTER_INCONSISTENCY
+QC_LIPSYNC_FAILED
+QC_PROMPT_NONCOMPLIANCE
+QC_VISUAL_QUALITY_FAILED
+
+QC failure MUST NOT be silently converted into Success.
+
+============================================================
+11. LICENSE ERRORS
+============================================================
+
+Examples:
+
+LICENSE_UNKNOWN
+LICENSE_RESTRICTED
+LICENSE_BLOCKED
+LICENSE_NOT_FOR_COMMERCIAL_USE
+LICENSE_ATTRIBUTION_REQUIRED
+LICENSE_TERMS_UNAVAILABLE
+
+UNKNOWN MUST NOT be treated as VERIFIED.
+
+============================================================
+12. HARDWARE ERRORS
+============================================================
+
+Examples:
+
+HARDWARE_INSUFFICIENT_VRAM
+HARDWARE_INSUFFICIENT_RAM
+HARDWARE_INSUFFICIENT_DISK
+HARDWARE_UNSUPPORTED_GPU
+HARDWARE_ACCELERATOR_UNAVAILABLE
+HARDWARE_DRIVER_INVALID
+HARDWARE_RUNTIME_UNAVAILABLE
+
+These errors are inputs for Model Router decisions.
+
+============================================================
+13. AUTHENTICATION ERRORS
+============================================================
+
+AUTH_INVALID_TOKEN
+AUTH_TOKEN_EXPIRED
+AUTH_REFRESH_FAILED
+AUTH_CREDENTIALS_INVALID
+
+Authentication failures MUST NOT expose credentials.
+
+============================================================
+14. AUTHORIZATION ERRORS
+============================================================
+
+AUTHZ_FORBIDDEN
+AUTHZ_PROJECT_ACCESS_DENIED
+AUTHZ_RESOURCE_ACCESS_DENIED
+AUTHZ_OPERATION_NOT_ALLOWED
+
+Authorization failures MUST NOT reveal unauthorized resource data.
+
+============================================================
+15. CONFLICT ERRORS
+============================================================
+
+CONFLICT_VERSION_MISMATCH
+CONFLICT_RESOURCE_LOCKED
+CONFLICT_DUPLICATE_OPERATION
+CONFLICT_JOB_ALREADY_RUNNING
+
+Conflict handling MAY require refresh, merge, retry, or user decision.
+
+============================================================
+16. TIMEOUT ERRORS
+============================================================
+
+TIMEOUT_PROVIDER
+TIMEOUT_WORKER
+TIMEOUT_QUEUE
+TIMEOUT_DATABASE
+TIMEOUT_RENDER
+TIMEOUT_QC
+
+Timeouts SHOULD normally be retryable when safe.
+
+============================================================
+17. CANCELLATION ERRORS
+============================================================
+
+JOB_CANCELLED
+EXECUTION_CANCELLED
+USER_CANCELLED
+SYSTEM_CANCELLED
+
+Cancellation MUST be distinguishable from failure.
+
+============================================================
+18. DEPENDENCY ERRORS
+============================================================
+
+DEPENDENCY_FAILED
+DEPENDENCY_NOT_FOUND
+DEPENDENCY_NOT_COMPLETED
+DEPENDENCY_CANCELLED
+DEPENDENCY_BLOCKED
+
+A dependent job MUST NOT execute when mandatory dependencies are invalid.
+
+============================================================
+19. RESOURCE ERRORS
+============================================================
+
+RESOURCE_OUT_OF_DISK
+RESOURCE_OUT_OF_MEMORY
+RESOURCE_GPU_BUSY
+RESOURCE_QUEUE_FULL
+RESOURCE_FILE_LOCKED
+RESOURCE_STORAGE_UNAVAILABLE
+
+Retryability depends on whether the resource condition can recover.
+
+============================================================
+20. CONFIGURATION ERRORS
+============================================================
+
+CONFIG_PROVIDER_NOT_CONFIGURED
+CONFIG_MODEL_NOT_CONFIGURED
+CONFIG_STORAGE_INVALID
+CONFIG_SERVER_INVALID
+CONFIG_WORKER_INVALID
+CONFIG_MISSING_REQUIRED_VALUE
+
+Generally non-retryable until configuration changes.
+
+============================================================
+21. UNKNOWN ERRORS
+============================================================
+
+UNKNOWN is a last-resort category.
+
+Known conditions MUST NOT be converted to UNKNOWN unnecessarily.
+
+Unknown errors SHOULD preserve safe diagnostics and internal cause data.
+
+============================================================
+22. ERROR CODE FORMAT
+============================================================
+
+Recommended format:
+
+<CATEGORY>_<SPECIFIC_REASON>
+
+Examples:
+
+NETWORK_TIMEOUT
+PROVIDER_UNAVAILABLE
+WORKER_OUTPUT_MISSING
+QC_INVALID_VIDEO
+LICENSE_BLOCKED
+
+Codes MUST:
+
+- Be uppercase
+- Use underscores
+- Remain stable
+- Never contain localized text
+- Never contain dynamic values
+
+============================================================
+23. ERROR MESSAGE
+============================================================
+
+Messages MAY change and MAY be localized externally.
+
+Messages MUST NOT be used as machine identifiers.
+
+Forbidden:
+
+if (error.message.contains("timeout"))
+
+Required:
+
+if (error.code == "NETWORK_TIMEOUT")
+
+============================================================
+24. ERROR DETAILS
+============================================================
+
+Details MAY contain structured, non-sensitive metadata.
+
+Allowed examples:
+
+provider
+model
+operation
+HTTP status
+worker ID
+resource type
+
+Forbidden:
+
+API keys
+passwords
+tokens
+private keys
+authorization headers
+secret environment variables
+sensitive signed URLs
+
+============================================================
+25. ERROR CAUSE
+============================================================
+
+The original Throwable MAY be retained internally.
+
+It MUST NOT be serialized to public APIs or public events.
+
+Stack traces MUST NOT be displayed to users.
+
+============================================================
+26. ERROR ORIGIN
+============================================================
+
+An error SHOULD identify its origin where useful:
+
+Android
+Backend
+Repository
+Provider
+Worker
+Queue
+Scheduler
+QC
+Renderer
+Publisher
+
+============================================================
+27. RETRY CLASSIFICATION
+============================================================
+
+Each error MUST have a retry policy classification:
+
+RETRYABLE
+NON_RETRYABLE
+CONDITIONALLY_RETRYABLE
+
+Examples:
+
+NETWORK_TIMEOUT → RETRYABLE
+VALIDATION_INVALID_INPUT → NON_RETRYABLE
+HARDWARE_INSUFFICIENT_VRAM → CONDITIONALLY_RETRYABLE
+
+============================================================
+28. RETRYABLE DOES NOT MEAN RETRY NOW
+============================================================
+
+retryable = true does NOT mean immediate retry.
+
+The Job Engine MUST consider:
+
+- Attempt count
+- Backoff
+- Provider health
+- Resource availability
+- Circuit breaker
+- Dependency state
+- Cancellation
+- Job priority
+- Fallback options
+
+============================================================
+29. ERROR SEVERITY
+============================================================
+
+The system MAY classify errors as:
+
+INFO
+WARNING
+ERROR
+CRITICAL
+
+Severity does not replace category or code.
+
+============================================================
+30. ERROR CONTEXT
+============================================================
+
+Operational errors SHOULD include when applicable:
+
+projectId
+jobId
+executionId
+traceId
+workerId
+provider
+model
+
+============================================================
+31. ERROR PROPAGATION
+============================================================
+
+Canonical flow:
+
+Exception
+    ↓
+Infrastructure Adapter
+    ↓
+AppError
+    ↓
+Result.Failure
+    ↓
+Application / Job Engine
+    ↓
+API / Event / UI
+
+No boundary should destroy the canonical error code.
+
+============================================================
+32. ERROR TRANSLATION
+============================================================
+
+Provider-specific failures MAY map to stable application codes.
+
+Example:
+
+HTTP 503
+ProviderUnavailableException
+Local worker unavailable
+
+MAY map to:
+
+PROVIDER_UNAVAILABLE
+
+Original source MAY remain in internal diagnostics.
+
+============================================================
+33. ERROR AGGREGATION
+============================================================
+
+For multi-step jobs, the system MUST preserve the root cause.
+
+The final classification MAY differ from the lowest-level cause.
+
+Example:
+
+PROVIDER_UNAVAILABLE
+root cause = NETWORK_TIMEOUT
+
+Both SHOULD remain traceable.
+
+============================================================
+34. USER ERROR VS SYSTEM ERROR
+============================================================
+
+User-caused:
+VALIDATION_INVALID_INPUT
+
+System-caused:
+PROVIDER_UNAVAILABLE
+
+Environment-caused:
+HARDWARE_INSUFFICIENT_VRAM
+
+Policy-caused:
+LICENSE_BLOCKED
+
+Security-caused:
+AUTHZ_FORBIDDEN
+
+============================================================
+35. API ERROR MAPPING
+============================================================
+
+Recommended transport mapping:
+
+VALIDATION → 400
+AUTHENTICATION → 401
+AUTHORIZATION → 403
+NOT_FOUND → 404
+CONFLICT → 409
+RATE_LIMITED → 429
+Temporary provider/network failure → 502/503
+TIMEOUT → 504
+UNKNOWN → 500
+
+HTTP status is transport metadata.
+Canonical application code remains authoritative.
+
+============================================================
+36. ASYNC JOB ERROR MAPPING
+============================================================
+
+A generation request may return 202 Accepted even though execution
+later fails.
+
+Later lifecycle state may become:
+
+JOB_FAILED
+
+with:
+
+errorCode
+errorCategory
+retryable
+
+============================================================
+37. EVENT ERROR MAPPING
+============================================================
+
+Failure events MUST use stable machine-readable error codes.
+
+Example:
+
+{
+  "errorCode": "PROVIDER_UNAVAILABLE",
+  "errorCategory": "PROVIDER",
+  "retryable": true
+}
+
+============================================================
+38. LOGGING RULES
+============================================================
+
+Logs SHOULD include:
+
+timestamp
+traceId
+jobId
+executionId
+component
+errorCategory
+errorCode
+
+Logs MUST NOT include secrets.
+
+============================================================
+39. PRIVACY
+============================================================
+
+Prompts, scripts, dialogue, images, audio and video may be project data.
+
+Error logs SHOULD reference:
+
+assetId
+sceneId
+shotId
+jobId
+
+rather than copying entire project content.
+
+============================================================
+40. ERROR DEDUPLICATION
+============================================================
+
+Repeated identical errors from one execution SHOULD be aggregated
+where practical.
+
+The system MAY record occurrence count and first/last timestamps.
+
+============================================================
+41. ERROR CORRELATION
+============================================================
+
+Every asynchronous failure SHOULD be correlated using:
+
+jobId
+executionId
+traceId
+
+Example:
+
+JOB_FAILED
+jobId = J123
+executionId = E456
+traceId = T789
+errorCode = WORKER_OUTPUT_MISSING
+
+============================================================
+42. ERROR AND IDEMPOTENCY
+============================================================
+
+Repeated idempotent requests MUST NOT create unintended duplicates.
+
+If the original operation already exists, the system SHOULD return
+or expose the existing operation state.
+
+============================================================
+43. ERROR AND CANCELLATION
+============================================================
+
+Cancellation MUST NOT be misclassified as failure.
+
+Correct:
+
+JOB_CANCELLED
+errorCode = JOB_CANCELLED
+
+If cancellation itself cannot complete, the system MUST preserve that
+fact separately from the requested cancellation.
+
+============================================================
+44. ERROR AND DEPENDENCIES
+============================================================
+
+If Job B depends on Job A:
+
+Job A FAILED
+    ↓
+Job B cannot execute
+
+Job B SHOULD receive:
+
+DEPENDENCY_FAILED
+
+while preserving Job A's original error.
+
+============================================================
+45. ERROR AND FALLBACK
+============================================================
+
+If Provider A fails and Provider B succeeds:
+
+Provider A → PROVIDER_UNAVAILABLE
+Provider B → Success
+
+The final job may complete successfully.
+
+Provider A failure MUST remain in audit history.
+
+============================================================
+46. ERROR AND QC
+============================================================
+
+A generated asset may exist while still being invalid.
+
+Example:
+
+generation succeeds
+asset exists
+QC fails
+
+The system MUST preserve both facts.
+
+The final job MUST NOT claim successful production completion when
+mandatory QC fails.
+
+============================================================
+47. ERROR AND LICENSE GUARD
+============================================================
+
+If a model license is UNKNOWN and policy requires verification:
+
+LICENSE_UNKNOWN
+
+MAY block execution.
+
+If explicitly forbidden:
+
+LICENSE_BLOCKED
+
+MUST prevent production execution.
+
+============================================================
+48. ERROR REGISTRY
+============================================================
+
+The project SHOULD maintain a central registry containing:
+
+code
+category
+description
+defaultRetryability
+severity
+userVisible
+recoverability
+introducedVersion
+
+Example:
+
+PROVIDER_UNAVAILABLE
+PROVIDER
+temporary provider outage
+RETRYABLE
+ERROR
+YES
+retry/fallback
+v0.2
+
+============================================================
+49. ERROR CODE GOVERNANCE
+============================================================
+
+Before adding a new error code:
+
+1. Search existing registry.
+2. Determine whether an existing code is sufficient.
+3. Define category.
+4. Define retry policy.
+5. Define external visibility.
+6. Define recovery behavior.
+7. Add tests.
+8. Update documentation.
+
+============================================================
+50. BACKWARD COMPATIBILITY
+============================================================
+
+Existing error codes SHOULD remain valid.
+
+If a code must be renamed, a compatibility mapping SHOULD be used
+for an appropriate migration period.
+
+Breaking changes require version review and consumer migration.
+
+============================================================
+51. FORBIDDEN ERROR PRACTICES
+============================================================
+
+1. Using exception class names as API contracts.
+2. Parsing messages.
+3. Returning secrets.
+4. Logging credentials.
+5. Treating UNKNOWN as normal.
+6. Retrying all failures.
+7. Treating cancellation as failure.
+8. Hiding dependency failures.
+9. Replacing stable codes with HTTP status codes.
+10. Creating duplicate local error taxonomies.
+11. Returning stack traces to clients.
+12. Exposing provider credentials.
+13. Marking failed QC as Success.
+14. Ignoring license failures.
+15. Silently swallowing exceptions.
+
+============================================================
+52. REQUIRED TESTS
+============================================================
+
+ERROR-001  Every canonical category can be represented.
+ERROR-002  Error codes are stable strings.
+ERROR-003  Messages are not used for control flow.
+ERROR-004  Retryability is explicit.
+ERROR-005  Provider exceptions map correctly.
+ERROR-006  Network timeout maps correctly.
+ERROR-007  Validation errors are non-retryable.
+ERROR-008  Cancellation is distinct from failure.
+ERROR-009  Dependency failure is preserved.
+ERROR-010  License UNKNOWN is not VERIFIED.
+ERROR-011  Secrets are removed from serialized errors.
+ERROR-012  Throwable is not exposed through API.
+ERROR-013  Context preserves jobId/executionId/traceId.
+ERROR-014  API mapping returns correct HTTP semantics.
+ERROR-015  Event mapping preserves error code.
+ERROR-016  Backward-compatible error codes remain supported.
+ERROR-017  UNKNOWN remains a last-resort category.
+
+============================================================
+53. ACCEPTANCE CHECKLIST
+============================================================
+
+[ ] Central ErrorCategory exists.
+[ ] Central AppError exists.
+[ ] Error codes are centrally governed.
+[ ] Retryability is explicit.
+[ ] Permanent/transient distinction exists.
+[ ] Provider failures are normalized.
+[ ] Worker failures are normalized.
+[ ] QC failures are normalized.
+[ ] License failures are normalized.
+[ ] Hardware failures are normalized.
+[ ] Dependency failures are normalized.
+[ ] Authentication and authorization are distinct.
+[ ] Cancellation is distinct from failure.
+[ ] API mapping is defined.
+[ ] Event mapping is defined.
+[ ] Error context is traceable.
+[ ] Secrets cannot leak.
+[ ] Error registry exists.
+[ ] Contract tests exist.
+[ ] CI validates error contracts.
+
+============================================================
+54. DEFINITION OF DONE
+============================================================
+
+The Error Contract is DONE when:
+
+- All production layers use the canonical error model.
+- Stable error codes exist.
+- Retryability is deterministic.
+- Exceptions are normalized.
+- Cancellation is represented correctly.
+- Dependency failures are traceable.
+- Provider failures are distinguishable.
+- Hardware failures are distinguishable.
+- QC failures block completion where required.
+- License failures are enforced.
+- API and event mappings are stable.
+- Sensitive information cannot leak.
+- Tests pass.
+- CI passes.
+
+============================================================
+END OF FILE
+============================================================
