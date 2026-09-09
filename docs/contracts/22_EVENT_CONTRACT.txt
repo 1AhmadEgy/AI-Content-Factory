@@ -1,0 +1,21 @@
+AI CONTENT FACTORY — EVENT CONTRACT
+
+EVENT ENVELOPE
+eventId, eventType, schemaVersion, occurredAt, producer, projectId, executionId, jobId, traceId, payload.
+
+DELIVERY
+At-least-once delivery is the default. Consumers MUST be idempotent. Database state is the source of truth; events are notifications.
+
+CANONICAL EVENTS
+JOB_CREATED, JOB_QUEUED, JOB_STARTED, JOB_PROGRESS, JOB_PAUSED, JOB_RESUMED, JOB_RETRYING, JOB_COMPLETED, JOB_FAILED, JOB_CANCEL_REQUESTED, JOB_CANCELLED, JOB_BLOCKED, DEPENDENCY_WAITING, DEPENDENCY_FAILED, QC_COMPLETED, ASSET_CREATED, RENDER_COMPLETED, MODEL_SELECTED, PROVIDER_HEALTH_CHANGED, LICENSE_CHANGED, RESOURCE_CHANGED, PUBLISHING_COMPLETED.
+
+RULES
+- Publish after durable state commit; transactional outbox is recommended.
+- Terminal execution events cannot be followed by ordinary lifecycle events for the same execution.
+- schemaVersion is explicit.
+- Payloads contain stable IDs and machine-readable codes.
+- Sensitive data is excluded.
+- Offline Android clients recover current state through REST rather than trusting missed events.
+
+ACCEPTANCE
+[ ] Envelope [ ] At-least-once [ ] Idempotent consumers [ ] Outbox strategy [ ] Versioning [ ] Terminal ordering [ ] Recovery tests

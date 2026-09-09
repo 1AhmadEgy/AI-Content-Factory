@@ -1,0 +1,53 @@
+AI CONTENT FACTORY — API CONTRACT
+
+BASE PATH
+/api/v1
+
+RULES
+- API exposes application/domain DTOs, never Room/SQL/provider SDK types.
+- AI generation requests are asynchronous and normally return 202 Accepted.
+- Bearer authentication is required for protected resources.
+- Authorization is project-scoped.
+- Idempotency-Key is required for mutation endpoints where duplicate requests could create jobs/assets.
+- Pagination, sorting and filtering are explicit.
+- Errors use canonical error codes.
+- Asset files are accessed through authorized endpoints, never unrestricted filesystem paths.
+
+CORE RESOURCES
+/projects
+/series
+/seasons
+/episodes
+/characters
+/worlds
+/locations
+/scenes
+/shots
+/dialogues
+/assets
+/generation/jobs
+/qc
+/timeline
+/render
+/publishing-package
+/models
+/hardware
+/providers/health
+/licenses
+/analytics
+/health
+
+JOB OPERATIONS
+POST /generation/jobs
+GET /generation/jobs/{id}
+POST /generation/jobs/{id}/retry
+POST /generation/jobs/{id}/pause
+POST /generation/jobs/{id}/resume
+POST /generation/jobs/{id}/cancel
+
+RESPONSE ENVELOPES
+Success: data + requestId/traceId metadata where useful.
+Error: code, category, message, retryable, requestId/traceId.
+
+ACCEPTANCE
+[ ] /api/v1 [ ] Auth [ ] Project isolation [ ] Async 202 [ ] Idempotency [ ] Stable errors [ ] Pagination [ ] Contract tests

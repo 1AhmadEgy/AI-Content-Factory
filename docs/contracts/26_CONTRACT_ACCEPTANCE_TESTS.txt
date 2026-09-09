@@ -1,0 +1,57 @@
+AI CONTENT FACTORY — CONTRACT ACCEPTANCE TESTS
+
+PURPOSE
+Every architectural contract must be executable as tests where practical.
+
+RESULT/ERROR
+- Success and Failure are exhaustive.
+- Error codes are stable.
+- Messages are not control flow.
+- Secrets are never serialized.
+
+REPOSITORY
+- CRUD works.
+- Not-found is deterministic.
+- Transactions are atomic.
+- Concurrent update policy is enforced.
+
+JOB
+- All legal state transitions succeed.
+- Illegal transitions fail.
+- Completion requires verified output and required QC.
+- Retry preserves jobId and changes executionId.
+- Cancellation prevents stale execution.
+
+QUEUE/SCHEDULER
+- Enqueue/dequeue is durable.
+- Redelivery is safe.
+- Dependencies are respected.
+- Priority/fairness rules are respected.
+
+WORKER/PROVIDER
+- Initialization and health are tested.
+- Output is validated.
+- Provider failures normalize to canonical errors.
+- Cancellation works where supported.
+
+ASSET/QC/RENDER
+- Provenance persists.
+- Technical QC rejects invalid files.
+- Timeline is deterministic.
+- Renderer creates a verifiable artifact.
+
+API/EVENT
+- DTO contracts match schemas.
+- 202 is used for asynchronous acceptance.
+- Idempotency works.
+- Events use envelope/schemaVersion.
+- Consumers tolerate duplicate delivery.
+
+E2E GOLDEN PATH
+Create Project → Series → Episode → Scene → Shot → Generate → Asset → QC → Timeline → Render → Final Asset.
+
+FAILURE PATHS
+Provider timeout, worker crash, invalid output, insufficient VRAM, license blocked, dependency failure, cancellation, queue redelivery, retry exhaustion.
+
+ACCEPTANCE GATE
+No milestone is complete until its contract tests pass and CI is green.

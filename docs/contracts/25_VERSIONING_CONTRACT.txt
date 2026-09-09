@@ -1,0 +1,29 @@
+AI CONTENT FACTORY — VERSIONING CONTRACT
+
+PURPOSE
+Define safe evolution for APIs, events, domain models, database schemas and provider contracts.
+
+API
+Major breaking changes require a new version path. Non-breaking additions may remain within the current version when clients tolerate unknown fields.
+
+EVENTS
+Every event has schemaVersion. Consumers must tolerate supported compatible versions and reject unsupported breaking versions safely.
+
+DATABASE
+Migrations are forward-defined, tested and reversible where practical. Expand/contract migrations are preferred for production schema changes.
+
+DOMAIN
+New optional fields should have safe defaults. Renames/removals require migration planning and compatibility review.
+
+PROVIDERS
+Provider SDK changes remain inside adapters. Provider-specific payloads never become domain contracts.
+
+RULES
+- Never silently change the meaning of an existing stable field.
+- Never reuse an old enum value for a different meaning.
+- Record introducedVersion/deprecatedVersion where useful.
+- Maintain migration tests.
+- Document breaking changes.
+
+ACCEPTANCE
+[ ] API version policy [ ] Event schema versions [ ] DB migration strategy [ ] Domain compatibility [ ] Provider adapter isolation [ ] Deprecation policy [ ] Tests

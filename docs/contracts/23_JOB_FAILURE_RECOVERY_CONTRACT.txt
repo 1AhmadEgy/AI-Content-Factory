@@ -1,0 +1,37 @@
+AI CONTENT FACTORY — JOB FAILURE & RECOVERY CONTRACT
+
+PURPOSE
+Define deterministic recovery for asynchronous AI jobs.
+
+FAILURE CLASSES
+Transient: network timeout, provider unavailable, temporary queue/resource pressure.
+Permanent: invalid input, unsupported capability, blocked license, corrupted request.
+Conditional: insufficient VRAM, model unavailable, provider degradation.
+
+RECOVERY
+1. Persist failure.
+2. Classify error.
+3. Check cancellation.
+4. Check attempt/maxAttempts.
+5. Apply backoff if retryable.
+6. Re-check dependencies/resources/provider/license.
+7. Retry same job with new executionId, or route to explicit fallback.
+8. After exhaustion, mark FAILED and optionally send to DLQ.
+
+BACKOFF
+Use capped exponential backoff with jitter. Do not busy-loop.
+
+CANCELLATION
+Cancellation overrides pending retries. A cancelled execution must not be restarted by stale queue messages.
+
+PAUSE/RESUME
+Pause prevents new execution/progress commitment while preserving job state. Resume re-enters scheduling; it does not reset history.
+
+DEAD LETTER
+Jobs repeatedly failing after policy limits are retained with reason, attempts, last executionId and recovery metadata.
+
+CIRCUIT BREAKER
+Provider/worker health may temporarily prevent dispatch after repeated transient failures. Recovery occurs after cooldown and health checks.
+
+ACCEPTANCE
+[ ] Failure classification [ ] Backoff [ ] Max attempts [ ] Cancellation [ ] Pause/resume [ ] Dependency recovery [ ] Fallback [ ] DLQ [ ] Circuit breaker [ ] Tests

@@ -1,0 +1,22 @@
+AI CONTENT FACTORY — IDEMPOTENCY CONTRACT
+
+PURPOSE
+Prevent duplicate logical operations across Android, API, queue, retry and recovery.
+
+IDENTIFIERS
+requestId identifies an API request. idempotencyKey identifies a client mutation intent. jobId identifies a logical job. executionId identifies one execution attempt. traceId correlates distributed operations.
+
+RULES
+- Mutation endpoints that can create side effects require an idempotency key.
+- Same key + same operation scope returns the existing logical result.
+- Same key with materially different payload must be rejected as a conflict.
+- Keys are scoped by authenticated project/user and operation where appropriate.
+- Idempotency records are durable.
+- Queue redelivery must not create duplicate execution side effects.
+- Asset creation uses deterministic identity/content hashing where appropriate.
+
+RETRY
+API timeout after server accepted a job must be recoverable by repeating the same idempotent request.
+
+ACCEPTANCE
+[ ] Durable keys [ ] Scope [ ] Payload conflict detection [ ] Queue dedupe [ ] Job dedupe [ ] Asset dedupe policy [ ] Tests
