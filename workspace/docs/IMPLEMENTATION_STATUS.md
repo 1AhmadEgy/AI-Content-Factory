@@ -8,16 +8,16 @@
 - [x] 05 Room
 - [x] 06 Repository
 - [x] 07 Job Engine
-- [~] 08 Mock Workers (Next steps)
-- [ ] 09 Queue
+- [x] 08 Mock Worker Contract + Deterministic Fixture Worker
+- [x] 09 SQLite-backed Queue + Leasing
 
 ## Phase B: Production Core (v0.2)
-- [ ] 10 Asset System
+- [~] 10 Asset System (domain + content-addressed local storage + SQLite metadata)
 - [ ] 11 QC
 - [ ] 12 Timeline
 - [ ] 13 Renderer
-- [ ] 14 Backend
-- [ ] 15 Orchestrator
+- [x] 14 Backend Foundation (FastAPI + /api/v1 + SQLite persistence)
+- [~] 15 Orchestrator (job state service + queue/worker contracts)
 
 ## Phase C: AI Story Factory (v0.3)
 - [ ] 16 Story Agent
@@ -43,3 +43,11 @@
 - [ ] 34 Plugin System
 - [ ] 35 Optional Cloud
 - [ ] 36 v1.0
+
+## Current engineering slice
+- Persistent SQLite repository adapters are in place for projects, episodes, scenes, shots, and jobs.
+- Jobs are exposed through `/api/v1/jobs` and projects through `/api/v1/projects`.
+- Queue leasing is persisted in SQLite with priority ordering, heartbeats, acknowledgement, and expired-lease recovery.
+- Asset metadata and content-addressed local storage are implemented.
+- A deterministic mock worker creates real checksum-verifiable fixture assets with provenance.
+- Backend tests and GitHub Actions CI have been added; CI execution is authoritative for pass/fail status.
