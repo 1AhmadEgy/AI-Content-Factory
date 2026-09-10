@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -85,7 +85,7 @@ class SQLiteStore:
     def claim_idempotency(self, key: str, operation: str, fingerprint: str, resource_id: str) -> bool:
         with self._lock, self._connection:
             try:
-                self._connection.execute("INSERT INTO idempotency_keys(key,operation,request_fingerprint,resource_id,created_at) VALUES(?,?,?,?,?)", (key, operation, fingerprint, resource_id, datetime.now().astimezone().isoformat()))
+                self._connection.execute("INSERT INTO idempotency_keys(key,operation,request_fingerprint,resource_id,created_at) VALUES(?,?,?,?,?)", (key, operation, fingerprint, resource_id, datetime.now(timezone.utc).isoformat()))
                 return True
             except sqlite3.IntegrityError:
                 return False
@@ -179,7 +179,7 @@ class SQLiteJobRepository(JobRepository):
                 )
                 self.store.connection.execute(
                     "INSERT INTO idempotency_keys(key,operation,request_fingerprint,resource_id,created_at) VALUES(?,?,?,?,?)",
-                    (key, operation, fingerprint, job.id, datetime.now().astimezone().isoformat()),
+                    (key, operation, fingerprint, job.id, datetime.now(timezone.utc).isoformat()),
                 )
             except sqlite3.IntegrityError:
                 self.store.connection.rollback()
