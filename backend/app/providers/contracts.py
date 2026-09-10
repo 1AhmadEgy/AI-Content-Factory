@@ -25,6 +25,10 @@ class ProviderResponse:
     success: bool
     output_asset_ids: list[str] = field(default_factory=list)
     output_text: str | None = None
+    output_bytes: bytes | None = None
+    output_mime_type: str | None = None
+    output_filename: str | None = None
+    output_metadata: dict[str, Any] = field(default_factory=dict)
     provider_run_id: str | None = None
     metrics: dict[str, float] = field(default_factory=dict)
     error_code: str | None = None
