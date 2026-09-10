@@ -11,6 +11,7 @@ from .api.jobs import build_router as build_job_router
 from .api.projects import build_router as build_project_router
 from .api.v1.assets import build_router as build_assets_router
 from .api.v1.best_take import build_router as build_best_take_router
+from .api.v1.content import build_router as build_content_router
 from .api.v1.factory import build_router as build_factory_router
 from .api.v1.models import build_router as build_models_router
 from .api.v1.pipeline import router as pipeline_router
@@ -21,7 +22,6 @@ from .infrastructure.asset_repository import SQLiteAssetRepository
 from .infrastructure.sqlite import SQLiteJobRepository, SQLiteProjectRepository, SQLiteRepositories
 from .orchestrator.runtime import OrchestratorRuntime
 from .orchestrator.worker_loop import WorkerLoop
-
 
 DATABASE_PATH = os.getenv("AICF_DATABASE_PATH", "./data/factory.db")
 repositories = SQLiteRepositories(DATABASE_PATH)
@@ -39,15 +39,12 @@ def _worker_autostart_enabled() -> bool:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    if _worker_autostart_enabled():
-        worker_loop.start()
-    try:
-        yield
-    finally:
-        worker_loop.stop()
+    if _worker_autostart_enabled(): worker_loop.start()
+    try: yield
+    finally: worker_loop.stop()
 
 
-app = FastAPI(title="AI Content Factory API", version="0.4.0", docs_url="/api/v1/docs", redoc_url="/api/v1/redoc", openapi_url="/api/v1/openapi.json", lifespan=lifespan)
+app = FastAPI(title="AI Content Factory API", version="0.5.0", docs_url="/api/v1/docs", redoc_url="/api/v1/redoc", openapi_url="/api/v1/openapi.json", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -68,6 +65,7 @@ async def unhandled_exception(request: Request, exc: Exception):
 app.include_router(build_project_router(project_repository))
 app.include_router(build_job_router(job_repository, runtime=orchestrator_runtime, events=orchestrator_runtime.events))
 app.include_router(build_factory_router(project_repository, job_repository, orchestrator_runtime))
+app.include_router(build_content_router(orchestrator_runtime, job_repository))
 app.include_router(build_assets_router(asset_repository))
 app.include_router(build_models_router(orchestrator_runtime))
 app.include_router(build_publishing_router(orchestrator_runtime, job_repository))
