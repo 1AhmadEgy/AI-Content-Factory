@@ -13,9 +13,9 @@ def build_provenance(
 ) -> AssetProvenance:
     """Build a normalized provenance record for every produced asset."""
     metadata_value = dict(metadata or {})
-    model = job.model or (str(metadata_value["model"]) if metadata_value.get("model") else None)
+    model = getattr(job, "model", None) or (str(metadata_value["model"]) if metadata_value.get("model") else None)
     return AssetProvenance(
-        provider=job.provider or "mock",
+        provider=getattr(job, "provider", None) or "mock",
         model=model,
         prompt=str(job.input.parameters.get("prompt", "")) or None,
         negative_prompt=str(job.input.parameters.get("negativePrompt", "")) or None,
