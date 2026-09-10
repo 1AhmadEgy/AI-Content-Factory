@@ -14,20 +14,23 @@ def build_provenance(
     """Build a normalized provenance record for every produced asset."""
     metadata_value = dict(metadata or {})
     model = getattr(job, "model", None) or (str(metadata_value["model"]) if metadata_value.get("model") else None)
+    input_data = getattr(job, "input", None)
+    parameters = getattr(input_data, "parameters", {}) or {}
+    reference_asset_ids = getattr(input_data, "reference_asset_ids", []) or []
     return AssetProvenance(
         provider=getattr(job, "provider", None) or "mock",
         model=model,
-        prompt=str(job.input.parameters.get("prompt", "")) or None,
-        negative_prompt=str(job.input.parameters.get("negativePrompt", "")) or None,
-        seed=job.input.seed,
-        source_asset_ids=list(source_asset_ids or job.input.reference_asset_ids),
+        prompt=str(parameters.get("prompt", "")) or None,
+        negative_prompt=str(parameters.get("negativePrompt", parameters.get("negative_prompt", ""))) or None,
+        seed=getattr(input_data, "seed", None),
+        source_asset_ids=list(source_asset_ids or reference_asset_ids),
         job_id=job.id,
         license_status=license_status,
         metadata={
             "jobType": job.type.value,
-            "targetType": job.target_type,
-            "targetId": job.target_id,
-            "parentJobId": job.parent_job_id,
+            "targetType": getattr(job, "target_type", None),
+            "targetId": getattr(job, "target_id", None),
+            "parentJobId": getattr(job, "parent_job_id", None),
             **metadata_value,
         },
     )
