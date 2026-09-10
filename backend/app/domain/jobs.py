@@ -37,6 +37,8 @@ class JobType(str, Enum):
     THUMBNAIL = "THUMBNAIL"
     METADATA = "METADATA"
     PUBLISH = "PUBLISH"
+    REPURPOSE = "REPURPOSE"
+    BATCH = "BATCH"
 
 
 def utc_now() -> datetime:
