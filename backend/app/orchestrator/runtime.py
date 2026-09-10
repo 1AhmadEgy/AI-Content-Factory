@@ -19,6 +19,7 @@ from ..library.country_catalog import get_country_library
 from ..library.seed import ensure_country_library_projects, ensure_egypt_library, ensure_libya_library
 from ..providers.registry import default_provider_registry
 from ..workers.best_take_worker import BestTakeWorker
+from ..workers.language_pack_worker import LanguagePackWorker
 from ..workers.media_document_worker import MediaDocumentWorker
 from ..workers.mock_worker import DeterministicMockWorker
 from ..workers.provider_worker import ProviderGenerationWorker
@@ -71,6 +72,9 @@ class OrchestratorRuntime:
         media = MediaDocumentWorker(self.storage, self.assets)
         media.initialize()
         self.workers.register(media, capabilities={"SUBTITLE", "THUMBNAIL", "METADATA"}, worker_id="media-document")
+        language_pack = LanguagePackWorker(self.storage, self.assets)
+        language_pack.initialize()
+        self.workers.register(language_pack, capabilities={"LANGUAGE_PACK"}, worker_id="language-pack")
         publisher = PublishWorker(self.storage, self.assets)
         publisher.initialize()
         self.workers.register(publisher, capabilities={"PUBLISH"}, worker_id="publish")
@@ -83,8 +87,6 @@ class OrchestratorRuntime:
         self.pipeline = ContentPipelineOrchestrator(JobService(repositories.jobs), self.queue.enqueue)
         self.completion_gate = CompletionGate(self.assets, self.storage)
         self.executor = JobExecutor(repositories.jobs, self.queue, self.workers, self.events.append, self.pipeline.on_completed, completion_gate=self.completion_gate)
-        # Country metadata is additive. Each curated pack is seeded into its own
-        # stable library project; catalog-only countries remain metadata-only.
         self.country_library_seed = ensure_country_library_projects(repositories)
         self.library_seed = ensure_egypt_library(repositories)
         self.libya_library_seed = ensure_libya_library(repositories)
