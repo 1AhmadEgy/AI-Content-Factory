@@ -5,6 +5,8 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ...application.translation_service import TranslationProviderUnavailable, TranslationService
+from ...domain.translation import TranslationRequest
+from ...infrastructure.translation_repository import SQLiteTranslationRepository
 from ...library.languages import list_languages
 
 
@@ -23,52 +25,65 @@ class TranslationBody(BaseModel):
     version: int = Field(default=1, ge=1)
 
 
-def build_router() -> APIRouter:
+def _serialize(result):
+    return {
+        "id": result.id,
+        "sourceLanguage": result.source_language,
+        "targetLanguage": result.target_language,
+        "sourceText": result.source_text,
+        "translatedText": result.translated_text,
+        "contentType": result.content_type,
+        "sourceId": result.source_id,
+        "provider": result.provider,
+        "model": result.model,
+        "glossaryVersion": result.glossary_version,
+        "version": result.version,
+        "manual": result.manual,
+        "createdAt": result.created_at,
+        "metadata": result.metadata,
+    }
+
+
+def build_router(store=None) -> APIRouter:
     router = APIRouter(prefix="/api/v1/translations", tags=["translations"])
-    service = TranslationService()
+    repository = SQLiteTranslationRepository(store) if store is not None else None
 
     @router.get("/languages")
     def languages(request: Request):
         return {"data": list_languages(), "requestId": request.state.request_id}
 
+    @router.get("")
+    def history(request: Request, sourceId: str | None = None, targetLanguage: str | None = None, limit: int = 100):
+        if repository is None:
+            return {"data": [], "requestId": request.state.request_id}
+        return {"data": [_serialize(item) for item in repository.list(source_id=sourceId, target_language=targetLanguage, limit=limit)], "requestId": request.state.request_id}
+
+    @router.get("/{translation_id}")
+    def get_translation(translation_id: str, request: Request):
+        if repository is None:
+            raise HTTPException(404, "TRANSLATION_NOT_FOUND")
+        result = repository.get(translation_id)
+        if result is None:
+            raise HTTPException(404, "TRANSLATION_NOT_FOUND")
+        return {"data": _serialize(result), "requestId": request.state.request_id}
+
     @router.post("")
     def translate(body: TranslationBody, request: Request):
         if body.sourceLanguage == body.targetLanguage and body.manualText is not None and body.manualText != body.text:
             raise HTTPException(400, "IDENTITY_TRANSLATION_MUST_MATCH_SOURCE")
+        translation_request = TranslationRequest(source_language=body.sourceLanguage, target_language=body.targetLanguage, text=body.text, content_type=body.contentType, source_id=body.sourceId, preserve_terms=tuple(body.preserveTerms), glossary=body.glossary, context=body.context)
+        if repository is not None and body.manualText is None:
+            existing = repository.latest(translation_request)
+            if existing is not None:
+                return {"data": _serialize(existing), "requestId": request.state.request_id, "idempotent": True}
         try:
-            result = service.translate(
-                __import__("backend.app.domain.translation", fromlist=["TranslationRequest"]).TranslationRequest(
-                    source_language=body.sourceLanguage,
-                    target_language=body.targetLanguage,
-                    text=body.text,
-                    content_type=body.contentType,
-                    source_id=body.sourceId,
-                    preserve_terms=tuple(body.preserveTerms),
-                    glossary=body.glossary,
-                    context=body.context,
-                ),
-                manual_text=body.manualText,
-                provider=body.provider,
-                model=body.model,
-                version=body.version,
-            )
+            result = TranslationService().translate(translation_request, manual_text=body.manualText, provider=body.provider, model=body.model, version=body.version)
+            if repository is not None:
+                repository.save(result, translation_request)
         except TranslationProviderUnavailable:
             raise HTTPException(503, "TRANSLATION_PROVIDER_NOT_CONFIGURED")
         except ValueError as exc:
             raise HTTPException(400, str(exc))
-        return {"data": {
-            "id": result.id,
-            "sourceLanguage": result.source_language,
-            "targetLanguage": result.target_language,
-            "sourceText": result.source_text,
-            "translatedText": result.translated_text,
-            "contentType": result.content_type,
-            "sourceId": result.source_id,
-            "provider": result.provider,
-            "model": result.model,
-            "version": result.version,
-            "manual": result.manual,
-            "createdAt": result.created_at,
-        }, "requestId": request.state.request_id}
+        return {"data": _serialize(result), "requestId": request.state.request_id}
 
     return router
