@@ -7,7 +7,6 @@ from typing import Any
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from ...application.content_planner import DeterministicContentPlanner
 from ...domain.content import ContentBrief
 from ...domain.jobs import JobInput, JobType
 from ...infrastructure.sqlite import SQLiteJobRepository, SQLiteProjectRepository
@@ -84,13 +83,12 @@ def build_router(
     runtime: OrchestratorRuntime,
 ) -> APIRouter:
     job_service = JobService(jobs)
-    planner = DeterministicContentPlanner()
 
     @router.post("/plan")
     def plan_factory(request: BriefRequest, http_request: Request) -> dict[str, Any]:
-        plan = planner.plan(_brief(request))
+        plan = runtime.plan_content(_brief(request))
         return {
-            "data": {"mode": "mock", "brief": request.model_dump(), "plan": _serialize_plan(plan)},
+            "data": {"mode": "ai", "brief": request.model_dump(), "plan": _serialize_plan(plan)},
             "requestId": http_request.state.request_id,
         }
 
@@ -122,7 +120,8 @@ def build_router(
                 "idempotentReplay": True,
             }
 
-        plan = planner.plan(_brief(request))
+        brief = _brief(request)
+        plan = runtime.plan_content(brief, request.model)
         job = job_service.create(
             project_id=project_id,
             job_type=JobType.STORY,
@@ -130,8 +129,8 @@ def build_router(
             target_id=project_id,
             priority=100,
             provider=request.provider or "mock",
-            model=request.model or "deterministic-content-planner-v1",
-            input=JobInput(parameters={**request.model_dump(), "plan": _serialize_plan(plan)}, deterministic=True),
+            model=request.model or "mock-deterministic",
+            input=JobInput(parameters={**request.model_dump(), "plan": _serialize_plan(plan)}, deterministic=request.model is None),
         )
         if not store.claim_idempotency(idempotency_key, operation, fingerprint, job.id):
             raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
