@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 
 from ..domain.asset_repositories import AssetRepository
-from ..domain.assets import Asset, AssetStatus, LicenseStatus
+from ..domain.assets import Asset, AssetStatus, AssetType, LicenseStatus
 from ..domain.jobs import GenerationJob
 from ..infrastructure.storage import LocalAssetStorage
 from ..orchestrator.provenance import build_provenance
@@ -56,9 +57,7 @@ class ProviderGenerationWorker(Worker):
         asset_ids = list(response.output_asset_ids)
         if not asset_ids:
             payload = self._serialize_output(job, response.output_text, response.metrics)
-            _, path, size = self.storage.put_bytes(payload)
-            import hashlib
-            digest = hashlib.sha256(payload).hexdigest()
+            digest, path, size = self._store(payload)
             asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"provider-asset:{job.id}:{digest}"))
             asset = Asset(
                 id=asset_id,
@@ -72,7 +71,7 @@ class ProviderGenerationWorker(Worker):
                 provenance=build_provenance(
                     job,
                     metadata={"provider": model.provider, "model": model.id, "providerRunId": response.provider_run_id},
-                    license_status=LicenseStatus.OPEN,
+                    license_status=LicenseStatus.VERIFIED,
                 ),
             )
             self.assets.create(asset)
@@ -91,6 +90,11 @@ class ProviderGenerationWorker(Worker):
     def shutdown(self) -> None:
         self._initialized = False
 
+    def _store(self, payload: bytes) -> tuple[str, str, int]:
+        digest = hashlib.sha256(payload).hexdigest()
+        _, path, size = self.storage.put_bytes(payload)
+        return digest, path, size
+
     @staticmethod
     def _serialize_output(job: GenerationJob, output_text: str | None, metrics: dict[str, float]) -> bytes:
         return (json.dumps({
@@ -102,8 +106,7 @@ class ProviderGenerationWorker(Worker):
         }, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
 
     @staticmethod
-    def _asset_type(job: GenerationJob):
-        from ..domain.assets import AssetType
+    def _asset_type(job: GenerationJob) -> AssetType:
         if job.type.value in {"IMAGE", "THUMBNAIL"}:
             return AssetType.IMAGE
         if job.type.value in {"VIDEO", "RENDER"}:
