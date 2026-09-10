@@ -8,6 +8,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from threading import RLock
 from typing import Mapping
 
 from ..domain.timeline import Timeline, TrackType
@@ -35,6 +36,7 @@ class FfmpegRenderer(Renderer):
         self.assets = dict(assets)
         self.options = options or FfmpegRenderOptions()
         self._processes: dict[str, subprocess.Popen[str]] = {}
+        self._process_lock = RLock()
 
     def health_check(self) -> dict[str, object]:
         """Check the media toolchain without allowing a hung executable to block startup."""
@@ -66,7 +68,7 @@ class FfmpegRenderer(Renderer):
     def _build_args(self, timeline: Timeline, profile: RenderProfile, output: str) -> list[str]:
         video = [t for t in timeline.tracks if t.type == TrackType.VIDEO]
         audio = [t for t in timeline.tracks if t.type in {TrackType.AUDIO, TrackType.DIALOGUE, TrackType.MUSIC, TrackType.SFX}]
-        ordered_video = [c for t in video for c in sorted(t.clips, key=lambda c: (c.start_us, c.z_index, c.id))]
+        ordered_video = [c for t in video for c in sorted(t.clips, key=lambda c: (c.z_index, c.start_us, c.id))]
         ordered_audio = [c for t in audio for c in sorted(t.clips, key=lambda c: (c.start_us, c.id))]
         inputs = [(clip, True) for clip in ordered_video] + [(clip, False) for clip in ordered_audio]
         args = [self.options.ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-y" if self.options.overwrite else "-n"]
@@ -86,14 +88,28 @@ class FfmpegRenderer(Renderer):
             dur = clip.duration_us / 1_000_000
             source_start = clip.source_start_us / 1_000_000
             label = f"v{index}"
-            filter_parts.append(f"[{index}:v]trim=start={source_start}:duration={dur},setpts=PTS-STARTPTS+{start}/TB,fps={profile.fps:g},scale={profile.width}:{profile.height}:force_original_aspect_ratio=decrease,pad={profile.width}:{profile.height}:(ow-iw)/2:(oh-ih)/2:color=black[{label}]")
+            filter_parts.append(
+                f"[{index}:v]trim=start={source_start}:duration={dur},setpts=PTS-STARTPTS,fps={profile.fps:g},scale={profile.width}:{profile.height}:force_original_aspect_ratio=decrease,pad={profile.width}:{profile.height}:(ow-iw)/2:(oh-ih)/2:color=black[{label}]"
+            )
             video_labels.append(label)
 
         if video_labels:
-            current = video_labels[0]
-            for n, label in enumerate(video_labels[1:], 1):
-                out = f"ov{n}"
-                filter_parts.append(f"[{current}][{label}]overlay=eof_action=pass:shortest=0[{out}]")
+            # Timeline clips are positioned in absolute time. A chained overlay
+            # of finite clips is incorrect because the first main input ends and
+            # prevents later clips from becoming visible. Build a finite black
+            # canvas for the complete timeline and overlay each clip at its exact
+            # interval; z_index controls stacking order for overlaps.
+            base = "vbase"
+            duration = timeline.duration_us / 1_000_000
+            filter_parts.append(f"color=c=black:s={profile.width}x{profile.height}:r={profile.fps:g}:d={duration:.6f}[{base}]")
+            current = base
+            for index, clip in enumerate(ordered_video):
+                start = clip.start_us / 1_000_000
+                end = clip.end_us / 1_000_000
+                out = f"vo{index}"
+                filter_parts.append(
+                    f"[{current}][{video_labels[index]}]overlay=eof_action=pass:shortest=0:enable='between(t,{start:.6f},{end:.6f})'[{out}]"
+                )
                 current = out
             final_video = current
             if self.options.subtitles_path:
@@ -134,13 +150,12 @@ class FfmpegRenderer(Renderer):
         fd, staging_name = tempfile.mkstemp(prefix="acf-render-", suffix=".mp4", dir=destination.parent)
         os.close(fd)
         staging = Path(staging_name)
-        # Reserve a unique name without leaving an existing file behind: FFmpeg's
-        # -n mode must be able to create the staging output itself.
         staging.unlink(missing_ok=True)
         try:
             args = self._build_args(timeline, profile, str(staging))
             proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
-            self._processes[timeline.id] = proc
+            with self._process_lock:
+                self._processes[timeline.id] = proc
             try:
                 _, stderr = proc.communicate(timeout=max(1, self.options.timeout_seconds))
             except subprocess.TimeoutExpired:
@@ -154,11 +169,13 @@ class FfmpegRenderer(Renderer):
         except (OSError, ValueError) as exc:
             return RenderResult(False, error=str(exc))
         finally:
-            self._processes.pop(timeline.id, None)
+            with self._process_lock:
+                self._processes.pop(timeline.id, None)
             staging.unlink(missing_ok=True)
 
     def cancel(self, render_id: str) -> bool:
-        proc = self._processes.get(render_id)
+        with self._process_lock:
+            proc = self._processes.get(render_id)
         if not proc or proc.poll() is not None:
             return False
         try:
@@ -178,8 +195,10 @@ class FfmpegRenderer(Renderer):
 
     def cancel_all(self) -> int:
         """Stop every active FFmpeg process and return the number signalled."""
+        with self._process_lock:
+            render_ids = list(self._processes)
         cancelled = 0
-        for render_id in list(self._processes):
+        for render_id in render_ids:
             if self.cancel(render_id):
                 cancelled += 1
         return cancelled
