@@ -4,7 +4,7 @@ import hashlib
 import json
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from ..domain.job_events import JobEvent
@@ -55,6 +55,32 @@ def _fingerprint(request: CreateJobRequest) -> str:
 def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime | None = None, events: SQLiteJobEventRepository | None = None) -> APIRouter:
     service = JobService(repository)
     event_repository = events or (SQLiteJobEventRepository(runtime.repositories.store) if runtime else None)
+
+    @router.get("")
+    def list_jobs(
+        request: Request,
+        project_id: str | None = Query(default=None, alias="projectId"),
+        job_status: str | None = Query(default=None, alias="status"),
+        limit: int = Query(default=50, ge=1, le=200),
+    ) -> dict[str, Any]:
+        """Read-only Control Center feed. Never exposes raw database rows."""
+        clauses: list[str] = []
+        params: list[Any] = []
+        if project_id:
+            clauses.append("project_id = ?")
+            params.append(project_id)
+        if job_status:
+            clauses.append("status = ?")
+            params.append(job_status.upper())
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = repository.store.connection.execute(
+            f"SELECT * FROM jobs{where} ORDER BY created_at DESC LIMIT ?", (*params, limit)
+        ).fetchall()
+        jobs = [repository._job_from_row(row) if hasattr(repository, "_job_from_row") else None for row in rows]
+        # Keep reconstruction in the repository boundary when possible; this
+        # fallback uses the same canonical serializer source through get().
+        data = [_serialize(repository.get(row["id"])) for row in rows]
+        return {"data": data, "meta": {"count": len(data), "limit": limit}, "requestId": request.state.request_id}
 
     @router.post("", status_code=status.HTTP_202_ACCEPTED)
     def create_job(request: CreateJobRequest, http_request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
