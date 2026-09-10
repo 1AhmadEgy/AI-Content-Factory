@@ -1,9 +1,4 @@
-"""SQLite persistence adapters for the backend domain repositories.
-
-The adapter deliberately uses only Python's standard library so the local-first
-runtime can start without an external database service. PostgreSQL can later be
-introduced behind the same repository interfaces without changing the domain.
-"""
+"""SQLite persistence adapters for the backend domain repositories."""
 
 from __future__ import annotations
 
@@ -26,7 +21,6 @@ from ..domain.repositories import (
     ShotRepository,
 )
 
-
 T = TypeVar("T")
 
 
@@ -43,7 +37,7 @@ def _json(value: Any) -> str:
 
 
 class SQLiteStore:
-    """Owns the SQLite connection and schema lifecycle."""
+    """Owns the SQLite connection, schema lifecycle and idempotency records."""
 
     def __init__(self, path: str | Path = ":memory:") -> None:
         self.path = str(path)
@@ -119,6 +113,13 @@ class SQLiteStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_jobs_project_status ON jobs(project_id, status);
                 CREATE INDEX IF NOT EXISTS idx_jobs_status_priority ON jobs(status, priority, created_at);
+                CREATE TABLE IF NOT EXISTS idempotency_keys (
+                    key TEXT PRIMARY KEY,
+                    operation TEXT NOT NULL,
+                    request_fingerprint TEXT NOT NULL,
+                    resource_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
                 """
             )
 
@@ -128,13 +129,28 @@ class SQLiteStore:
 
     def _get(self, table: str, entity_id: str) -> sqlite3.Row | None:
         with self._lock:
-            return self._connection.execute(
-                f"SELECT * FROM {table} WHERE id = ?", (entity_id,)
-            ).fetchone()
+            return self._connection.execute(f"SELECT * FROM {table} WHERE id = ?", (entity_id,)).fetchone()
 
     def _insert(self, sql: str, values: tuple[Any, ...]) -> None:
         with self._lock, self._connection:
             self._connection.execute(sql, values)
+
+    def get_idempotency(self, key: str, operation: str) -> sqlite3.Row | None:
+        with self._lock:
+            return self._connection.execute(
+                "SELECT * FROM idempotency_keys WHERE key = ? AND operation = ?", (key, operation)
+            ).fetchone()
+
+    def claim_idempotency(self, key: str, operation: str, fingerprint: str, resource_id: str) -> bool:
+        with self._lock, self._connection:
+            try:
+                self._connection.execute(
+                    "INSERT INTO idempotency_keys(key,operation,request_fingerprint,resource_id,created_at) VALUES(?,?,?,?,?)",
+                    (key, operation, fingerprint, resource_id, datetime.utcnow().isoformat()),
+                )
+                return True
+            except sqlite3.IntegrityError:
+                return False
 
 
 class SQLiteProjectRepository(ProjectRepository):
@@ -202,68 +218,33 @@ class SQLiteShotRepository(ShotRepository):
 
 
 def _job_input_to_dict(value: JobInput) -> dict[str, Any]:
-    return {
-        "parameters": value.parameters,
-        "referenceAssetIds": value.reference_asset_ids,
-        "constraints": value.constraints,
-        "seed": value.seed,
-        "deterministic": value.deterministic,
-    }
+    return {"parameters": value.parameters, "referenceAssetIds": value.reference_asset_ids, "constraints": value.constraints, "seed": value.seed, "deterministic": value.deterministic}
 
 
 def _job_input_from_dict(value: dict[str, Any]) -> JobInput:
-    return JobInput(
-        parameters=value.get("parameters", {}),
-        reference_asset_ids=value.get("referenceAssetIds", []),
-        constraints=value.get("constraints", {}),
-        seed=value.get("seed"),
-        deterministic=value.get("deterministic", False),
-    )
+    return JobInput(parameters=value.get("parameters", {}), reference_asset_ids=value.get("referenceAssetIds", []), constraints=value.get("constraints", {}), seed=value.get("seed"), deterministic=value.get("deterministic", False))
 
 
 def _job_output_to_dict(value: JobOutput | None) -> dict[str, Any] | None:
     if value is None:
         return None
-    return {
-        "assetIds": value.asset_ids,
-        "metrics": value.metrics,
-        "providerRunId": value.provider_run_id,
-    }
+    return {"assetIds": value.asset_ids, "metrics": value.metrics, "providerRunId": value.provider_run_id}
 
 
 def _job_output_from_dict(value: dict[str, Any] | None) -> JobOutput | None:
     if value is None:
         return None
-    return JobOutput(
-        asset_ids=value.get("assetIds", []),
-        metrics=value.get("metrics", {}),
-        provider_run_id=value.get("providerRunId"),
-    )
+    return JobOutput(asset_ids=value.get("assetIds", []), metrics=value.get("metrics", {}), provider_run_id=value.get("providerRunId"))
 
 
 def _job_from_row(row: sqlite3.Row) -> GenerationJob:
     return GenerationJob(
-        id=row["id"],
-        parent_job_id=row["parent_job_id"],
-        project_id=row["project_id"],
-        type=JobType(row["type"]),
-        target_type=row["target_type"],
-        target_id=row["target_id"],
-        priority=row["priority"],
-        status=JobStatus(row["status"]),
-        progress=row["progress"],
-        attempt=row["attempt"],
-        max_attempts=row["max_attempts"],
-        provider=row["provider"],
-        model=row["model"],
-        input=_job_input_from_dict(json.loads(row["input_json"])),
-        output=_job_output_from_dict(json.loads(row["output_json"]) if row["output_json"] else None),
-        error_code=row["error_code"],
-        error_message=row["error_message"],
-        created_at=_parse_dt(row["created_at"]),
-        started_at=_parse_dt(row["started_at"]),
-        completed_at=_parse_dt(row["completed_at"]),
-        updated_at=_parse_dt(row["updated_at"]),
+        id=row["id"], parent_job_id=row["parent_job_id"], project_id=row["project_id"], type=JobType(row["type"]),
+        target_type=row["target_type"], target_id=row["target_id"], priority=row["priority"], status=JobStatus(row["status"]),
+        progress=row["progress"], attempt=row["attempt"], max_attempts=row["max_attempts"], provider=row["provider"], model=row["model"],
+        input=_job_input_from_dict(json.loads(row["input_json"])), output=_job_output_from_dict(json.loads(row["output_json"]) if row["output_json"] else None),
+        error_code=row["error_code"], error_message=row["error_message"], created_at=_parse_dt(row["created_at"]),
+        started_at=_parse_dt(row["started_at"]), completed_at=_parse_dt(row["completed_at"]), updated_at=_parse_dt(row["updated_at"]),
     )
 
 
@@ -273,19 +254,8 @@ class SQLiteJobRepository(JobRepository):
 
     def create(self, job: GenerationJob) -> GenerationJob:
         self.store._insert(
-            """INSERT INTO jobs(
-                id,parent_job_id,project_id,type,target_type,target_id,priority,status,
-                progress,attempt,max_attempts,provider,model,input_json,output_json,
-                error_code,error_message,created_at,started_at,completed_at,updated_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (
-                job.id, job.parent_job_id, job.project_id, job.type.value, job.target_type,
-                job.target_id, job.priority, job.status.value, job.progress, job.attempt,
-                job.max_attempts, job.provider, job.model, _json(_job_input_to_dict(job.input)),
-                _json(_job_output_to_dict(job.output)) if job.output else None,
-                job.error_code, job.error_message, _dt(job.created_at), _dt(job.started_at),
-                _dt(job.completed_at), _dt(job.updated_at),
-            ),
+            """INSERT INTO jobs(id,parent_job_id,project_id,type,target_type,target_id,priority,status,progress,attempt,max_attempts,provider,model,input_json,output_json,error_code,error_message,created_at,started_at,completed_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (job.id, job.parent_job_id, job.project_id, job.type.value, job.target_type, job.target_id, job.priority, job.status.value, job.progress, job.attempt, job.max_attempts, job.provider, job.model, _json(_job_input_to_dict(job.input)), _json(_job_output_to_dict(job.output)) if job.output else None, job.error_code, job.error_message, _dt(job.created_at), _dt(job.started_at), _dt(job.completed_at), _dt(job.updated_at)),
         )
         return job
 
@@ -296,18 +266,8 @@ class SQLiteJobRepository(JobRepository):
     def update(self, job: GenerationJob) -> GenerationJob:
         with self.store._lock, self.store.connection:
             cursor = self.store.connection.execute(
-                """UPDATE jobs SET parent_job_id=?, project_id=?, type=?, target_type=?, target_id=?,
-                priority=?, status=?, progress=?, attempt=?, max_attempts=?, provider=?, model=?,
-                input_json=?, output_json=?, error_code=?, error_message=?, created_at=?, started_at=?,
-                completed_at=?, updated_at=? WHERE id=?""",
-                (
-                    job.parent_job_id, job.project_id, job.type.value, job.target_type, job.target_id,
-                    job.priority, job.status.value, job.progress, job.attempt, job.max_attempts,
-                    job.provider, job.model, _json(_job_input_to_dict(job.input)),
-                    _json(_job_output_to_dict(job.output)) if job.output else None,
-                    job.error_code, job.error_message, _dt(job.created_at), _dt(job.started_at),
-                    _dt(job.completed_at), _dt(job.updated_at), job.id,
-                ),
+                """UPDATE jobs SET parent_job_id=?,project_id=?,type=?,target_type=?,target_id=?,priority=?,status=?,progress=?,attempt=?,max_attempts=?,provider=?,model=?,input_json=?,output_json=?,error_code=?,error_message=?,created_at=?,started_at=?,completed_at=?,updated_at=? WHERE id=?""",
+                (job.parent_job_id, job.project_id, job.type.value, job.target_type, job.target_id, job.priority, job.status.value, job.progress, job.attempt, job.max_attempts, job.provider, job.model, _json(_job_input_to_dict(job.input)), _json(_job_output_to_dict(job.output)) if job.output else None, job.error_code, job.error_message, _dt(job.created_at), _dt(job.started_at), _dt(job.completed_at), _dt(job.updated_at), job.id),
             )
             if cursor.rowcount != 1:
                 raise KeyError(f"Job not found: {job.id}")
@@ -315,8 +275,6 @@ class SQLiteJobRepository(JobRepository):
 
 
 class SQLiteRepositories:
-    """Convenience composition root for backend persistence."""
-
     def __init__(self, path: str | Path = ":memory:") -> None:
         self.store = SQLiteStore(path)
         self.projects = SQLiteProjectRepository(self.store)
