@@ -9,6 +9,7 @@ from ..application.ai_story_engine import AIStoryEngine
 from ..domain.content import ContentBrief, StoryPlan
 from ..infrastructure.asset_repository import SQLiteAssetRepository
 from ..infrastructure.character_repository import SQLiteCharacterRepository
+from ..infrastructure.location_repository import SQLiteLocationRepository
 from ..infrastructure.job_event_repository import SQLiteJobEventRepository
 from ..infrastructure.provider_run_repository import SQLiteProviderRunRepository
 from ..infrastructure.sqlite import SQLiteRepositories
@@ -30,14 +31,13 @@ from .job_executor import ExecutionResult, JobExecutor
 from .job_service import JobService
 from .queue import JobLease
 
-
 class OrchestratorRuntime:
-    """Local-first composition root coordinating AI, durable assets and reusable character identity."""
-
+    """Local-first composition root coordinating AI, durable assets, characters and reusable locations."""
     def __init__(self, repositories: SQLiteRepositories, storage_root: str | Path | None = None) -> None:
         self.repositories = repositories
         self.assets = SQLiteAssetRepository(repositories.store)
         self.characters = SQLiteCharacterRepository(repositories.store)
+        self.locations = SQLiteLocationRepository(repositories.store)
         self.events = SQLiteJobEventRepository(repositories.store)
         self.provider_runs = SQLiteProviderRunRepository(repositories.store)
         self.queue = SQLiteJobQueue(repositories.store, repositories.jobs)
