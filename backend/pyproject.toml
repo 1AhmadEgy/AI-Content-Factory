@@ -18,7 +18,7 @@ test = [
 ]
 
 [tool.pytest.ini_options]
-pythonpath = [".."]
+pythonpath = [".", ".."]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
