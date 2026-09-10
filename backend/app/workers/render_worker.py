@@ -20,13 +20,7 @@ class RenderWorker(Worker):
 
     worker_type = "render"
 
-    def __init__(
-        self,
-        storage: LocalAssetStorage,
-        assets: AssetRepository,
-        ffmpeg_binary: str = "ffmpeg",
-        ffprobe_binary: str = "ffprobe",
-    ) -> None:
+    def __init__(self, storage: LocalAssetStorage, assets: AssetRepository, ffmpeg_binary: str = "ffmpeg", ffprobe_binary: str = "ffprobe") -> None:
         self.storage = storage
         self.assets = assets
         self.ffmpeg_binary = ffmpeg_binary
@@ -36,12 +30,14 @@ class RenderWorker(Worker):
 
     def initialize(self) -> None:
         renderer = FfmpegRenderer({}, FfmpegRenderOptions(ffmpeg_bin=self.ffmpeg_binary, ffprobe_bin=self.ffprobe_binary))
-        self._initialized = bool(renderer.health_check().get("available"))
+        health = renderer.health_check()
+        self._initialized = bool(health.get("available"))
 
     def health_check(self) -> bool:
         return self._initialized
 
     def execute(self, job: GenerationJob, context: WorkerContext) -> JobExecutionResult:
+        context.report_progress(0.10, "preparing")
         if not self._initialized:
             return JobExecutionResult(False, error_code="FFMPEG_NOT_AVAILABLE", error_message="FFmpeg/ffprobe executable was not found")
         if not job.input.reference_asset_ids:
@@ -53,17 +49,16 @@ class RenderWorker(Worker):
 
         try:
             manifest = json.loads(self.storage.read_bytes(timeline_asset.sha256))
-            timeline = self._timeline_from_manifest(manifest, job.project_id)
+            timeline = self._timeline_from_manifest(manifest, job.project_id, job.id)
         except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
             return JobExecutionResult(False, error_code="RENDER_INVALID_TIMELINE", error_message=str(exc))
         if not timeline.tracks:
             return JobExecutionResult(False, error_code="RENDER_EMPTY_TIMELINE", error_message="Timeline has no tracks")
+        context.report_progress(0.20, "assets_loaded")
 
         width, height = self._resolution(job.input.parameters)
         fps = max(1, int(job.input.parameters.get("fps", 30)))
-        timeout = int(job.input.parameters.get("timeoutSeconds", 600))
         profile = RenderProfile(name=f"{width}x{height}@{fps}", width=width, height=height, fps=float(fps))
-
         asset_paths: dict[str, str] = {}
         for track in timeline.tracks:
             for clip in track.clips:
@@ -88,14 +83,17 @@ class RenderWorker(Worker):
         output = self.storage.root / "staging" / f"render-{job.id}-{uuid.uuid4().hex}.mp4"
         try:
             output.parent.mkdir(parents=True, exist_ok=True)
+            context.report_progress(0.30, "rendering")
             result = renderer.render(timeline, profile, str(output))
             if not result.success or not result.output_path:
                 message = result.error or "FFmpeg render failed"
                 return JobExecutionResult(False, error_code="FFMPEG_RENDER_FAILED", error_message=message, retryable=True)
+            context.report_progress(0.82, "audio_mix_complete")
             probe = renderer.probe(result.output_path)
             errors = self._validate_probe(probe, width, height)
             if errors:
                 return JobExecutionResult(False, error_code="FINAL_QC_FAILED", error_message=";".join(errors), retryable=False)
+            context.report_progress(0.90, "ffprobe_qc_passed")
             payload = Path(result.output_path).read_bytes()
         except (OSError, RuntimeError, ValueError) as exc:
             return JobExecutionResult(False, error_code="RENDER_IO_ERROR", error_message=str(exc), retryable=True)
@@ -103,6 +101,7 @@ class RenderWorker(Worker):
             self._renderers.pop(job.id, None)
             output.unlink(missing_ok=True)
 
+        context.report_progress(0.96, "provenance")
         digest, path, size = self.storage.put_bytes(payload)
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"render:{job.id}:{digest}"))
         asset = Asset(
@@ -114,23 +113,13 @@ class RenderWorker(Worker):
             size_bytes=size,
             sha256=digest,
             status=AssetStatus.READY,
-            provenance=build_provenance(
-                job,
-                source_asset_ids=[timeline_asset.id, *asset_paths.keys()],
-                metadata={"width": width, "height": height, "fps": fps, "durationUs": timeline.duration_us, "engine": "ffmpeg", "finalQc": "passed"},
-                license_status=LicenseStatus.VERIFIED,
-            ),
+            provenance=build_provenance(job, source_asset_ids=[timeline_asset.id, *asset_paths.keys()], metadata={"width": width, "height": height, "fps": fps, "durationUs": timeline.duration_us, "engine": "ffmpeg", "finalQc": "passed"}, license_status=LicenseStatus.VERIFIED),
         )
         self.assets.create(asset)
-        return JobExecutionResult(
-            True,
-            [asset_id],
-            {"width": width, "height": height, "fps": fps, "durationUs": timeline.duration_us, "finalQc": "passed", "engine": "ffmpeg"},
-            f"ffmpeg-{job.id}",
-        )
+        return JobExecutionResult(True, [asset_id], {"width": width, "height": height, "fps": fps, "durationUs": timeline.duration_us, "finalQc": "passed", "engine": "ffmpeg"}, f"ffmpeg-{job.id}")
 
     @staticmethod
-    def _timeline_from_manifest(manifest: dict[str, object], project_id: str) -> Timeline:
+    def _timeline_from_manifest(manifest: dict[str, object], project_id: str, timeline_id: str) -> Timeline:
         tracks: list[TimelineTrack] = []
         for raw_track in manifest.get("tracks", []):
             if not isinstance(raw_track, dict):
@@ -140,24 +129,9 @@ class RenderWorker(Worker):
             for raw_clip in raw_track.get("clips", []):
                 if not isinstance(raw_clip, dict):
                     continue
-                clips.append(
-                    TimelineClip(
-                        id=str(raw_clip.get("id", uuid.uuid4().hex)),
-                        asset_id=str(raw_clip["assetId"]),
-                        start_us=int(raw_clip.get("startUs", 0)),
-                        duration_us=int(raw_clip.get("durationUs", 0)),
-                        source_start_us=int(raw_clip.get("sourceStartUs", 0)),
-                        z_index=int(raw_clip.get("zIndex", 0)),
-                    )
-                )
+                clips.append(TimelineClip(id=str(raw_clip.get("id", uuid.uuid4().hex)), asset_id=str(raw_clip["assetId"]), start_us=int(raw_clip.get("startUs", 0)), duration_us=int(raw_clip.get("durationUs", 0)), source_start_us=int(raw_clip.get("sourceStartUs", 0)), z_index=int(raw_clip.get("zIndex", 0))))
             tracks.append(TimelineTrack(id=str(raw_track.get("id", uuid.uuid4().hex)), type=track_type, clips=clips))
-        return Timeline(
-            id=str(manifest.get("id", uuid.uuid4().hex)),
-            project_id=project_id,
-            duration_us=int(manifest["durationUs"]),
-            timebase=int(manifest.get("timebase", 1_000_000)),
-            tracks=tracks,
-        )
+        return Timeline(id=timeline_id, project_id=project_id, duration_us=int(manifest["durationUs"]), timebase=int(manifest.get("timebase", 1_000_000)), tracks=tracks)
 
     @staticmethod
     def _validate_probe(probe: dict[str, object], width: int, height: int) -> list[str]:
@@ -180,8 +154,7 @@ class RenderWorker(Worker):
     def _resolution(parameters: dict[str, object]) -> tuple[int, int]:
         preset = str(parameters.get("resolution", parameters.get("quality", "1080p"))).lower()
         ratio = str(parameters.get("aspectRatio", "16:9"))
-        heights = {"720p": 720, "1080p": 1080, "4k": 2160}
-        height = heights.get(preset, 1080)
+        height = {"720p": 720, "1080p": 1080, "4k": 2160}.get(preset, 1080)
         if ratio == "9:16":
             return (height * 9 // 16, height)
         if ratio == "1:1":
@@ -191,11 +164,7 @@ class RenderWorker(Worker):
     def cancel(self, job_id: str) -> None:
         renderer = self._renderers.get(job_id)
         if renderer is not None:
-            renderer.cancel(renderer_id=self._renderer_id(job_id))
-
-    @staticmethod
-    def _renderer_id(job_id: str) -> str:
-        return job_id
+            renderer.cancel(job_id)
 
     def shutdown(self) -> None:
         for renderer in list(self._renderers.values()):
