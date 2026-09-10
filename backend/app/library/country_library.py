@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from .country_catalog import get_country_library
+from .country_catalog import get_country_library, list_country_libraries
+from .default_library import default_characters, default_locations
+from .egypt_expanded import expanded_characters, expanded_locations
 from .series_templates import list_series_templates
-
 
 LIBRARY_SCHEMA_VERSION = 1
 LIBRARY_CATEGORIES = (
@@ -15,11 +16,7 @@ LIBRARY_CATEGORIES = (
 
 
 def build_country_library_spec(country_id: str) -> dict[str, Any] | None:
-    """Return a stable empty content contract for an independent country library.
-
-    The registry deliberately does not copy another country's characters or
-    locations. Content can be seeded later without changing the API contract.
-    """
+    """Return a stable empty content contract for an independent country library."""
     country = get_country_library(country_id)
     if country is None:
         return None
@@ -43,6 +40,76 @@ def build_country_library_spec(country_id: str) -> dict[str, Any] | None:
     }
 
 
+def _serialize_character(value: Any) -> dict[str, Any]:
+    return {
+        "id": value.id, "projectId": value.project_id, "name": value.name,
+        "aliases": list(value.aliases), "description": value.description,
+        "personality": value.personality, "appearance": value.appearance,
+        "voice": value.voice, "speakingStyle": value.speaking_style,
+        "visualStyle": value.visual_style, "behaviorRules": list(value.behavior_rules),
+        "referenceAssetIds": list(value.reference_asset_ids),
+        "providerCharacterId": value.provider_character_id, "metadata": value.metadata,
+        "version": value.version,
+    }
+
+
+def _serialize_location(value: Any) -> dict[str, Any]:
+    return {
+        "id": value.id, "projectId": value.project_id, "name": value.name,
+        "aliases": list(value.aliases), "description": value.description,
+        "geography": value.geography, "architecture": value.architecture,
+        "environment": value.environment, "visualStyle": value.visual_style,
+        "lighting": value.lighting, "weather": value.weather,
+        "timeOfDay": value.time_of_day, "props": list(value.props),
+        "rules": list(value.rules), "negativeConstraints": list(value.negative_constraints),
+        "referenceAssetIds": list(value.reference_asset_ids),
+        "providerLocationId": value.provider_location_id, "metadata": value.metadata,
+        "version": value.version,
+    }
+
+
+def get_country_library_content(country_id: str) -> dict[str, Any] | None:
+    """Return content plus status without inventing data for catalog-only countries."""
+    spec = build_country_library_spec(country_id)
+    if spec is None:
+        return None
+
+    if country_id != "egypt":
+        spec["contentCounts"] = {"characters": 0, "locations": 0, "seriesTemplates": len(spec["seriesTemplates"])}
+        spec["seedSource"] = []
+        return spec
+
+    characters = [*default_characters(), *expanded_characters()]
+    locations = [*default_locations(), *expanded_locations()]
+    spec["status"] = "ready"
+    spec["characters"] = [_serialize_character(item) for item in characters]
+    spec["locations"] = [_serialize_location(item) for item in locations]
+    spec["contentCounts"] = {
+        "characters": len(characters),
+        "locations": len(locations),
+        "seriesTemplates": len(spec["seriesTemplates"]),
+    }
+    spec["seedSource"] = ["default_library", "egypt_expanded"]
+    return spec
+
+
 def list_country_library_specs() -> list[dict[str, Any]]:
-    from .country_catalog import list_country_libraries
-    return [spec for country in list_country_libraries() if (spec := build_country_library_spec(str(country["id"]))) is not None]
+    return [
+        spec for country in list_country_libraries()
+        if (spec := build_country_library_spec(str(country["id"]))) is not None
+    ]
+
+
+def list_country_library_summaries() -> list[dict[str, Any]]:
+    """Lightweight selector data with truthful content counts and readiness."""
+    result: list[dict[str, Any]] = []
+    for country in list_country_libraries():
+        content = get_country_library_content(str(country["id"]))
+        assert content is not None
+        result.append({
+            **country,
+            "contentCounts": content["contentCounts"],
+            "categories": content["categories"],
+            "seriesTemplateCount": len(content["seriesTemplates"]),
+        })
+    return result
