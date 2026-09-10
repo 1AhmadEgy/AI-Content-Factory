@@ -10,19 +10,39 @@ class JobService:
         self.repository = repository
 
     def create(self, *, project_id: str, job_type: JobType, target_type: str, target_id: str | None = None, parent_job_id: str | None = None, input: JobInput | None = None, priority: int = 100, max_attempts: int = 3, provider: str | None = None, model: str | None = None) -> GenerationJob:
-        if max_attempts < 1:
-            raise ValueError("max_attempts must be >= 1")
+        if max_attempts < 1: raise ValueError("max_attempts must be >= 1")
         job = GenerationJob(id=str(uuid4()), project_id=project_id, type=job_type, target_type=target_type, target_id=target_id, parent_job_id=parent_job_id, input=input or JobInput(), priority=priority, max_attempts=max_attempts, provider=provider, model=model)
         transition(job, JobStatus.QUEUED)
         return self.repository.create(job)
 
     def cancel(self, job_id: str) -> GenerationJob:
-        job = self.repository.get(job_id)
-        if job is None:
-            raise KeyError("JOB_NOT_FOUND")
-        if job.status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}:
-            return job
-        transition(job, JobStatus.CANCELLED)
-        job.error_code = "CANCELLED_BY_USER"
-        job.error_message = "Job cancelled by user"
+        job = self._get(job_id)
+        if job.status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}: return job
+        transition(job, JobStatus.CANCELLED); job.error_code = "CANCELLED_BY_USER"; job.error_message = "Job cancelled by user"
         return self.repository.update(job)
+
+    def pause(self, job_id: str) -> GenerationJob:
+        job = self._get(job_id)
+        if job.status not in {JobStatus.QUEUED, JobStatus.RUNNING}: raise ValueError("JOB_NOT_PAUSABLE")
+        transition(job, JobStatus.PAUSED)
+        return self.repository.update(job)
+
+    def resume(self, job_id: str) -> GenerationJob:
+        job = self._get(job_id)
+        if job.status not in {JobStatus.PAUSED, JobStatus.RETRYING}: raise ValueError("JOB_NOT_RESUMABLE")
+        transition(job, JobStatus.QUEUED)
+        return self.repository.update(job)
+
+    def retry(self, job_id: str) -> GenerationJob:
+        job = self._get(job_id)
+        if job.status not in {JobStatus.FAILED, JobStatus.RETRYING}: raise ValueError("JOB_NOT_RETRYABLE")
+        if job.attempt >= job.max_attempts: raise ValueError("MAX_ATTEMPTS_REACHED")
+        if job.status is JobStatus.FAILED: job.status = JobStatus.RETRYING; job.updated_at = job.updated_at
+        transition(job, JobStatus.QUEUED)
+        job.error_code = None; job.error_message = None
+        return self.repository.update(job)
+
+    def _get(self, job_id: str) -> GenerationJob:
+        job = self.repository.get(job_id)
+        if job is None: raise KeyError("JOB_NOT_FOUND")
+        return job
