@@ -24,6 +24,7 @@ from .api.v1.render import build_router as build_render_router
 from .api.v1.scheduling import build_router as build_scheduling_router
 from .api.v1.series import build_router as build_series_router
 from .api.v1.system import build_router as build_system_router
+from .api.v1.translations import build_router as build_translation_router
 from .infrastructure.asset_repository import SQLiteAssetRepository
 from .infrastructure.sqlite import SQLiteJobRepository, SQLiteProjectRepository, SQLiteRepositories
 from .orchestrator.job_service import JobService
@@ -120,6 +121,7 @@ app.include_router(build_scheduling_router(project_repository, schedule_reposito
 app.include_router(build_factory_router(project_repository, job_repository, orchestrator_runtime))
 app.include_router(build_library_router())
 app.include_router(build_series_router(orchestrator_runtime))
+app.include_router(build_translation_router())
 app.include_router(build_content_router(orchestrator_runtime, job_repository))
 app.include_router(build_assets_router(asset_repository))
 app.include_router(build_models_router(orchestrator_runtime))
