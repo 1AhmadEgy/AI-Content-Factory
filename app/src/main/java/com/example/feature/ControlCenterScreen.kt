@@ -35,6 +35,8 @@ fun ControlCenterScreen() {
     var worker by remember { mutableStateOf<WorkerData?>(null) }
     var backendOk by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var selectedJobId by remember { mutableStateOf<String?>(null) }
+    var selectedRuns by remember { mutableStateOf<List<ProviderRunModel>>(emptyList()) }
     val scope = rememberCoroutineScope()
 
     suspend fun refresh() {
@@ -43,7 +45,10 @@ fun ControlCenterScreen() {
             val health = api.health()
             jobs = api.listJobs(limit = 100).data
             worker = api.workerStatus().data
-            backendOk = health.status.equals("ok", ignoreCase = true)
+            backendOk = health.status.equals("ok", ignoreCase = true) || health.data.status.equals("OK", ignoreCase = true)
+            selectedJobId?.let { id ->
+                selectedRuns = runCatching { api.getProviderRuns(id, limit = 20).data }.getOrDefault(emptyList())
+            }
             error = null
         } catch (t: Throwable) {
             backendOk = false
@@ -54,62 +59,78 @@ fun ControlCenterScreen() {
     LaunchedEffect(Unit) {
         while (true) {
             refresh()
-            delay(3000)
+            delay(5000)
         }
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Control Center", style = MaterialTheme.typography.headlineMedium)
         Text(if (backendOk) "Backend: ONLINE" else "Backend: OFFLINE", color = if (backendOk) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
-        worker?.let { Text("Worker: ${it.workerId} · ${if (it.running) "RUNNING" else "STOPPED"}") }
+        worker?.let { Text("Worker: ${it.workerId} · ${if (it.running) "RUNNING" else "STOPPED"} · iterations ${it.iterations}") }
+        worker?.lastError?.let { Text("Worker error: $it", color = MaterialTheme.colorScheme.error) }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Text("Jobs (${jobs.size})", style = MaterialTheme.typography.titleLarge)
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(jobs, key = { it.id }) { job ->
-                ControlCenterJobCard(job) {
-                    scope.launch { try { NetworkClient.apiService.cancelJob(job.id) } catch (_: Throwable) { } }
-                }
+                ControlCenterJobCard(
+                    job = job,
+                    selected = selectedJobId == job.id,
+                    runs = if (selectedJobId == job.id) selectedRuns else emptyList(),
+                    onSelect = {
+                        selectedJobId = if (selectedJobId == job.id) null else job.id
+                        if (selectedJobId == job.id) {
+                            scope.launch {
+                                selectedRuns = runCatching { NetworkClient.apiService.getProviderRuns(job.id, 20).data }.getOrDefault(emptyList())
+                            }
+                        } else selectedRuns = emptyList()
+                    },
+                    onCancel = {
+                        scope.launch {
+                            try { NetworkClient.apiService.cancelJob(job.id); refresh() }
+                            catch (t: Throwable) { error = t.message ?: "Cancel failed" }
+                        }
+                    },
+                    onRetry = {
+                        scope.launch {
+                            try { NetworkClient.apiService.retryJob(job.id); refresh() }
+                            catch (t: Throwable) { error = t.message ?: "Retry failed" }
+                        }
+                    },
+                )
             }
         }
     }
 }
 
 @Composable
-private fun ControlCenterJobCard(job: BackendJob, onCancel: () -> Unit) {
-    var runs by remember(job.id) { mutableStateOf<List<ProviderRunModel>>(emptyList()) }
-    var runsError by remember(job.id) { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(job.id, job.status) {
-        try {
-            runs = NetworkClient.apiService.getProviderRuns(job.id, limit = 20).data
-            runsError = null
-        } catch (t: Throwable) {
-            runsError = t.message
-        }
-    }
-
-    Card(modifier = Modifier.fillMaxWidth()) {
+private fun ControlCenterJobCard(
+    job: BackendJob,
+    selected: Boolean,
+    runs: List<ProviderRunModel>,
+    onSelect: () -> Unit,
+    onCancel: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth(), onClick = onSelect) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(job.type, style = MaterialTheme.typography.titleMedium)
             Text("${job.status} · ${job.projectId}")
             LinearProgressIndicator(progress = { job.progress.coerceIn(0.0, 1.0).toFloat() }, modifier = Modifier.fillMaxWidth())
             Text("Progress ${(job.progress * 100).toInt()}% · Attempt ${job.attempt}/${job.maxAttempts}")
-            if (job.errorMessage != null) Text(job.errorMessage, color = MaterialTheme.colorScheme.error)
+            job.errorCode?.let { Text("Error: $it", color = MaterialTheme.colorScheme.error) }
+            job.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
-            if (runs.isNotEmpty()) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                if (job.status in setOf("PENDING", "QUEUED", "RUNNING", "RETRYING")) Button(onClick = onCancel) { Text("Cancel") }
+                if (job.status == "FAILED") Button(onClick = onRetry) { Text("Retry") }
+            }
+
+            if (selected) {
                 Text("Provider Runs (${runs.size})", style = MaterialTheme.typography.labelLarge)
                 runs.take(5).forEach { run ->
                     val duration = run.durationMs?.let { " · ${it}ms" } ?: ""
                     Text("${run.provider}${run.model?.let { "/$it" } ?: ""} · ${run.status}$duration")
                     run.errorCode?.let { Text("Error: $it", color = MaterialTheme.colorScheme.error) }
-                }
-            } else if (runsError != null) {
-                Text("Provider runs unavailable", color = MaterialTheme.colorScheme.error)
-            }
-
-            if (job.status in setOf("PENDING", "QUEUED", "RUNNING")) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    Button(onClick = onCancel) { Text("Cancel") }
                 }
             }
         }
