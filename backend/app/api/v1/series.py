@@ -38,6 +38,7 @@ class SeriesTranslationSegment(BaseModel):
 class SeriesTranslationRequest(BaseModel):
     segments: list[SeriesTranslationSegment] = Field(min_length=1, max_length=500)
     targetLanguages: list[str] | None = Field(default=None, max_length=20)
+    glossary: dict[str, str] | None = None
     provider: str | None = None
     model: str | None = None
     translationVersion: int = Field(default=1, ge=1)
@@ -205,7 +206,7 @@ def build_router(runtime) -> APIRouter:
 
     @router.post("/projects/{project_id}/translate")
     def translate_series(project_id: str, body: SeriesTranslationRequest, request: Request):
-        """Translate series content using the languages, glossary and policy stored on its context."""
+        """Translate series content using its immutable source/language contract."""
         project_or_404(project_id)
         context = repo.get(project_id)
         if context is None:
@@ -213,25 +214,26 @@ def build_router(runtime) -> APIRouter:
         _validate_context_language(context)
 
         source_language = str(context.get("sourceLanguage", ""))
-        configured_targets = [str(item) for item in context.get("targetLanguages", [])]
+        configured_targets = list(dict.fromkeys(str(item) for item in context.get("targetLanguages", [])))
         targets = list(dict.fromkeys(body.targetLanguages or configured_targets))
         allowed = {item["id"] for item in get_country_languages(str(context["countryId"]))}
         if source_language not in allowed or any(target not in allowed for target in targets):
             raise HTTPException(400, "LANGUAGE_NOT_SUPPORTED_BY_COUNTRY")
         if any(target not in configured_targets for target in targets):
             raise HTTPException(400, "TARGET_LANGUAGE_NOT_ENABLED_FOR_SERIES")
-
-        policy = context.get("translationPolicy") or {}
-        if policy.get("preserveSource") is False:
+        if (context.get("translationPolicy") or {}).get("preserveSource") is False:
             raise HTTPException(409, "SERIES_TRANSLATION_SOURCE_MUST_BE_PRESERVED")
 
+        glossary = dict(context.get("glossary") or {})
+        if body.glossary is not None:
+            glossary.update(body.glossary)
         segments = [
             ContentSegment(
                 id=item.id,
                 text=item.text,
                 content_type=item.contentType,
                 version=item.version,
-                context={**item.context, "seriesId": project_id, "dialect": context.get("dialect")},
+                context={**item.context, "seriesId": project_id, "countryId": context.get("countryId"), "dialect": context.get("dialect")},
                 preserve_terms=tuple(item.preserveTerms),
             )
             for item in body.segments
@@ -240,29 +242,32 @@ def build_router(runtime) -> APIRouter:
             segments,
             source_language=source_language,
             target_languages=targets,
-            glossary=dict(context.get("glossary") or {}),
+            glossary=glossary,
             provider=body.provider,
             model=body.model,
             manual_texts=body.manualTexts,
             translation_version=body.translationVersion,
         )
-        context["translationVersions"] = {
-            **dict(context.get("translationVersions") or {}),
-            str(body.translationVersion): {
-                "sourceLanguage": source_language,
-                "targetLanguages": targets,
-                "segmentCount": len(segments),
-            },
+
+        versions = dict(context.get("translationVersions") or {})
+        versions[str(body.translationVersion)] = {
+            "sourceLanguage": source_language,
+            "targetLanguages": targets,
+            "segmentCount": len(segments),
         }
+        context["translationVersions"] = versions
         repo.save(project_id, context)
         return {
             "data": output["results"],
             "errors": output["errors"],
+            "seriesId": project_id,
+            "countryId": context.get("countryId"),
+            "libraryId": context.get("libraryId"),
             "sourceLanguage": source_language,
             "targetLanguages": targets,
+            "dialect": context.get("dialect"),
             "translationVersion": body.translationVersion,
             "sourcePreserved": True,
-            "seriesId": project_id,
             "requestId": request.state.request_id,
         }
 
