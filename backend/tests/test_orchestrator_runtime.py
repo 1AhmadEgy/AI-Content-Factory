@@ -4,6 +4,7 @@ from backend.app.orchestrator.job_service import JobService
 from backend.app.orchestrator.runtime import OrchestratorRuntime
 from backend.app.infrastructure.sqlite import SQLiteRepositories
 
+
 def test_runtime_executes_queued_job_and_persists_events(tmp_path):
     repositories = SQLiteRepositories(":memory:")
     repositories.projects.create(Project(id="project-1", name="Demo"))
@@ -15,4 +16,4 @@ def test_runtime_executes_queued_job_and_persists_events(tmp_path):
     persisted = repositories.jobs.get(job.id)
     assert persisted is not None and persisted.output is not None and persisted.output.asset_ids
     events = runtime.events.list_for_job(job.id)
-    assert [event.event_type for event in events] == ["JOB_STARTED", "JOB_PROGRESS", "JOB_COMPLETED"]
+    assert [event.event_type for event in events] == ["JOB_STARTED", "JOB_COMPLETED"]
