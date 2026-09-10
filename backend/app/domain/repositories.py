@@ -14,6 +14,7 @@ class IdempotencyResult:
     job: GenerationJob | None
     existing_resource_id: str | None = None
     conflict: bool = False
+    replayed: bool = False
 
 
 class ProjectRepository(ABC):
@@ -74,11 +75,7 @@ class JobRepository(ABC):
         operation: str,
         fingerprint: str,
     ) -> IdempotencyResult | None:
-        """Optionally atomically create a job and idempotency record.
-
-        Repositories without transactional idempotency support return None so
-        callers can use their normal creation path.
-        """
+        """Optionally atomically create a job and idempotency record."""
         return None
 
     @abstractmethod
