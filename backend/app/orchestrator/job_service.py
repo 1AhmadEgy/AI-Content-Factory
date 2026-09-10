@@ -74,10 +74,9 @@ class JobService:
             operation=operation,
             fingerprint=fingerprint,
         )
-        if result is not None:
-            return result
-
-        return IdempotencyResult(job=self.repository.create(job))
+        if result is None:
+            raise RuntimeError("IDEMPOTENCY_NOT_SUPPORTED")
+        return result
 
     def cancel(self, job_id: str) -> GenerationJob:
         job = self._get(job_id)
