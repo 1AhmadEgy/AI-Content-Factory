@@ -69,7 +69,7 @@ class JobQueue(ABC):
 
     @abstractmethod
     def acknowledge(self, lease: JobLease, status: JobStatus) -> None:
-        """Finalize a leased queue item after durable job state is written."""
+        """Atomically release the lease and persist the queue-visible status."""
 
     @abstractmethod
     def release_expired(self) -> int:
