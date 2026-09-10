@@ -1,140 +1,155 @@
 package com.example.data.repository
 
+import android.util.Log
 import com.example.core.model.*
-
-import com.example.data.remote.NetworkClient
 import com.example.data.local.FactoryDao
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.stateIn
+import com.example.data.remote.BackendJob
+import com.example.data.remote.CreateJobRequest
+import com.example.data.remote.JobInputRequest
+import com.example.data.remote.NetworkClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import android.util.Log
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.TimeZone
 
 class Repository(private val dao: FactoryDao) {
     private val scope = CoroutineScope(Dispatchers.IO)
     private val api = NetworkClient.apiService
+    private val isoParser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSX", Locale.US).apply {
+        timeZone = TimeZone.getTimeZone("UTC")
+    }
 
-    val projects: StateFlow<List<Project>> = dao.getAllProjects()
-        .stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val series: StateFlow<List<Series>> = dao.getAllSeries()
-        .stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val episodes: StateFlow<List<Episode>> = dao.getAllEpisodes()
-        .stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val scenes: StateFlow<List<Scene>> = dao.getAllScenes()
-        .stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val jobs: StateFlow<List<GenerationJob>> = dao.getAllJobs()
-        .stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val projects: StateFlow<List<Project>> = dao.getAllProjects().stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val series: StateFlow<List<Series>> = dao.getAllSeries().stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val episodes: StateFlow<List<Episode>> = dao.getAllEpisodes().stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val scenes: StateFlow<List<Scene>> = dao.getAllScenes().stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val jobs: StateFlow<List<GenerationJob>> = dao.getAllJobs().stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
-        // Pre-populate mock data only if DB is empty
         scope.launch {
             if (dao.getAllProjects().firstOrNull()?.isEmpty() == true) {
-                val defaultProject = Project(name = "My AI Series", description = "Arabic comedy series")
-                dao.insertProject(defaultProject)
-
-                val defaultSeries = Series(projectId = defaultProject.id, title = "Pilot Series", genre = "Comedy")
-                dao.insertSeries(defaultSeries)
-
-                val ep1 = Episode(seriesId = defaultSeries.id, number = 1, title = "The Beginning")
-                dao.insertEpisode(ep1)
-
-                val s1 = Scene(episodeId = ep1.id, number = 1, description = "A character enters the room surprised", location = "Living Room", emotion = "Surprise")
-                val s2 = Scene(episodeId = ep1.id, number = 2, description = "Character finds a mysterious box", location = "Living Room", emotion = "Curiosity")
-                dao.insertScene(s1)
-                dao.insertScene(s2)
+                val project = Project(name = "My AI Series", description = "Arabic comedy series")
+                dao.insertProject(project)
+                val series = Series(projectId = project.id, title = "Pilot Series", genre = "Comedy")
+                dao.insertSeries(series)
+                val episode = Episode(seriesId = series.id, number = 1, title = "The Beginning")
+                dao.insertEpisode(episode)
+                dao.insertScene(Scene(episodeId = episode.id, number = 1, description = "A character enters the room surprised", location = "Living Room", emotion = "Surprise"))
+                dao.insertScene(Scene(episodeId = episode.id, number = 2, description = "Character finds a mysterious box", location = "Living Room", emotion = "Curiosity"))
             }
+            syncJobs()
         }
     }
 
     suspend fun addProject(name: String, description: String) {
         try {
-            val response = api.createProject(ProjectCreateRequest(name, description))
-            dao.insertProject(response)
+            val project = api.createProject(ProjectCreateRequest(name, description)).data
+            dao.insertProject(Project(id = project.id, name = project.name, description = project.description))
         } catch (e: Exception) {
-            Log.e("Repository", "Network failed, using local fallback", e)
-            val p = Project(name = name, description = description)
-            dao.insertProject(p)
+            Log.e("Repository", "createProject failed", e)
         }
     }
 
     suspend fun addSeries(projectId: String, title: String) {
-        try {
-            val response = api.createSeries(SeriesCreateRequest(projectId = projectId, title = title))
-            dao.insertSeries(response)
-        } catch (e: Exception) {
-            Log.e("Repository", "Network failed, using local fallback", e)
-            val s = Series(projectId = projectId, title = title)
-            dao.insertSeries(s)
-        }
+        // Series are currently local-first; the backend has no series endpoint.
+        dao.insertSeries(Series(projectId = projectId, title = title))
     }
 
     suspend fun addEpisode(seriesId: String, number: Int, title: String) {
-        try {
-            val response = api.createEpisode(EpisodeCreateRequest(seriesId = seriesId, number = number, title = title))
-            dao.insertEpisode(response)
-        } catch (e: Exception) {
-            Log.e("Repository", "Network failed, using local fallback", e)
-            val eLocal = Episode(seriesId = seriesId, number = number, title = title)
-            dao.insertEpisode(eLocal)
-        }
+        // Episodes are currently local-first; the backend has no episode endpoint.
+        dao.insertEpisode(Episode(seriesId = seriesId, number = number, title = title))
     }
 
     suspend fun generateScene(sceneId: String) {
         val scene = scenes.value.find { it.id == sceneId } ?: return
-        
-        scene.status = "VIDEO_PENDING"
-        dao.updateScene(scene)
-
-        try {
-            val response = api.generateScene(sceneId)
-            dao.insertJob(response)
-            simulateJobProgress(response, scene)
-        } catch (e: Exception) {
-            Log.e("Repository", "Network failed, using local fallback", e)
-            val job = GenerationJob(
-                jobType = "SCENE_GENERATION",
-                targetType = "SCENE",
-                targetId = sceneId,
-                provider = "mock"
-            )
-            dao.insertJob(job)
-            simulateJobProgress(job, scene)
+        val projectId = dao.findProjectIdForScene(sceneId)
+        if (projectId == null) {
+            scene.status = "FAILED"
+            dao.updateScene(scene)
+            return
         }
-    }
-
-    private fun simulateJobProgress(job: GenerationJob, scene: Scene) {
-        scope.launch {
-            job.status = JobStatus.RUNNING
-            job.progress = 5
-            dao.updateJob(job)
-            
-            for (progress in listOf(20, 40, 60, 80, 100)) {
-                delay(800)
-                job.progress = progress
-                dao.updateJob(job)
-            }
-            
-            job.status = JobStatus.COMPLETED
-            dao.updateJob(job)
-            
-            scene.status = "APPROVED"
+        scene.status = "QUEUED"
+        dao.updateScene(scene)
+        try {
+            val response = api.createJob(
+                request = CreateJobRequest(
+                    projectId = projectId,
+                    type = "IMAGE",
+                    targetType = "scene",
+                    targetId = sceneId,
+                    provider = "mock",
+                    model = "mock-deterministic",
+                    input = JobInputRequest(
+                        parameters = mapOf("sceneId" to sceneId, "description" to scene.description, "location" to scene.location, "emotion" to scene.emotion),
+                        deterministic = true,
+                    ),
+                ),
+                idempotencyKey = "android-scene-$sceneId",
+            )
+            dao.insertJob(response.data.toLocalJob())
+        } catch (e: Exception) {
+            Log.e("Repository", "generateScene failed", e)
+            scene.status = "FAILED"
             dao.updateScene(scene)
         }
     }
+
+    private fun parseTime(value: String?): Long? {
+        if (value == null) return null
+        val normalized = value.replace(Regex("\\.(\\d{3})\\d*Z$"), ".$1Z")
+        return runCatching { synchronized(isoParser) { isoParser.parse(normalized)?.time } }.getOrNull()
+    }
+
+    private fun BackendJob.toLocalJob(): GenerationJob = GenerationJob(
+        id = id,
+        jobType = type,
+        targetType = targetType,
+        targetId = targetId,
+        status = runCatching { JobStatus.valueOf(status.uppercase(Locale.US)) }.getOrDefault(JobStatus.FAILED),
+        priority = priority,
+        attempt = attempt,
+        maxAttempts = maxAttempts,
+        provider = provider,
+        model = model,
+        progress = (progress.coerceIn(0.0, 1.0) * 100).toInt(),
+        errorCode = errorCode,
+        errorMessage = errorMessage,
+        createdAt = parseTime(createdAt) ?: System.currentTimeMillis(),
+        startedAt = parseTime(startedAt),
+        completedAt = parseTime(completedAt),
+    )
+
+    suspend fun syncJobs(projectId: String? = null) {
+        try {
+            api.listJobs(projectId = projectId, limit = 200).data.forEach { dao.insertJob(it.toLocalJob()) }
+        } catch (e: Exception) {
+            Log.w("Repository", "Job sync unavailable; retaining local state", e)
+        }
+    }
+
+    suspend fun cancelJob(jobId: String): GenerationJob? = runCatching {
+        api.cancelJob(jobId).data.toLocalJob().also { dao.insertJob(it) }
+    }.onFailure { Log.e("Repository", "cancelJob failed", it) }.getOrNull()
+
+    suspend fun retryJob(jobId: String): GenerationJob? = runCatching {
+        api.retryJob(jobId).data.toLocalJob().also { dao.insertJob(it) }
+    }.onFailure { Log.e("Repository", "retryJob failed", it) }.getOrNull()
+
+    suspend fun refreshJob(jobId: String) {
+        runCatching { api.getJob(jobId).data.toLocalJob().also { dao.insertJob(it) } }
+            .onFailure { Log.w("Repository", "refreshJob failed", it) }
+    }
 }
 
-// Singleton for simplicity in MVP
 object Graph {
     lateinit var repository: Repository
-    
+
     fun provide(context: android.content.Context) {
         val database = com.example.data.local.FactoryDatabase.getDatabase(context)
         repository = Repository(database.factoryDao())
