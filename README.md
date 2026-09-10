@@ -10,7 +10,7 @@
 
 إذا لم يوجد إصدار منشور بعد، استخدم تبويب **Actions** لبناء APK، ثم أنشئ Release بالـtag مثل `v0.1.0`.
 
-> الـAPK المنشور حاليًا من خط الإصدار هو Debug APK للتجربة. لا يُعامل كتوقيع إنتاجي نهائي.
+> ملف الإصدار الذي يبنيه workflow هو **Release APK محسّن باستخدام R8 وResource Shrinking**. توقيعه في workflow الحالي مؤقت للتحقق/التجربة، وليس مفتاح توقيع إنتاجي ثابت.
 
 ## Architecture
 
@@ -62,9 +62,10 @@ uvicorn app.main:app --reload --port 8000
 ```bash
 gradle assembleDebug
 gradle testDebugUnitTest
+gradle assembleRelease
 ```
 
-The GitHub Actions Android workflow builds and uploads the APK as an artifact. Tagging a release with `v*` builds `AI-Content-Factory.apk` and attaches it to the GitHub Release.
+The GitHub Actions Android workflow builds and uploads Debug and optimized Release APK artifacts. The release workflow runs on tags matching `v*` and publishes `AI-Content-Factory.apk` to the GitHub Release.
 
 ## Current scope
 
