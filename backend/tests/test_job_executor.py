@@ -42,12 +42,12 @@ def test_executor_persists_success_only_after_completion_gate(tmp_path):
     repositories = SQLiteRepositories(":memory:"); repositories.projects.create(Project("project-1", "Test")); storage = LocalAssetStorage(tmp_path / "assets"); assets = SQLiteAssetRepository(repositories.store); digest, path, size = storage.put_bytes(b"fixture")
     assets.create(Asset("asset-1", "project-1", AssetType.IMAGE, path, "text/plain", size, digest, AssetStatus.READY, AssetProvenance(provider="mock", job_id="job-1", license_status=LicenseStatus.VERIFIED)))
     events: list[JobEvent] = []; result = JobExecutor(jobs, queue, registry, events.append, completion_gate=CompletionGate(assets, storage)).execute_claimed(job, make_lease())
-    assert result.status is JobStatus.COMPLETED; assert queue.acknowledged == [JobStatus.COMPLETED]; assert [event.event_type for event in events] == ["JOB_STARTED", "JOB_PROGRESS", "JOB_COMPLETED"]; repositories.close()
+    assert result.status is JobStatus.COMPLETED; assert job.progress == 0.0; assert queue.acknowledged == [JobStatus.COMPLETED]; assert [event.event_type for event in events] == ["JOB_STARTED", "JOB_COMPLETED"]; repositories.close()
 
 def test_executor_blocks_when_completion_qc_fails(tmp_path):
     job = make_job(); jobs, queue = FakeJobs(job), FakeQueue(); registry = WorkerRegistry(); registry.register(FakeWorker(JobExecutionResult(True, ["asset-1"], {}, "run-1")), {"IMAGE"}, worker_id="worker-1")
     repositories = SQLiteRepositories(":memory:"); repositories.projects.create(Project("project-1", "Test")); storage = LocalAssetStorage(tmp_path / "assets"); assets = SQLiteAssetRepository(repositories.store); digest, path, size = storage.put_bytes(b"fixture")
-    assets.create(Asset("asset-1", "project-1", AssetType.IMAGE, path, "text/plain", size, digest, AssetStatus.READY, AssetProvenance(provider="mock", job_id="job-1", license_status=LicenseStatus.BLOCKED)))
+    assets.create(Asset("asset-1", "project-1", AssetType.IMAGE, path, "text/plain", size, digest, AssetProvenance(provider="mock", job_id="job-1", license_status=LicenseStatus.BLOCKED)))
     result = JobExecutor(jobs, queue, registry, completion_gate=CompletionGate(assets, storage)).execute_claimed(job, make_lease())
     assert result.status is JobStatus.BLOCKED; assert jobs.job.status is JobStatus.BLOCKED; assert queue.acknowledged == [JobStatus.BLOCKED]; repositories.close()
 
