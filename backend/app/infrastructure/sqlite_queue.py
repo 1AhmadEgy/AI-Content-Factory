@@ -147,14 +147,18 @@ class SQLiteJobQueue(JobQueue):
                     if status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}
                     else None
                 )
+                persisted_status = JobStatus.QUEUED if status is JobStatus.RETRYING else status
                 cursor = self.store.connection.execute(
                     """UPDATE jobs SET status=?, completed_at=?, updated_at=?
                     WHERE id=? AND status='RUNNING'""",
-                    (status.value, completed_at, now.isoformat(), lease.job_id),
+                    (persisted_status.value, completed_at, now.isoformat(), lease.job_id),
                 )
                 if cursor.rowcount != 1:
                     raise RuntimeError(f"Job is no longer RUNNING: {lease.job_id}")
 
+                # Retry requeue is completed inside the same transaction that
+                # releases the lease. This prevents another worker from claiming
+                # RETRYING and then being overwritten by the old executor.
                 self.store.connection.execute(
                     "DELETE FROM job_leases WHERE job_id=? AND lease_id=?",
                     (lease.job_id, lease.lease_id),
