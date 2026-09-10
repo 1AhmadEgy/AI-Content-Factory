@@ -35,10 +35,21 @@ class FfmpegRenderer(Renderer):
         self._processes: dict[str, subprocess.Popen[str]] = {}
 
     def health_check(self) -> dict[str, object]:
+        """Check the media toolchain without allowing a hung executable to block startup."""
         try:
-            ffmpeg = subprocess.run([self.options.ffmpeg_bin, "-version"], capture_output=True, text=True)
-            ffprobe = subprocess.run([self.options.ffprobe_bin, "-version"], capture_output=True, text=True)
-        except OSError:
+            ffmpeg = subprocess.run(
+                [self.options.ffmpeg_bin, "-version"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            ffprobe = subprocess.run(
+                [self.options.ffprobe_bin, "-version"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired):
             return {"available": False, "version": None}
         return {
             "available": ffmpeg.returncode == 0 and ffprobe.returncode == 0,
