@@ -26,6 +26,7 @@ interface FactoryApiService {
 
     @GET("api/v1/library/countries") suspend fun listCountryLibraries(): CountryLibrariesEnvelope
     @GET("api/v1/library/countries/{country_id}") suspend fun getCountryLibrary(@Path("country_id") countryId: String): CountryLibraryEnvelope
+    @GET("api/v1/library/countries/{country_id}/content") suspend fun getCountryLibraryContent(@Path("country_id") countryId: String): CountryLibraryContentEnvelope
     @GET("api/v1/library/countries/{country_id}/languages") suspend fun getCountryLanguages(@Path("country_id") countryId: String): LanguagesEnvelope
     @GET("api/v1/library/languages") suspend fun listLanguages(): LanguagesEnvelope
 
