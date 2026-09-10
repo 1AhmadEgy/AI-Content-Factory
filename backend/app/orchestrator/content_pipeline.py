@@ -116,23 +116,40 @@ class ContentPipelineOrchestrator:
         shots = [j for j in self.job_service.repository.list_by_parent(scene.id) if j.type is JobType.SHOT]
         best = [j for shot in shots for j in self.job_service.repository.list_by_parent(shot.id) if j.type is JobType.BEST_TAKE and j.status is JobStatus.COMPLETED and j.output and j.output.asset_ids]
         if not shots or len(best) < len(shots): return []
+
         audio_jobs = [j for j in self.job_service.repository.list_by_parent(scene.id) if j.type in {JobType.TTS, JobType.MUSIC, JobType.SFX}]
         if len(audio_jobs) < 3: return []
         audio_qcs = [qc for audio in audio_jobs for qc in self.job_service.repository.list_by_parent(audio.id) if qc.type is JobType.QC and qc.status is JobStatus.COMPLETED and qc.output and qc.output.asset_ids]
         if len(audio_qcs) < len(audio_jobs): return []
-        refs = []
+
+        video_ids: list[str] = []
         for best_job in best:
             selected = best_job.output.metrics.get("selectedAssetId") if best_job.output else None
             if not isinstance(selected, str) or not selected:
                 return []
-            refs.append(selected)
-        refs.extend(qc.output.asset_ids[0] for qc in audio_qcs)
+            video_ids.append(selected)
+
+        # QC outputs are manifests/reports, not playable media. The timeline must
+        # reference the original generation outputs after their QC jobs complete.
+        audio_ids: list[str] = []
+        for audio_job in audio_jobs:
+            if not audio_job.output or not audio_job.output.asset_ids:
+                return []
+            audio_ids.extend(audio_job.output.asset_ids)
+
         try:
             duration_us = int(float(scene.input.parameters.get("scene", {}).get("durationSeconds", 5)) * 1_000_000)
         except (TypeError, ValueError, OverflowError):
             return []
         if duration_us <= 0: return []
-        return [self._enqueue(scene, JobType.TIMELINE, "timeline", f"{scene.id}:timeline", {"durationUs": duration_us, "sceneJobId": scene.id}, 6, refs)]
+        refs = [*video_ids, *audio_ids]
+        parameters = {
+            "durationUs": duration_us,
+            "sceneJobId": scene.id,
+            "videoAssetIds": video_ids,
+            "audioAssetIds": audio_ids,
+        }
+        return [self._enqueue(scene, JobType.TIMELINE, "timeline", f"{scene.id}:timeline", parameters, 6, refs)]
 
     def _create_render_job(self, job: GenerationJob) -> list[GenerationJob]:
         if not job.output or not job.output.asset_ids: return []
