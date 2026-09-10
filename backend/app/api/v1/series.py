@@ -14,7 +14,7 @@ from ...infrastructure.series_context_repository import SQLiteSeriesContextRepos
 class ApplyTemplateRequest(BaseModel):
     templateId: str = Field(min_length=1, max_length=100)
     title: str | None = Field(default=None, max_length=500)
-    countryId: str = Field(default="egypt", min_length=2, max_length=50)
+    countryId: str | None = Field(default=None, min_length=2, max_length=50)
     sourceLanguage: str | None = Field(default=None, min_length=2, max_length=20)
     targetLanguages: list[str] = Field(default_factory=list, max_length=20)
     dialect: str | None = Field(default=None, max_length=30)
@@ -34,6 +34,67 @@ def _language_defaults(country_id: str, source_language: str | None, target_lang
     if source not in allowed or any(item not in allowed for item in targets):
         raise HTTPException(400, "LANGUAGE_NOT_SUPPORTED_BY_COUNTRY")
     return {"countryId": country_id, "libraryId": country["libraryId"], "sourceLanguage": source, "targetLanguages": targets, "dialect": dialect or country["locale"], "translationPolicy": {"preserveSource": True, "manualOverridesWin": True, "immutableVersions": True}, "glossary": {}, "translationVersions": {}}
+
+
+def _project_country(project: Any) -> str | None:
+    settings = getattr(project, "settings", None)
+    if isinstance(settings, dict):
+        for key in ("countryId", "country_id"):
+            value = settings.get(key)
+            if value:
+                return str(value)
+    metadata = getattr(project, "metadata", None)
+    if isinstance(metadata, dict):
+        for key in ("countryId", "country_id"):
+            value = metadata.get(key)
+            if value:
+                return str(value)
+    return None
+
+
+def _resolve_country_id(project: Any, current: dict[str, Any] | None, requested: str | None) -> str:
+    existing = str(current.get("countryId")) if current and current.get("countryId") else None
+    project_country = _project_country(project)
+    if existing and requested and existing != requested:
+        raise HTTPException(409, "COUNTRY_LIBRARY_MISMATCH")
+    if existing:
+        return existing
+    if requested:
+        return requested
+    if project_country:
+        return project_country
+    return "egypt"
+
+
+def _country_owned_defaults(runtime: Any, defaults: dict[str, Any], library_id: str) -> tuple[list[str], list[str]]:
+    character_ids: list[str] = []
+    for value in defaults.get("characterIds", []):
+        item = runtime.characters.get(str(value))
+        if item is not None and str(item.project_id) == library_id:
+            character_ids.append(str(value))
+    location_ids: list[str] = []
+    for value in defaults.get("locationIds", []):
+        item = runtime.locations.get(str(value))
+        if item is not None and str(item.project_id) == library_id:
+            location_ids.append(str(value))
+    return character_ids, location_ids
+
+
+def _validate_context_language(context: dict[str, Any]) -> None:
+    country_id = str(context.get("countryId", ""))
+    country = get_country_library(country_id)
+    if country is None:
+        raise HTTPException(404, "COUNTRY_LIBRARY_NOT_FOUND")
+    expected_library = str(country["libraryId"])
+    if context.get("libraryId") and str(context["libraryId"]) != expected_library:
+        raise HTTPException(409, "COUNTRY_LIBRARY_MISMATCH")
+    allowed = {item["id"] for item in get_country_languages(country_id)}
+    source = context.get("sourceLanguage")
+    targets = context.get("targetLanguages", [])
+    if source and str(source) not in allowed:
+        raise HTTPException(400, "LANGUAGE_NOT_SUPPORTED_BY_COUNTRY")
+    if any(str(item) not in allowed for item in targets):
+        raise HTTPException(400, "LANGUAGE_NOT_SUPPORTED_BY_COUNTRY")
 
 
 def build_router(runtime) -> APIRouter:
@@ -59,26 +120,30 @@ def build_router(runtime) -> APIRouter:
 
     @router.post("/projects/{project_id}/apply-template")
     def apply_template(project_id: str, body: ApplyTemplateRequest, request: Request):
-        project_or_404(project_id)
+        project = project_or_404(project_id)
         template = get_series_template(body.templateId)
         if template is None:
             raise HTTPException(404, "SERIES_TEMPLATE_NOT_FOUND")
-        language_defaults = _language_defaults(body.countryId, body.sourceLanguage, body.targetLanguages, body.dialect)
-        defaults = template.get("defaults", {})
         current = repo.get(project_id)
+        country_id = _resolve_country_id(project, current, body.countryId)
+        language_defaults = _language_defaults(country_id, body.sourceLanguage, body.targetLanguages, body.dialect)
+        defaults = template.get("defaults", {})
+        character_ids, location_ids = _country_owned_defaults(runtime, defaults, language_defaults["libraryId"])
         if current is None:
-            context = new_series_context(series_id=project_id, title=body.title or template["name"], template_id=body.templateId, genre=template.get("genre", ""), character_ids=list(defaults.get("characterIds", [])), location_ids=list(defaults.get("locationIds", [])))
-            context = merge_series_defaults(context, character_ids=list(defaults.get("characterIds", [])), location_ids=list(defaults.get("locationIds", [])), rules=dict(template.get("continuity", {})))
+            context = new_series_context(series_id=project_id, title=body.title or template["name"], template_id=body.templateId, genre=template.get("genre", ""), character_ids=character_ids, location_ids=location_ids)
+            context = merge_series_defaults(context, character_ids=character_ids, location_ids=location_ids, rules=dict(template.get("continuity", {})))
             context["template"] = deepcopy(template)
+            context["template"]["appliedCountryId"] = country_id
             context.update(language_defaults)
         else:
             context = current
             context["templateId"] = context.get("templateId") or body.templateId
             context["genre"] = context.get("genre") or template.get("genre", "")
-            context = merge_series_defaults(context, character_ids=list(defaults.get("characterIds", [])), location_ids=list(defaults.get("locationIds", [])), rules=dict(template.get("continuity", {})))
+            context = merge_series_defaults(context, character_ids=character_ids, location_ids=location_ids, rules=dict(template.get("continuity", {})))
             for key, value in language_defaults.items():
                 if key not in context or context.get(key) in (None, "", [], {}):
                     context[key] = value
+            _validate_context_language(context)
         if body.title:
             context["title"] = body.title
         repo.save(project_id, context)
@@ -103,10 +168,17 @@ def build_router(runtime) -> APIRouter:
             country_id = str(body.context["countryId"])
             if get_country_library(country_id) is None:
                 raise HTTPException(404, "COUNTRY_LIBRARY_NOT_FOUND")
+            existing_country = str(current.get("countryId", ""))
+            if existing_country and existing_country != country_id:
+                raise HTTPException(409, "COUNTRY_LIBRARY_MISMATCH")
+            expected_library = str(get_country_library(country_id)["libraryId"])
+            if "libraryId" in body.context and str(body.context["libraryId"]) != expected_library:
+                raise HTTPException(409, "COUNTRY_LIBRARY_MISMATCH")
         for key, value in body.context.items():
             if key == "episodeSnapshots":
                 raise HTTPException(400, "EPISODE_SNAPSHOTS_APPEND_ONLY")
             context[key] = deepcopy(value)
+        _validate_context_language(context)
         repo.save(project_id, context)
         return {"data": context, "requestId": request.state.request_id}
 
@@ -119,6 +191,7 @@ def build_router(runtime) -> APIRouter:
         context = repo.get(project_id)
         if context is None:
             raise HTTPException(404, "SERIES_CONTEXT_NOT_FOUND")
+        _validate_context_language(context)
         number = int(context.get("nextEpisodeNumber", 1))
         episode_context = build_episode_context(context, number)
         episode_context["episodeId"] = episode_id
