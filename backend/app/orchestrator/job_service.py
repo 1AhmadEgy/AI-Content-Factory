@@ -9,7 +9,7 @@ class JobService:
     def __init__(self, repository: JobRepository):
         self.repository = repository
 
-    def create(
+    def build(
         self,
         *,
         project_id: str,
@@ -39,4 +39,32 @@ class JobService:
             model=model,
         )
         transition(job, JobStatus.QUEUED)
+        return job
+
+    def create(
+        self,
+        *,
+        project_id: str,
+        job_type: JobType,
+        target_type: str,
+        target_id: str | None = None,
+        parent_job_id: str | None = None,
+        input: JobInput | None = None,
+        priority: int = 100,
+        max_attempts: int = 3,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> GenerationJob:
+        job = self.build(
+            project_id=project_id,
+            job_type=job_type,
+            target_type=target_type,
+            target_id=target_id,
+            parent_job_id=parent_job_id,
+            input=input,
+            priority=priority,
+            max_attempts=max_attempts,
+            provider=provider,
+            model=model,
+        )
         return self.repository.create(job)
