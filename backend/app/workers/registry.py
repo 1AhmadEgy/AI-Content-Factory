@@ -23,7 +23,7 @@ class WorkerRegistry:
         capabilities: set[str] | frozenset[str] | None = None,
         worker_id: str | None = None,
     ) -> None:
-        key = worker_id or worker.worker_type
+        key = worker_id or getattr(worker, "worker_type", None) or worker.__class__.__name__
         if key in self._workers:
             raise ValueError(f"Worker already registered: {key}")
         self._workers[key] = WorkerDescriptor(worker, frozenset(capabilities or set()))
