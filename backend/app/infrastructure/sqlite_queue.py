@@ -118,7 +118,13 @@ class SQLiteJobQueue(JobQueue):
         return row is not None
 
     def acknowledge(self, lease: JobLease, status: JobStatus) -> None:
-        if status not in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.RETRYING}:
+        if status not in {
+            JobStatus.COMPLETED,
+            JobStatus.FAILED,
+            JobStatus.CANCELLED,
+            JobStatus.RETRYING,
+            JobStatus.BLOCKED,
+        }:
             raise ValueError("Acknowledge requires a terminal or retry state")
         now = datetime.now(timezone.utc)
         with self.store._lock:
@@ -144,7 +150,10 @@ class SQLiteJobQueue(JobQueue):
                 if cursor.rowcount != 1:
                     raise RuntimeError(f"Job is no longer RUNNING: {lease.job_id}")
 
-                self.store.connection.execute("DELETE FROM job_leases WHERE job_id=? AND lease_id=?", (lease.job_id, lease.lease_id))
+                self.store.connection.execute(
+                    "DELETE FROM job_leases WHERE job_id=? AND lease_id=?",
+                    (lease.job_id, lease.lease_id),
+                )
                 self.store.connection.commit()
             except Exception:
                 self.store.connection.rollback()
