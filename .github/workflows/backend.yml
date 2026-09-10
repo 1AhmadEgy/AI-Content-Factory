@@ -25,3 +25,5 @@ jobs:
         run: pip install -e ".[test]"
       - name: Run tests
         run: pytest -q
+      - name: Check Python syntax
+        run: python -m compileall -q app tests
