@@ -6,7 +6,7 @@ from backend.app.main import app
 client = TestClient(app)
 
 
-def test_pipeline_api_runs_golden_mock_flow():
+def test_pipeline_api_runs_explicit_offline_golden_flow():
     response = client.post(
         "/api/v1/pipeline/run",
         json={
@@ -18,6 +18,7 @@ def test_pipeline_api_runs_golden_mock_flow():
                 {"asset_id": "a1", "qc_score": 1.0, "semantic_score": 1.0, "continuity_score": 1.0, "technical_score": 1.0}
             ],
             "duration_us": 1_000_000,
+            "production": False,
         },
     )
     assert response.status_code == 200
