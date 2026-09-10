@@ -1,0 +1,39 @@
+name: Build APK Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.3.1"
+      - name: Generate CI debug keystore
+        run: |
+          keytool -genkeypair -v \
+            -keystore debug.keystore \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+      - name: Build optimized APK
+        run: gradle --no-daemon assembleRelease
+      - name: Publish APK to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/outputs/apk/release/app-release.apk
+          name: AI Content Factory ${{ github.ref_name }}
+          generate_release_notes: true
