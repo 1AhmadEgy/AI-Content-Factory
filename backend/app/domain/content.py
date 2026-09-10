@@ -12,6 +12,8 @@ class ContentBrief:
     audience: str = "general"
     platform: str = "youtube"
     aspect_ratio: str = "16:9"
+    character_ids: tuple[str, ...] = ()
+    continuity_rules: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,3 +42,4 @@ class ShotPlan:
     camera: str = "medium"
     lighting: str = "natural"
     style: str = "cinematic"
+    character_ids: tuple[str, ...] = ()
