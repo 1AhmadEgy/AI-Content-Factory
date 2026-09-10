@@ -91,9 +91,9 @@ app = FastAPI(title="AI Content Factory API", version="0.8.0", docs_url="/api/v1
 async def request_id_middleware(request: Request, call_next):
     request_id = request.headers.get("X-Request-Id") or f"req_{uuid4().hex}"
     request.state.request_id = request_id
-    if _api_token() and request.url.path not in {"/api/v1/health", "/api/v1/ready"}:
+    if _api_token() and request.url.path not in {"/api/v1/health", "/api/v1/ready", "/api/v1/readiness"}:
         if request.headers.get("Authorization", "") != f"Bearer {_api_token()}":
-            return JSONResponse(status_code=401, content={"error": {"code": "UNAUTHORIZED", "message": "Authentication required", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
+            return JSONResponse(status_code=401, content={"error": {"code": "UNAUTHORIZED", "message": "Authentication required", "details": {}, "requestId": request_id}, "detail": "UNAUTHORIZED"}, headers={"X-Request-Id": request_id})
     response = await call_next(request)
     response.headers["X-Request-Id"] = request_id
     return response
@@ -103,13 +103,13 @@ async def request_id_middleware(request: Request, call_next):
 async def http_exception(request: Request, exc: StarletteHTTPException):
     request_id = getattr(request.state, "request_id", "unknown")
     code = str(exc.detail) if isinstance(exc.detail, str) else "HTTP_ERROR"
-    return JSONResponse(status_code=exc.status_code, content={"error": {"code": code, "message": code, "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
+    return JSONResponse(status_code=exc.status_code, content={"error": {"code": code, "message": code, "details": {}, "requestId": request_id}, "detail": code}, headers={"X-Request-Id": request_id})
 
 
 @app.exception_handler(Exception)
 async def unhandled_exception(request: Request, exc: Exception):
     request_id = getattr(request.state, "request_id", "unknown")
-    return JSONResponse(status_code=500, content={"error": {"code": "INTERNAL_ERROR", "message": "Internal server error", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
+    return JSONResponse(status_code=500, content={"error": {"code": "INTERNAL_ERROR", "message": "Internal server error", "details": {}, "requestId": request_id}, "detail": "INTERNAL_ERROR"}, headers={"X-Request-Id": request_id})
 
 
 app.include_router(build_project_router(project_repository))
@@ -140,7 +140,7 @@ def readiness(request: Request):
         repositories.store.connection.execute("SELECT 1").fetchone()
         return {"status": "ready", "data": {"status": "READY", "service": "ai-content-factory-backend", "version": app.version}, "requestId": request.state.request_id}
     except Exception:
-        return JSONResponse(status_code=503, content={"error": {"code": "RESOURCE_UNAVAILABLE", "message": "Required dependencies are not ready", "details": {}, "requestId": request.state.request_id}}, headers={"X-Request-Id": request.state.request_id})
+        return JSONResponse(status_code=503, content={"error": {"code": "RESOURCE_UNAVAILABLE", "message": "Required dependencies are not ready", "details": {}, "requestId": request.state.request_id}, "detail": "RESOURCE_UNAVAILABLE"}, headers={"X-Request-Id": request.state.request_id})
 
 
 @app.get("/api/v1/worker/status", tags=["system"])
