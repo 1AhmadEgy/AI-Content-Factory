@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Any
 
 
 def utc_now() -> datetime:
@@ -10,6 +11,8 @@ def utc_now() -> datetime:
 class Project:
     id: str
     name: str
+    description: str = ""
+    settings: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
 
