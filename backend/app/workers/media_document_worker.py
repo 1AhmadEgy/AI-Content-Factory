@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-import hashlib
 import json
+import shutil
+import subprocess
 import uuid
+from pathlib import Path
 
 from ..domain.asset_repositories import AssetRepository
 from ..domain.assets import Asset, AssetStatus, AssetType, LicenseStatus
@@ -13,12 +15,14 @@ from ..orchestrator.queue import JobExecutionResult, Worker, WorkerContext
 
 
 class MediaDocumentWorker(Worker):
-    """Offline-first worker for subtitles, thumbnails, metadata and final QC reports."""
+    """Offline-first worker for subtitles, real thumbnails, metadata and ffprobe final QC."""
 
     worker_type = "media-document"
 
-    def __init__(self, storage: LocalAssetStorage, assets: AssetRepository) -> None:
-        self.storage, self.assets, self._initialized = storage, assets, False
+    def __init__(self, storage: LocalAssetStorage, assets: AssetRepository, ffmpeg_binary: str = "ffmpeg", ffprobe_binary: str = "ffprobe") -> None:
+        self.storage, self.assets = storage, assets
+        self.ffmpeg_binary, self.ffprobe_binary = ffmpeg_binary, ffprobe_binary
+        self._initialized = False
 
     def initialize(self) -> None:
         self._initialized = True
@@ -34,52 +38,79 @@ class MediaDocumentWorker(Worker):
         if job.type is JobType.METADATA:
             return self._document(job, AssetType.DOCUMENT, "application/json; charset=utf-8", self._metadata(job))
         if job.type is JobType.THUMBNAIL:
-            return self._document(job, AssetType.THUMBNAIL, "application/json; charset=utf-8", self._thumbnail(job))
+            return self._thumbnail_asset(job)
         if job.type is JobType.QC:
-            return self._document(job, AssetType.DOCUMENT, "application/json; charset=utf-8", self._final_qc(job))
+            return self._final_qc(job)
         return JobExecutionResult(False, error_code="UNSUPPORTED_JOB_TYPE", error_message=job.type.value)
 
     def _document(self, job: GenerationJob, kind: AssetType, mime: str, payload: bytes) -> JobExecutionResult:
         digest, path, size = self.storage.put_bytes(payload)
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{job.type.value}:{job.id}:{digest}"))
         asset = Asset(asset_id, job.project_id, kind, path, mime, size, digest, AssetStatus.READY,
-                      build_provenance(job, source_asset_ids=list(job.input.reference_asset_ids),
-                                       metadata={"worker": self.worker_type}, license_status=LicenseStatus.VERIFIED))
+                      build_provenance(job, source_asset_ids=list(job.input.reference_asset_ids), metadata={"worker": self.worker_type}, license_status=LicenseStatus.VERIFIED))
         self.assets.create(asset)
         return JobExecutionResult(True, [asset_id], {"bytes": size}, f"{self.worker_type}-{job.id}")
 
     @staticmethod
     def _subtitle(job: GenerationJob) -> bytes:
         text = str(job.input.parameters.get("text", job.input.parameters.get("narration", ""))).strip()
-        return ("WEBVTT\n\n00:00:00.000 --> 00:00:05.000\n" + text + "\n").encode("utf-8")
+        end = str(job.input.parameters.get("end", "00:00:05.000"))
+        return ("WEBVTT\n\n00:00:00.000 --> " + end + "\n" + text + "\n").encode("utf-8")
 
     @staticmethod
     def _metadata(job: GenerationJob) -> bytes:
-        data = {"projectId": job.project_id, "jobId": job.id, "title": job.input.parameters.get("title", "AI Content"),
-                "description": job.input.parameters.get("description", ""), "tags": job.input.parameters.get("tags", []),
-                "language": job.input.parameters.get("language", "en"), "platforms": job.input.parameters.get("platforms", [])}
+        data = {"projectId": job.project_id, "jobId": job.id, "title": job.input.parameters.get("title", "AI Content"), "description": job.input.parameters.get("description", ""), "tags": job.input.parameters.get("tags", []), "language": job.input.parameters.get("language", "en"), "platforms": job.input.parameters.get("platforms", []), "scheduledAt": job.input.parameters.get("scheduledAt")}
         return (json.dumps(data, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
 
-    @staticmethod
-    def _thumbnail(job: GenerationJob) -> bytes:
-        data = {"type": "thumbnail", "title": job.input.parameters.get("title", "AI Content"),
-                "sourceAssetIds": job.input.reference_asset_ids, "format": "ffmpeg-compatible-source"}
-        return (json.dumps(data, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+    def _thumbnail_asset(self, job: GenerationJob) -> JobExecutionResult:
+        source = self.assets.get(job.input.reference_asset_ids[0]) if job.input.reference_asset_ids else None
+        if source is None:
+            return JobExecutionResult(False, error_code="THUMBNAIL_SOURCE_NOT_FOUND", error_message="No source asset")
+        if shutil.which(self.ffmpeg_binary) is None:
+            return JobExecutionResult(False, error_code="FFMPEG_NOT_AVAILABLE", error_message="FFmpeg executable was not found")
+        with tempfile_directory() as temp:
+            input_path = temp / "input.mp4"
+            output_path = temp / "thumbnail.jpg"
+            input_path.write_bytes(self.storage.read_bytes(source.sha256))
+            completed = subprocess.run([self.ffmpeg_binary, "-hide_banner", "-loglevel", "error", "-y", "-ss", str(job.input.parameters.get("timestamp", "00:00:01")), "-i", str(input_path), "-frames:v", "1", "-q:v", "2", str(output_path)], check=False, capture_output=True)
+            if completed.returncode != 0 or not output_path.is_file():
+                return JobExecutionResult(False, error_code="THUMBNAIL_GENERATION_FAILED", error_message=completed.stderr.decode("utf-8", errors="replace")[-2000:], retryable=True)
+            digest, path, size = self.storage.put_bytes(output_path.read_bytes())
+        asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"thumbnail:{job.id}:{digest}"))
+        self.assets.create(Asset(asset_id, job.project_id, AssetType.THUMBNAIL, path, "image/jpeg", size, digest, AssetStatus.READY, build_provenance(job, source_asset_ids=[source.id], metadata={"engine": "ffmpeg"}, license_status=LicenseStatus.VERIFIED)))
+        return JobExecutionResult(True, [asset_id], {"bytes": size, "format": "jpeg"}, f"thumbnail-{job.id}")
 
-    def _final_qc(self, job: GenerationJob) -> bytes:
+    def _final_qc(self, job: GenerationJob) -> JobExecutionResult:
         checks = []
         for asset_id in job.input.reference_asset_ids:
             asset = self.assets.get(asset_id)
-            checks.append({"assetId": asset_id, "exists": asset is not None,
-                           "ready": bool(asset and asset.status is AssetStatus.READY),
-                           "checksum": bool(asset and asset.sha256)})
-        passed = bool(checks) and all(c["exists"] and c["ready"] and c["checksum"] for c in checks)
-        report = {"jobId": job.id, "stage": "FINAL_QC", "passed": passed, "checks": checks,
-                  "score": round(100 * sum(1 for c in checks if c["exists"] and c["ready"] and c["checksum"]) / max(len(checks), 1), 2)}
-        return (json.dumps(report, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+            check = {"assetId": asset_id, "exists": asset is not None, "ready": bool(asset and asset.status is AssetStatus.READY), "checksum": bool(asset and asset.sha256)}
+            if asset and asset.type is AssetType.VIDEO and shutil.which(self.ffprobe_binary):
+                probe = subprocess.run([self.ffprobe_binary, "-v", "error", "-print_format", "json", "-show_streams", "-show_format", asset.path], check=False, capture_output=True)
+                check["ffprobe"] = probe.returncode == 0
+                if probe.returncode != 0:
+                    check["error"] = probe.stderr.decode("utf-8", errors="replace")[-1000:]
+            checks.append(check)
+        passed = bool(checks) and all(c.get("exists") and c.get("ready") and c.get("checksum") and c.get("ffprobe", True) for c in checks)
+        report = {"jobId": job.id, "stage": "FINAL_QC", "passed": passed, "checks": checks, "score": round(100 * sum(1 for c in checks if c.get("exists") and c.get("ready") and c.get("checksum") and c.get("ffprobe", True)) / max(len(checks), 1), 2)}
+        payload = (json.dumps(report, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+        result = self._document(job, AssetType.DOCUMENT, "application/json; charset=utf-8", payload)
+        if not passed:
+            return JobExecutionResult(False, error_code="FINAL_QC_FAILED", error_message=";".join(c.get("error", "INVALID_MEDIA") for c in checks if not (c.get("exists") and c.get("ready") and c.get("checksum") and c.get("ffprobe", True))))
+        return result
 
     def cancel(self, job_id: str) -> None:
         return None
 
     def shutdown(self) -> None:
         self._initialized = False
+
+
+class tempfile_directory:
+    def __enter__(self) -> Path:
+        import tempfile
+        self._ctx = tempfile.TemporaryDirectory(prefix="aicf-media-")
+        return Path(self._ctx.__enter__())
+
+    def __exit__(self, exc_type, exc, tb):
+        return self._ctx.__exit__(exc_type, exc, tb)
