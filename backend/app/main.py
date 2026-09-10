@@ -112,23 +112,6 @@ async def unhandled_exception(request: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"error": {"code": "INTERNAL_ERROR", "message": "Internal server error", "details": {}, "requestId": request_id}, "detail": "INTERNAL_ERROR"}, headers={"X-Request-Id": request_id})
 
 
-app.include_router(build_project_router(project_repository))
-app.include_router(build_job_router(job_repository, runtime=orchestrator_runtime, events=orchestrator_runtime.events))
-app.include_router(build_batch_router(project_repository, job_repository, orchestrator_runtime))
-app.include_router(build_scheduling_router(project_repository, schedule_repository, persistent_scheduler))
-app.include_router(build_factory_router(project_repository, job_repository, orchestrator_runtime))
-app.include_router(build_series_router(orchestrator_runtime))
-app.include_router(build_content_router(orchestrator_runtime, job_repository))
-app.include_router(build_assets_router(asset_repository))
-app.include_router(build_models_router(orchestrator_runtime))
-app.include_router(build_publishing_router(orchestrator_runtime, job_repository))
-app.include_router(build_qc_router(orchestrator_runtime, job_repository))
-app.include_router(build_best_take_router(orchestrator_runtime, job_repository))
-app.include_router(build_render_router(orchestrator_runtime, job_repository))
-app.include_router(build_system_router(orchestrator_runtime))
-app.include_router(pipeline_router)
-
-
 @app.get("/api/v1/health", tags=["system"])
 def health(request: Request):
     return {"status": "ok", "data": {"status": "OK", "service": "ai-content-factory-backend", "version": app.version}, "requestId": request.state.request_id}
@@ -156,3 +139,20 @@ def scheduler_status(request: Request):
 @app.get("/api/v1/readiness", include_in_schema=False)
 def readiness_alias(request: Request):
     return readiness(request)
+
+
+app.include_router(build_project_router(project_repository))
+app.include_router(build_job_router(job_repository, runtime=orchestrator_runtime, events=orchestrator_runtime.events))
+app.include_router(build_batch_router(project_repository, job_repository, orchestrator_runtime))
+app.include_router(build_scheduling_router(project_repository, schedule_repository, persistent_scheduler))
+app.include_router(build_factory_router(project_repository, job_repository, orchestrator_runtime))
+app.include_router(build_series_router(orchestrator_runtime))
+app.include_router(build_content_router(orchestrator_runtime, job_repository))
+app.include_router(build_assets_router(asset_repository))
+app.include_router(build_models_router(orchestrator_runtime))
+app.include_router(build_publishing_router(orchestrator_runtime, job_repository))
+app.include_router(build_qc_router(orchestrator_runtime, job_repository))
+app.include_router(build_best_take_router(orchestrator_runtime, job_repository))
+app.include_router(build_render_router(orchestrator_runtime, job_repository))
+app.include_router(build_system_router(orchestrator_runtime))
+app.include_router(pipeline_router)
