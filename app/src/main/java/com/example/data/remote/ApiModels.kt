@@ -1,10 +1,14 @@
 package com.example.data.remote
 
-import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
 
 @JsonClass(generateAdapter = true)
 data class ApiEnvelope<T>(val data: T, val requestId: String)
+
+@JsonClass(generateAdapter = true)
+data class ProjectCreateRequest(
+    val name: String
+)
 
 @JsonClass(generateAdapter = true)
 data class ProjectDto(
