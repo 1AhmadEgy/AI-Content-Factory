@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Callable
 
@@ -7,6 +8,7 @@ from ..domain.job_events import JobEvent
 from ..domain.jobs import GenerationJob, JobOutput, JobStatus
 from ..domain.repositories import JobRepository
 from ..workers.registry import WorkerRegistry
+from .heartbeat import LeaseHeartbeat
 from .job_state import transition
 from .queue import JobLease, JobQueue, Worker, WorkerContext
 
@@ -21,14 +23,26 @@ class ExecutionResult:
 class JobExecutor:
     """Runs a leased GenerationJob and durably records its lifecycle."""
 
-    def __init__(self, jobs: JobRepository, queue: JobQueue, workers: WorkerRegistry,
-                 events: Callable[[JobEvent], None] | None = None,
-                 on_completed: Callable[[GenerationJob], None] | None = None) -> None:
+    def __init__(
+        self,
+        jobs: JobRepository,
+        queue: JobQueue,
+        workers: WorkerRegistry,
+        events: Callable[[JobEvent], None] | None = None,
+        on_completed: Callable[[GenerationJob], None] | None = None,
+        heartbeat_interval_seconds: float | None = None,
+    ) -> None:
         self.jobs = jobs
         self.queue = queue
         self.workers = workers
         self.emit = events or (lambda _event: None)
         self.on_completed = on_completed or (lambda _job: None)
+        configured_interval = heartbeat_interval_seconds
+        if configured_interval is None:
+            configured_interval = float(os.getenv("AICF_LEASE_HEARTBEAT_SECONDS", "5.0"))
+        if configured_interval <= 0:
+            raise ValueError("heartbeat_interval_seconds must be positive")
+        self.heartbeat_interval_seconds = configured_interval
 
     def execute_claimed(self, job: GenerationJob, lease: JobLease, *, worker_id: str | None = None) -> ExecutionResult:
         worker_id = worker_id or lease.worker_id
@@ -42,11 +56,22 @@ class JobExecutor:
         job.progress = 0.05
         self.jobs.update(job)
         self._event(job, "JOB_PROGRESS", {"stage": "worker_execution"})
+
+        heartbeat = LeaseHeartbeat(self.queue, lease, interval_seconds=self.heartbeat_interval_seconds)
+        heartbeat.start()
         try:
-            result = worker.execute(job, WorkerContext(worker_id=worker_id, lease_id=lease.lease_id,
-                                                       metadata={"attempt": job.attempt}))
+            result = worker.execute(
+                job,
+                WorkerContext(
+                    worker_id=worker_id,
+                    lease_id=lease.lease_id,
+                    metadata={"attempt": job.attempt},
+                ),
+            )
         except Exception as exc:
             return self._fail(job, lease, "WORKER_EXCEPTION", str(exc), retryable=True)
+        finally:
+            heartbeat.stop()
 
         if result.success:
             if not result.asset_ids:
