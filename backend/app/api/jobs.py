@@ -91,7 +91,7 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
                 raise HTTPException(status_code=409, detail="IDEMPOTENCY_RESOURCE_MISSING")
             return {"data": _serialize(existing_job), "requestId": http_request.state.request_id, "idempotentReplay": True}
 
-        job = service.create(
+        job = service.build(
             project_id=request.projectId, job_type=request.type, target_type=request.targetType,
             target_id=request.targetId, parent_job_id=request.parentJobId, priority=request.priority,
             max_attempts=request.maxAttempts, provider=request.provider, model=request.model,
@@ -99,9 +99,10 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
                            constraints=request.input.constraints, seed=request.input.seed,
                            deterministic=request.input.deterministic),
         )
-        claimed = store.claim_idempotency(idempotency_key, "POST:/api/v1/jobs", fingerprint, job.id)
+        claimed, existing = repository.create_with_idempotency(
+            job, idempotency_key, "POST:/api/v1/jobs", fingerprint
+        )
         if not claimed:
-            existing = store.get_idempotency(idempotency_key, "POST:/api/v1/jobs")
             if existing and existing["request_fingerprint"] == fingerprint:
                 existing_job = repository.get(existing["resource_id"])
                 if existing_job:
