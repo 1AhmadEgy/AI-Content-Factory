@@ -12,9 +12,11 @@ def build_provenance(
     license_status: LicenseStatus = LicenseStatus.UNKNOWN,
 ) -> AssetProvenance:
     """Build a normalized provenance record for every produced asset."""
+    metadata_value = dict(metadata or {})
+    model = job.model or (str(metadata_value["model"]) if metadata_value.get("model") else None)
     return AssetProvenance(
         provider=job.provider or "mock",
-        model=job.model,
+        model=model,
         prompt=str(job.input.parameters.get("prompt", "")) or None,
         negative_prompt=str(job.input.parameters.get("negativePrompt", "")) or None,
         seed=job.input.seed,
@@ -26,7 +28,7 @@ def build_provenance(
             "targetType": job.target_type,
             "targetId": job.target_id,
             "parentJobId": job.parent_job_id,
-            **(metadata or {}),
+            **metadata_value,
         },
     )
 
