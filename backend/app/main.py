@@ -21,7 +21,7 @@ repositories = SQLiteRepositories(DATABASE_PATH)
 job_repository = SQLiteJobRepository(repositories.store)
 project_repository = SQLiteProjectRepository(repositories.store)
 orchestrator_runtime = OrchestratorRuntime(repositories)
-worker_id = os.getenv("AICF_WORKER_ID", "mock")
+worker_id = os.getenv("AICF_WORKER_ID", "auto")
 worker_loop = WorkerLoop(orchestrator_runtime, worker_id=worker_id)
 
 
