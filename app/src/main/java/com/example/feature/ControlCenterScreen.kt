@@ -47,9 +47,7 @@ fun ControlCenterScreen() {
             jobs = api.listJobs(limit = 100).data
             worker = api.workerStatus().data
             backendOk = health.data.status.equals("ok", ignoreCase = true) || health.status.equals("ok", ignoreCase = true)
-            selectedJobId?.let { id ->
-                selectedEvents = api.jobEvents(id, limit = 100).data
-            }
+            selectedJobId?.let { id -> selectedEvents = api.jobEvents(id, limit = 100).data }
             error = null
         } catch (t: Throwable) {
             backendOk = false
@@ -66,10 +64,7 @@ fun ControlCenterScreen() {
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Control Center", style = MaterialTheme.typography.headlineMedium)
-        Text(
-            if (backendOk) "Backend: ONLINE" else "Backend: OFFLINE",
-            color = if (backendOk) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-        )
+        Text(if (backendOk) "Backend: ONLINE" else "Backend: OFFLINE", color = if (backendOk) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
         worker?.let {
             Text("Worker: ${it.workerId} · ${if (it.running) "RUNNING" else "STOPPED"} · iterations ${it.iterations}")
             it.lastError?.let { message -> Text("Worker error: $message", color = MaterialTheme.colorScheme.error) }
@@ -81,19 +76,17 @@ fun ControlCenterScreen() {
                     try {
                         recovered = NetworkClient.apiService.recoverExpired().data.recovered
                         refresh()
-                    } catch (t: Throwable) {
-                        error = t.message ?: "Recovery failed"
-                    }
+                    } catch (t: Throwable) { error = t.message ?: "Recovery failed" }
                 }
             }) { Text("Recover expired") }
         }
         recovered?.let { Text("Recovered: $it") }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
-        val running = jobs.count { it.status in setOf("PENDING", "QUEUED", "RUNNING", "RETRYING") }
+        val active = jobs.count { it.status in setOf("PENDING", "QUEUED", "RUNNING", "RETRYING") }
         val completed = jobs.count { it.status == "COMPLETED" }
         val failed = jobs.count { it.status == "FAILED" }
-        Text("Jobs ${jobs.size} · Active $running · Completed $completed · Failed $failed", style = MaterialTheme.typography.titleLarge)
+        Text("Jobs ${jobs.size} · Active $active · Completed $completed · Failed $failed", style = MaterialTheme.typography.titleLarge)
 
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(jobs, key = { it.id }) { job ->
@@ -112,10 +105,14 @@ fun ControlCenterScreen() {
                     },
                     onCancel = {
                         scope.launch {
-                            try {
-                                NetworkClient.apiService.cancelJob(job.id)
-                                refresh()
-                            } catch (t: Throwable) { error = t.message ?: "Cancel failed" }
+                            try { NetworkClient.apiService.cancelJob(job.id); refresh() }
+                            catch (t: Throwable) { error = t.message ?: "Cancel failed" }
+                        }
+                    },
+                    onRetry = {
+                        scope.launch {
+                            try { NetworkClient.apiService.retryJob(job.id); refresh() }
+                            catch (t: Throwable) { error = t.message ?: "Retry failed" }
                         }
                     }
                 )
@@ -130,7 +127,8 @@ private fun ControlCenterJobCard(
     selected: Boolean,
     events: List<JobEvent>,
     onSelect: () -> Unit,
-    onCancel: () -> Unit
+    onCancel: () -> Unit,
+    onRetry: () -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth(), onClick = onSelect) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -142,21 +140,17 @@ private fun ControlCenterJobCard(
             job.errorCode?.let { Text("Error: $it", color = MaterialTheme.colorScheme.error) }
             job.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
-            if (job.status in setOf("PENDING", "QUEUED", "RUNNING", "RETRYING")) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    Button(onClick = onCancel) { Text("Cancel") }
-                }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                if (job.status in setOf("PENDING", "QUEUED", "RUNNING", "RETRYING")) Button(onClick = onCancel) { Text("Cancel") }
+                if (job.status == "FAILED") Button(onClick = onRetry) { Text("Retry") }
             }
 
             if (selected) {
                 Text("Pipeline events", style = MaterialTheme.typography.titleSmall)
-                if (events.isEmpty()) {
-                    Text("No events yet")
-                } else {
-                    events.takeLast(20).forEach { event ->
-                        val progress = event.progress?.let { " · ${(it.coerceIn(0.0, 1.0) * 100).toInt()}%" } ?: ""
-                        Text("${event.eventType}${event.status?.let { " · $it" } ?: ""}$progress")
-                    }
+                if (events.isEmpty()) Text("No events yet")
+                else events.takeLast(20).forEach { event ->
+                    val progress = event.progress?.let { " · ${(it.coerceIn(0.0, 1.0) * 100).toInt()}%" } ?: ""
+                    Text("${event.eventType}${event.status?.let { " · $it" } ?: ""}$progress")
                 }
             }
         }
