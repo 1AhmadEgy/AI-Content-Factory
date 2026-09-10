@@ -44,7 +44,15 @@ class OrchestratorRuntime:
         self.providers = default_provider_registry()
         provider_worker = ProviderGenerationWorker(self.providers, self.storage, self.assets)
         provider_worker.initialize()
-        self.workers.register(provider_worker, capabilities={"IMAGE", "VIDEO", "AUDIO", "DOCUMENT", "SUBTITLE"}, worker_id="provider-generation")
+        self.workers.register(
+            provider_worker,
+            capabilities={
+                "STORY", "CHARACTER", "WORLD", "SCENE", "SHOT",
+                "IMAGE", "VIDEO", "TTS", "LIPSYNC", "MUSIC", "SFX",
+                "UPSCALE", "INTERPOLATION",
+            },
+            worker_id="provider-generation",
+        )
         mock = DeterministicMockWorker(self.storage, self.assets)
         mock.initialize()
         self.workers.register(mock, capabilities={"IMAGE", "VIDEO", "AUDIO", "DOCUMENT", "SUBTITLE"}, worker_id="mock")
