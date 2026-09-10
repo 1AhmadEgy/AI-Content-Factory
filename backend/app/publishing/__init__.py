@@ -1,3 +1,3 @@
-from .adapters import FacebookAdapter, InstagramAdapter, PlatformPublication, TikTokAdapter, YouTubeAdapter
+from .adapters import AdapterRegistry, DryRunAdapter, PublishRequest, PublishResult, PublishingAdapter
 
-__all__ = ["FacebookAdapter", "InstagramAdapter", "PlatformPublication", "TikTokAdapter", "YouTubeAdapter"]
+__all__ = ["AdapterRegistry", "DryRunAdapter", "PublishRequest", "PublishResult", "PublishingAdapter"]
