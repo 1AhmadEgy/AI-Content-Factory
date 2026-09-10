@@ -9,6 +9,7 @@ import signal
 import subprocess
 import tempfile
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -149,7 +150,7 @@ class MediaDocumentWorker(Worker):
             try:
                 stdout, stderr = proc.communicate(timeout=self.subprocess_timeout_seconds)
             except subprocess.TimeoutExpired:
-                self._terminate_process(job_id, proc)
+                self._terminate_process(proc)
                 stdout, stderr = proc.communicate()
                 return subprocess.CompletedProcess(args, proc.returncode, stdout, stderr), True
             return subprocess.CompletedProcess(args, proc.returncode, stdout, stderr), False
@@ -161,16 +162,16 @@ class MediaDocumentWorker(Worker):
                     self._processes.pop(job_id, None)
 
     @staticmethod
-    def _terminate_process(job_id: str, proc: subprocess.Popen[str]) -> None:
+    def _terminate_process(proc: subprocess.Popen[str]) -> None:
         if proc.poll() is not None:
             return
         try:
             os.killpg(proc.pid, signal.SIGTERM)
         except ProcessLookupError:
             return
-        deadline = __import__("time").monotonic() + 1.0
-        while proc.poll() is None and __import__("time").monotonic() < deadline:
-            __import__("time").sleep(0.05)
+        deadline = time.monotonic() + 1.0
+        while proc.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
         if proc.poll() is None:
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
@@ -232,13 +233,13 @@ class MediaDocumentWorker(Worker):
         with self._process_lock:
             proc = self._processes.get(job_id)
         if proc is not None:
-            self._terminate_process(job_id, proc)
+            self._terminate_process(proc)
 
     def shutdown(self) -> None:
         with self._process_lock:
-            processes = list(self._processes.items())
-        for job_id, proc in processes:
-            self._terminate_process(job_id, proc)
+            processes = list(self._processes.values())
+        for proc in processes:
+            self._terminate_process(proc)
         with self._process_lock:
             self._processes.clear()
         self._initialized = False
