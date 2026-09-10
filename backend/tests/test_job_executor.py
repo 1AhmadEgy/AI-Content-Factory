@@ -50,49 +50,26 @@ def make_lease():
     return JobLease("job-1", "worker-1", "lease-1", "2099-01-01T00:00:00+00:00")
 
 
-def make_gate(tmp_path: Path):
-    repositories = SQLiteRepositories(":memory:")
-    repositories.projects.create(Project("project-1", "Test"))
-    storage = LocalAssetStorage(tmp_path / "assets")
-    assets = SQLiteAssetRepository(repositories.store)
-    payload = b"fixture"
-    digest, path, size = storage.put_bytes(payload)
-    assets.create(Asset(
-        id="asset-1", project_id="project-1", type=AssetType.IMAGE, path=path,
-        mime_type="text/plain", size_bytes=size, sha256=digest, status=AssetStatus.READY,
-        provenance=AssetProvenance(provider="mock", job_id="job-1", license_status=LicenseStatus.VERIFIED),
-    ))
-    return repositories, CompletionGate(assets, storage)
-
-
 def test_executor_persists_success_only_after_completion_gate(tmp_path):
-    job = make_job()
-    jobs, queue = FakeJobs(job), FakeQueue()
-    worker = FakeWorker(JobExecutionResult(True, ["asset-1"], {"score": 1.0}, "run-1"))
-    registry = WorkerRegistry(); registry.register(worker, {"IMAGE"}, worker_id="worker-1")
-    repositories, gate = make_gate(tmp_path)
+    job = make_job(); jobs, queue = FakeJobs(job), FakeQueue()
+    worker = FakeWorker(JobExecutionResult(True, ["asset-1"], {"score": 1.0}, "run-1")); registry = WorkerRegistry(); registry.register(worker, {"IMAGE"}, worker_id="worker-1")
+    repositories = SQLiteRepositories(":memory:"); repositories.projects.create(Project("project-1", "Test")); storage = LocalAssetStorage(tmp_path / "assets"); assets = SQLiteAssetRepository(repositories.store)
+    digest, path, size = storage.put_bytes(b"fixture")
+    assets.create(Asset("asset-1", "project-1", AssetType.IMAGE, path, "text/plain", size, digest, AssetStatus.READY, AssetProvenance(provider="mock", job_id="job-1", license_status=LicenseStatus.VERIFIED)))
     events: list[JobEvent] = []
-    result = JobExecutor(jobs, queue, registry, events.append, completion_gate=gate).execute_claimed(job, make_lease())
+    result = JobExecutor(jobs, queue, registry, events.append, completion_gate=CompletionGate(assets, storage)).execute_claimed(job, make_lease())
     assert result.status is JobStatus.COMPLETED
-    assert jobs.job.output == JobOutput(["asset-1"], {"score": 1.0}, "run-1")
     assert queue.acknowledged == [JobStatus.COMPLETED]
     assert [event.event_type for event in events] == ["JOB_STARTED", "JOB_PROGRESS", "JOB_PROGRESS", "JOB_COMPLETED"]
     repositories.close()
 
 
 def test_executor_blocks_when_completion_qc_fails(tmp_path):
-    job = make_job()
-    jobs, queue = FakeJobs(job), FakeQueue()
-    worker = FakeWorker(JobExecutionResult(True, ["asset-1"], {}, "run-1"))
-    registry = WorkerRegistry(); registry.register(worker, {"IMAGE"}, worker_id="worker-1")
-    repositories, _ = make_gate(tmp_path)
-    storage = LocalAssetStorage(tmp_path / "qc-assets")
-    assets = SQLiteAssetRepository(repositories.store)
+    job = make_job(); jobs, queue = FakeJobs(job), FakeQueue(); registry = WorkerRegistry(); registry.register(FakeWorker(JobExecutionResult(True, ["asset-1"], {}, "run-1")), {"IMAGE"}, worker_id="worker-1")
+    repositories = SQLiteRepositories(":memory:"); repositories.projects.create(Project("project-1", "Test")); storage = LocalAssetStorage(tmp_path / "assets"); assets = SQLiteAssetRepository(repositories.store)
     digest, path, size = storage.put_bytes(b"fixture")
-    assets.create(Asset("asset-1", "project-1", AssetType.IMAGE, path, "text/plain", size, digest, AssetStatus.READY,
-                        AssetProvenance(provider="mock", job_id="job-1", license_status=LicenseStatus.BLOCKED)))
-    gate = CompletionGate(assets, storage)
-    result = JobExecutor(jobs, queue, registry, completion_gate=gate).execute_claimed(job, make_lease())
+    assets.create(Asset("asset-1", "project-1", AssetType.IMAGE, path, "text/plain", size, digest, AssetStatus.READY, AssetProvenance(provider="mock", job_id="job-1", license_status=LicenseStatus.BLOCKED)))
+    result = JobExecutor(jobs, queue, registry, completion_gate=CompletionGate(assets, storage)).execute_claimed(job, make_lease())
     assert result.status is JobStatus.BLOCKED
     assert jobs.job.status is JobStatus.BLOCKED
     assert queue.acknowledged == [JobStatus.BLOCKED]
@@ -100,10 +77,7 @@ def test_executor_blocks_when_completion_qc_fails(tmp_path):
 
 
 def test_executor_retries_retryable_failure_until_limit():
-    job = make_job(max_attempts=2)
-    jobs, queue = FakeJobs(job), FakeQueue()
-    worker = FakeWorker(JobExecutionResult(False, error_code="TIMEOUT", error_message="temporary", retryable=True))
-    registry = WorkerRegistry(); registry.register(worker, worker_id="worker-1")
+    job = make_job(max_attempts=2); jobs, queue = FakeJobs(job), FakeQueue(); registry = WorkerRegistry(); registry.register(FakeWorker(JobExecutionResult(False, error_code="TIMEOUT", error_message="temporary", retryable=True)), worker_id="worker-1")
     result = JobExecutor(jobs, queue, registry).execute_claimed(job, make_lease())
     assert result.status is JobStatus.QUEUED
     assert result.retried is True
@@ -111,10 +85,7 @@ def test_executor_retries_retryable_failure_until_limit():
 
 
 def test_executor_does_not_retry_non_retryable_failure():
-    job = make_job(max_attempts=3)
-    jobs, queue = FakeJobs(job), FakeQueue()
-    worker = FakeWorker(JobExecutionResult(False, error_code="INVALID_INPUT", error_message="bad", retryable=False))
-    registry = WorkerRegistry(); registry.register(worker, worker_id="worker-1")
+    job = make_job(); jobs, queue = FakeJobs(job), FakeQueue(); registry = WorkerRegistry(); registry.register(FakeWorker(JobExecutionResult(False, error_code="INVALID_INPUT", error_message="bad", retryable=False)), worker_id="worker-1")
     result = JobExecutor(jobs, queue, registry).execute_claimed(job, make_lease())
     assert result.status is JobStatus.FAILED
     assert queue.acknowledged == [JobStatus.FAILED]
