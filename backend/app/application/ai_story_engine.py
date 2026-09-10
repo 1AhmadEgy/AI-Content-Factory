@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 
-from ..domain.content import ContentBrief, StoryPlan
+from ..domain.content import ContentBrief, ScenePlan, ShotPlan, StoryPlan
 from ..providers.contracts import ProviderRequest
 from ..providers.registry import ModelRegistry
+from .ai_json import parse_json_object
 from .content_planner import DeterministicContentPlanner
 
 
@@ -20,36 +20,49 @@ class AIStoryEngine:
         model = self.registry.get(model_id) if model_id else self.registry.route("generation", "story")
         if model is None:
             return self.fallback.plan(brief)
-
-        prompt = (
-            "Create a production-ready video story as strict JSON. "
-            "Return title, logline, synopsis and scenes. Each scene must contain "
-            "number,title,duration_seconds,visual,narration,shots. Each shot must "
-            "contain number,prompt,duration_seconds,camera,lighting,style. "
-            f"Language: {brief.language}. Duration: {brief.duration_seconds}s. "
-            f"Style: {brief.style}. Audience: {brief.audience}. Platform: {brief.platform}. "
-            f"Topic: {brief.topic}"
-        )
-        response = model.adapter.execute(ProviderRequest(model=model.id, parameters={"prompt": prompt}))
+        prompt = _story_prompt(brief)
+        response = model.adapter.execute(ProviderRequest(model=model.id, parameters={"prompt": prompt, "temperature": 0.7}))
         if not response.success or not response.output_text:
             return self.fallback.plan(brief)
-        try:
-            data = json.loads(response.output_text)
-            return _story_from_dict(data)
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        data = parse_json_object(response.output_text)
+        if data is None:
             return self.fallback.plan(brief)
+        try:
+            return _story_from_dict(data)
+        except (KeyError, TypeError, ValueError):
+            return self.fallback.plan(brief)
+
+
+def _story_prompt(brief: ContentBrief) -> str:
+    return (
+        "You are the story director for an automated video production system. "
+        "Return ONLY valid JSON. Create a coherent, original, production-ready story. "
+        "Required keys: title, logline, synopsis, scenes. Each scene requires number,title,"
+        "duration_seconds,visual,narration,shots. Each shot requires number,prompt,duration_seconds,"
+        "camera,lighting,style. Keep total scene duration close to the requested duration. "
+        f"Language={brief.language}; Duration={brief.duration_seconds}s; Style={brief.style}; "
+        f"Audience={brief.audience}; Platform={brief.platform}; AspectRatio={brief.aspect_ratio}; Topic={brief.topic}"
+    )
 
 
 def _story_from_dict(data: dict[str, object]) -> StoryPlan:
-    scenes = []
-    for raw_scene in data["scenes"]:  # type: ignore[index]
-        scene = dict(raw_scene)  # type: ignore[arg-type]
-        shots = []
-        for raw_shot in scene.get("shots", []):
-            shot = dict(raw_shot)
-            from ..domain.content import ShotPlan
-            shots.append(ShotPlan(**shot))
-        from ..domain.content import ScenePlan
-        scene["shots"] = tuple(shots)
+    title = str(data["title"]).strip()
+    logline = str(data["logline"]).strip()
+    synopsis = str(data["synopsis"]).strip()
+    raw_scenes = data["scenes"]
+    if not isinstance(raw_scenes, list) or not raw_scenes:
+        raise ValueError("scenes must be a non-empty list")
+    scenes: list[ScenePlan] = []
+    for raw_scene in raw_scenes:
+        if not isinstance(raw_scene, dict):
+            raise TypeError("invalid scene")
+        raw_shots = raw_scene.get("shots", [])
+        if not isinstance(raw_shots, list):
+            raise TypeError("invalid shots")
+        shots = tuple(ShotPlan(**dict(shot)) for shot in raw_shots if isinstance(shot, dict))
+        if not shots:
+            raise ValueError("scene has no shots")
+        scene = dict(raw_scene)
+        scene["shots"] = shots
         scenes.append(ScenePlan(**scene))
-    return StoryPlan(title=str(data["title"]), logline=str(data["logline"]), synopsis=str(data["synopsis"]), scenes=tuple(scenes))
+    return StoryPlan(title=title, logline=logline, synopsis=synopsis, scenes=tuple(scenes))
