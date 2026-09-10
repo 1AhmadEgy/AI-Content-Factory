@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
-import tempfile
 import uuid
 from pathlib import Path
 
@@ -39,7 +37,8 @@ class RepurposeWorker(Worker):
             return JobExecutionResult(False, error_code="WORKER_NOT_INITIALIZED", error_message="Worker is not initialized")
         if job.type is not JobType.REPURPOSE:
             return JobExecutionResult(False, error_code="UNSUPPORTED_JOB_TYPE", error_message=job.type.value)
-        source = next((self.assets.get(asset_id) for asset_id in job.input.reference_asset_ids if self.assets.get(asset_id)), None)
+        references = list(dict.fromkeys(job.input.reference_asset_ids))
+        source = next((self.assets.get(asset_id) for asset_id in references if self.assets.get(asset_id)), None)
         if source is None or source.status is not AssetStatus.READY:
             return JobExecutionResult(False, error_code="REPURPOSE_SOURCE_NOT_READY", error_message="No ready source asset")
         if source.type is not AssetType.VIDEO:
@@ -60,7 +59,7 @@ class RepurposeWorker(Worker):
             ffmpeg_bin=os.getenv("AICF_FFMPEG_BIN", "ffmpeg"),
             ffprobe_bin=os.getenv("AICF_FFPROBE_BIN", "ffprobe"),
             overwrite=True,
-            timeout_seconds=int(job.input.parameters.get("timeoutSeconds", 600)),
+            timeout_seconds=max(1, int(job.input.parameters.get("timeoutSeconds", 600))),
         )
         outputs: list[dict[str, object]] = []
 
@@ -106,13 +105,16 @@ class RepurposeWorker(Worker):
                         return JobExecutionResult(False, error_code="REPURPOSE_QC_FAILED", error_message=f"Unexpected media output for {platform}: {actual_width}x{actual_height}, {actual_duration:.3f}s", retryable=True)
                     payload = output.read_bytes()
                     thumbnail = Path(temp) / f"{platform}.jpg"
-                    thumb = subprocess.run([options.ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-y", "-ss", "0", "-i", str(output), "-frames:v", "1", "-q:v", "2", str(thumbnail)], check=False, capture_output=True)
+                    try:
+                        thumb = subprocess.run([options.ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-y", "-ss", "0", "-i", str(output), "-frames:v", "1", "-q:v", "2", str(thumbnail)], check=False, capture_output=True, timeout=options.timeout_seconds)
+                    except subprocess.TimeoutExpired:
+                        return JobExecutionResult(False, error_code="REPURPOSE_THUMBNAIL_TIMEOUT", error_message=f"Thumbnail extraction timed out: {platform}", retryable=True)
                     if thumb.returncode != 0 or not thumbnail.is_file():
                         return JobExecutionResult(False, error_code="REPURPOSE_THUMBNAIL_FAILED", error_message=thumb.stderr.decode("utf-8", errors="replace")[-2000:], retryable=True)
                     thumbnail_payload = thumbnail.read_bytes()
                 digest, path, size = self.storage.put_bytes(payload)
                 asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"repurpose-video:{job.id}:{platform}:{digest}"))
-                self.assets.create(Asset(asset_id, job.project_id, AssetType.VIDEO, path, "video/mp4", size, digest, AssetStatus.READY, build_provenance(job, source_asset_ids=[source.id], metadata={"platform": platform, "profile": profile.name, "resolution": f"{actual_width}x{actual_height}", "sourceStartUs": source_start_us, "durationUs": effective_duration_us, "durationSeconds": actual_duration, "qc": "passed"}, license_status=LicenseStatus.VERIFIED)))
+                self.assets.create(Asset(asset_id, job.project_id, AssetType.VIDEO, path, "video/mp4", size, AssetStatus.READY, build_provenance(job, source_asset_ids=[source.id], metadata={"platform": platform, "profile": profile.name, "resolution": f"{actual_width}x{actual_height}", "sourceStartUs": source_start_us, "durationUs": effective_duration_us, "durationSeconds": actual_duration, "qc": "passed"}, license_status=LicenseStatus.VERIFIED)))
                 thumb_digest, thumb_path, thumb_size = self.storage.put_bytes(thumbnail_payload)
                 thumb_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"repurpose-thumbnail:{job.id}:{platform}:{thumb_digest}"))
                 self.assets.create(Asset(thumb_id, job.project_id, AssetType.THUMBNAIL, thumb_path, "image/jpeg", thumb_size, AssetStatus.READY, build_provenance(job, source_asset_ids=[asset_id], metadata={"platform": platform, "engine": "ffmpeg", "timestamp": "0"}, license_status=LicenseStatus.VERIFIED)))
@@ -132,12 +134,10 @@ class RepurposeWorker(Worker):
     def cancel(self, job_id: str) -> None:
         renderer = self._renderers.get(job_id)
         if renderer:
-            for render_id in list(renderer._processes):
-                renderer.cancel(render_id)
+            renderer.cancel_all()
 
     def shutdown(self) -> None:
         for renderer in list(self._renderers.values()):
-            for render_id in list(renderer._processes):
-                renderer.cancel(render_id)
+            renderer.shutdown()
         self._renderers.clear()
         self._initialized = False
