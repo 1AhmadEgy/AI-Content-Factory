@@ -36,8 +36,13 @@ class RenderWorker(Worker):
     def health_check(self) -> bool:
         return self._initialized
 
-    def execute(self, job: GenerationJob, context: WorkerContext) -> JobExecutionResult:
-        context.report_progress(0.10, "preparing")
+    @staticmethod
+    def _progress(context: WorkerContext | None, progress: float, stage: str) -> None:
+        if context is not None:
+            context.report_progress(progress, stage)
+
+    def execute(self, job: GenerationJob, context: WorkerContext | None) -> JobExecutionResult:
+        self._progress(context, 0.10, "preparing")
         if not self._initialized:
             return JobExecutionResult(False, error_code="FFMPEG_NOT_AVAILABLE", error_message="FFmpeg/ffprobe executable was not found")
         if not job.input.reference_asset_ids:
@@ -54,7 +59,7 @@ class RenderWorker(Worker):
             return JobExecutionResult(False, error_code="RENDER_INVALID_TIMELINE", error_message=str(exc))
         if not timeline.tracks:
             return JobExecutionResult(False, error_code="RENDER_EMPTY_TIMELINE", error_message="Timeline has no tracks")
-        context.report_progress(0.20, "assets_loaded")
+        self._progress(context, 0.20, "assets_loaded")
 
         width, height = self._resolution(job.input.parameters)
         fps = max(1, int(job.input.parameters.get("fps", 30)))
@@ -70,30 +75,21 @@ class RenderWorker(Worker):
                     return JobExecutionResult(False, error_code="RENDER_ASSET_MISSING", error_message=clip.asset_id)
                 asset_paths[clip.asset_id] = str(path)
 
-        renderer = FfmpegRenderer(
-            asset_paths,
-            FfmpegRenderOptions(
-                ffmpeg_bin=self.ffmpeg_binary,
-                ffprobe_bin=self.ffprobe_binary,
-                overwrite=True,
-                subtitles_path=str(job.input.parameters.get("subtitlePath", "")).strip() or None,
-            ),
-        )
+        renderer = FfmpegRenderer(asset_paths, FfmpegRenderOptions(ffmpeg_bin=self.ffmpeg_binary, ffprobe_bin=self.ffprobe_binary, overwrite=True, subtitles_path=str(job.input.parameters.get("subtitlePath", "")).strip() or None))
         self._renderers[job.id] = renderer
         output = self.storage.root / "staging" / f"render-{job.id}-{uuid.uuid4().hex}.mp4"
         try:
             output.parent.mkdir(parents=True, exist_ok=True)
-            context.report_progress(0.30, "rendering")
+            self._progress(context, 0.30, "rendering")
             result = renderer.render(timeline, profile, str(output))
             if not result.success or not result.output_path:
-                message = result.error or "FFmpeg render failed"
-                return JobExecutionResult(False, error_code="FFMPEG_RENDER_FAILED", error_message=message, retryable=True)
-            context.report_progress(0.82, "audio_mix_complete")
+                return JobExecutionResult(False, error_code="FFMPEG_RENDER_FAILED", error_message=result.error or "FFmpeg render failed", retryable=True)
+            self._progress(context, 0.82, "audio_mix_complete")
             probe = renderer.probe(result.output_path)
             errors = self._validate_probe(probe, width, height)
             if errors:
                 return JobExecutionResult(False, error_code="FINAL_QC_FAILED", error_message=";".join(errors), retryable=False)
-            context.report_progress(0.90, "ffprobe_qc_passed")
+            self._progress(context, 0.90, "ffprobe_qc_passed")
             payload = Path(result.output_path).read_bytes()
         except (OSError, RuntimeError, ValueError) as exc:
             return JobExecutionResult(False, error_code="RENDER_IO_ERROR", error_message=str(exc), retryable=True)
@@ -101,20 +97,10 @@ class RenderWorker(Worker):
             self._renderers.pop(job.id, None)
             output.unlink(missing_ok=True)
 
-        context.report_progress(0.96, "provenance")
+        self._progress(context, 0.96, "provenance")
         digest, path, size = self.storage.put_bytes(payload)
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"render:{job.id}:{digest}"))
-        asset = Asset(
-            id=asset_id,
-            project_id=job.project_id,
-            type=AssetType.VIDEO,
-            path=path,
-            mime_type="video/mp4",
-            size_bytes=size,
-            sha256=digest,
-            status=AssetStatus.READY,
-            provenance=build_provenance(job, source_asset_ids=[timeline_asset.id, *asset_paths.keys()], metadata={"width": width, "height": height, "fps": fps, "durationUs": timeline.duration_us, "engine": "ffmpeg", "finalQc": "passed"}, license_status=LicenseStatus.VERIFIED),
-        )
+        asset = Asset(id=asset_id, project_id=job.project_id, type=AssetType.VIDEO, path=path, mime_type="video/mp4", size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, source_asset_ids=[timeline_asset.id, *asset_paths.keys()], metadata={"width": width, "height": height, "fps": fps, "durationUs": timeline.duration_us, "engine": "ffmpeg", "finalQc": "passed"}, license_status=LicenseStatus.VERIFIED))
         self.assets.create(asset)
         return JobExecutionResult(True, [asset_id], {"width": width, "height": height, "fps": fps, "durationUs": timeline.duration_us, "finalQc": "passed", "engine": "ffmpeg"}, f"ffmpeg-{job.id}")
 
@@ -156,10 +142,10 @@ class RenderWorker(Worker):
         ratio = str(parameters.get("aspectRatio", "16:9"))
         height = {"720p": 720, "1080p": 1080, "4k": 2160}.get(preset, 1080)
         if ratio == "9:16":
-            return (height * 9 // 16, height)
+            return ((height * 9 // 16) // 2 * 2, height)
         if ratio == "1:1":
             return (height, height)
-        return (height * 16 // 9, height)
+        return ((height * 16 // 9) // 2 * 2, height)
 
     def cancel(self, job_id: str) -> None:
         renderer = self._renderers.get(job_id)
