@@ -44,3 +44,6 @@ class JobRepository(ABC):
 
     @abstractmethod
     def update(self, job: GenerationJob) -> GenerationJob: ...
+
+    @abstractmethod
+    def list_by_parent(self, parent_job_id: str) -> list[GenerationJob]: ...
