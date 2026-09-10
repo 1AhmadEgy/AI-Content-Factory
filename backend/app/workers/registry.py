@@ -35,13 +35,16 @@ class WorkerRegistry:
         specialized = {"QC": "quality-control", "BEST_TAKE": "best-take", "TIMELINE": "timeline", "RENDER": "render", "SUBTITLE": "media-document", "THUMBNAIL": "media-document", "METADATA": "media-document", "PUBLISH": "publish", "REPURPOSE": "repurpose"}
         worker_id = specialized.get(name)
         if worker_id:
-            if worker_id not in self._workers or not self._workers[worker_id].worker.health_check():
+            descriptor = self._workers.get(worker_id)
+            if descriptor is None or not descriptor.worker.health_check():
                 raise KeyError(f"Required worker unavailable for job type: {name}")
+            if name not in descriptor.capabilities:
+                raise KeyError(f"Worker does not support job type: {name}")
             return worker_id
-        if "provider-generation" in self._workers and self._workers["provider-generation"].worker.health_check() and name in self._workers["provider-generation"].capabilities:
+        descriptor = self._workers.get("provider-generation")
+        if descriptor is not None and descriptor.worker.health_check() and name in descriptor.capabilities:
             return "provider-generation"
-        if "mock" in self._workers and self._workers["mock"].worker.health_check():
-            return "mock"
+        # Do not silently route unsupported work to a mock worker.
         candidates = self.find(name)
         for worker_id, descriptor in self._workers.items():
             if descriptor.worker in candidates:
