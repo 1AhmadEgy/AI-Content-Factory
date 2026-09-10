@@ -1,45 +1,35 @@
-"""SQLite persistence adapters for the backend domain repositories."""
-
 from __future__ import annotations
 
 import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from threading import RLock
-from typing import Any, TypeVar
+from typing import Any
 
 from ..domain.jobs import GenerationJob, JobInput, JobOutput, JobStatus, JobType
 from ..domain.projects import Episode, Project, Scene, Shot
 from ..domain.repositories import EpisodeRepository, JobRepository, ProjectRepository, SceneRepository, ShotRepository
 
-T = TypeVar("T")
-
 
 def _dt(value: datetime | None) -> str | None:
-    return value.isoformat() if value is not None else None
+    return value.isoformat() if value else None
 
 
 def _parse_dt(value: str | None) -> datetime | None:
-    return datetime.fromisoformat(value) if value is not None else None
+    return datetime.fromisoformat(value) if value else None
 
 
 def _json(value: Any) -> str:
-    return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
 class SQLiteStore:
-    """Owns the SQLite connection, schema lifecycle and idempotency records."""
-
     def __init__(self, path: str | Path = ":memory:") -> None:
-        self.path = str(path)
-        if self.path != ":memory:":
-            Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        self._lock = RLock()
-        self._connection = sqlite3.connect(self.path, check_same_thread=False)
+        import threading
+        self._lock = threading.RLock()
+        self._connection = sqlite3.connect(str(path), check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA foreign_keys = ON")
-        self._connection.execute("PRAGMA journal_mode = WAL")
         self.initialize()
 
     @property
@@ -101,27 +91,24 @@ class SQLiteProjectRepository(ProjectRepository):
         row = self.store._get("projects", project_id)
         return Project(row["id"], row["name"], _parse_dt(row["created_at"]), _parse_dt(row["updated_at"])) if row else None
 
-    def list(self, page: int = 1, page_size: int = 50) -> tuple[list[Project], int]:
-        page = max(1, page)
-        page_size = max(1, min(page_size, 100))
-        offset = (page - 1) * page_size
+    def list(self, limit: int, offset: int) -> tuple[list[Project], int]:
+        limit = max(1, min(limit, 100))
+        offset = max(0, offset)
         with self.store._lock:
             total = self.store.connection.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
-            rows = self.store.connection.execute("SELECT * FROM projects ORDER BY created_at DESC LIMIT ? OFFSET ?", (page_size, offset)).fetchall()
+            rows = self.store.connection.execute("SELECT * FROM projects ORDER BY created_at DESC LIMIT ? OFFSET ?", (limit, offset)).fetchall()
         return [Project(r["id"], r["name"], _parse_dt(r["created_at"]), _parse_dt(r["updated_at"])) for r in rows], total
 
-    def update_name(self, project_id: str, name: str) -> Project | None:
-        now = datetime.now().astimezone()
+    def update(self, project: Project) -> Project:
         with self.store._lock, self.store.connection:
-            cursor = self.store.connection.execute("UPDATE projects SET name=?, updated_at=? WHERE id=?", (name, _dt(now), project_id))
+            cursor = self.store.connection.execute("UPDATE projects SET name=?, updated_at=? WHERE id=?", (project.name, _dt(project.updated_at), project.id))
             if cursor.rowcount != 1:
-                return None
-        return self.get(project_id)
+                raise KeyError(f"Project not found: {project.id}")
+        return project
 
-    def delete(self, project_id: str) -> bool:
+    def delete(self, project_id: str) -> None:
         with self.store._lock, self.store.connection:
-            cursor = self.store.connection.execute("DELETE FROM projects WHERE id=?", (project_id,))
-            return cursor.rowcount == 1
+            self.store.connection.execute("DELETE FROM projects WHERE id=?", (project_id,))
 
 
 class SQLiteEpisodeRepository(EpisodeRepository):
