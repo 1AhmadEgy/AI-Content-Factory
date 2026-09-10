@@ -90,7 +90,7 @@ class JobService:
 
     def pause(self, job_id: str) -> GenerationJob:
         job = self._get(job_id)
-        if job.status not in {JobStatus.QUEUED, JobStatus.RUNNING}:
+        if job.status is not JobStatus.QUEUED:
             raise ValueError("JOB_NOT_PAUSABLE")
         expected_status = job.status
         transition(job, JobStatus.PAUSED)
