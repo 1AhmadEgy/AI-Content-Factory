@@ -1,4 +1,5 @@
 from datetime import datetime
+
 from ..domain.jobs import GenerationJob, JobStatus, utc_now
 
 
@@ -13,7 +14,7 @@ _ALLOWED: dict[JobStatus, set[JobStatus]] = {
     JobStatus.PAUSED: {JobStatus.QUEUED, JobStatus.CANCELLED},
     JobStatus.RETRYING: {JobStatus.QUEUED, JobStatus.FAILED, JobStatus.CANCELLED},
     JobStatus.COMPLETED: set(),
-    JobStatus.FAILED: set(),
+    JobStatus.FAILED: {JobStatus.RETRYING},
     JobStatus.CANCELLED: set(),
 }
 
@@ -21,19 +22,19 @@ _ALLOWED: dict[JobStatus, set[JobStatus]] = {
 def transition(job: GenerationJob, target: JobStatus, *, now: datetime | None = None) -> GenerationJob:
     if target not in _ALLOWED[job.status]:
         raise InvalidJobTransition(f"Cannot transition {job.status} -> {target}")
-
     now = now or utc_now()
     job.status = target
     job.updated_at = now
-
     if target == JobStatus.RUNNING:
         job.attempt += 1
         job.started_at = now
+        job.completed_at = None
         job.progress = max(job.progress, 0.0)
     elif target == JobStatus.COMPLETED:
         job.progress = 1.0
         job.completed_at = now
+    elif target == JobStatus.RETRYING:
+        job.completed_at = None
     elif target in {JobStatus.FAILED, JobStatus.CANCELLED}:
         job.completed_at = now
-
     return job
