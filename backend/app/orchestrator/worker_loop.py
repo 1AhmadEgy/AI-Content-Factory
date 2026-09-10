@@ -22,14 +22,15 @@ class WorkerLoop:
     """Long-running local scheduler/worker loop.
 
     The loop is intentionally broker-independent: SQLite remains the durable
-    queue, while this process continuously claims and executes jobs. A later
-    Redis-backed implementation can reuse the same runtime contract.
+    queue, while this process continuously claims and executes jobs. Worker
+    selection defaults to the runtime registry so specialized jobs cannot be
+    accidentally executed by the development mock worker.
     """
 
     def __init__(
         self,
         runtime: OrchestratorRuntime,
-        worker_id: str = "mock",
+        worker_id: str = "auto",
         config: WorkerLoopConfig | None = None,
     ) -> None:
         if not worker_id.strip():
