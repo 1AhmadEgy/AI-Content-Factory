@@ -87,7 +87,7 @@ def health(request: Request) -> dict[str, object]:
 
 
 @app.get("/api/v1/ready", tags=["system"])
-def readiness(request: Request) -> JSONResponse | dict[str, object]:
+def readiness(request: Request) -> dict[str, object]:
     try:
         repositories.store.connection.execute("SELECT 1").fetchone()
         return {"data": {"status": "READY", "service": "ai-content-factory-backend"}, "requestId": request.state.request_id}
