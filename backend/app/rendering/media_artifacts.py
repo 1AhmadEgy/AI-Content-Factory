@@ -32,12 +32,42 @@ def write_srt(cues: list[SubtitleCue], output: str) -> str:
     return output
 
 
-def extract_thumbnail(video: str, output: str, at_s: float = 0.0, ffmpeg_bin: str = "ffmpeg") -> str:
-    Path(output).parent.mkdir(parents=True, exist_ok=True)
-    cmd = [ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-y", "-ss", str(max(0.0, at_s)), "-i", video, "-frames:v", "1", "-q:v", "2", output]
-    p = subprocess.run(cmd, capture_output=True, text=True)
-    if p.returncode or not Path(output).is_file() or Path(output).stat().st_size == 0:
-        raise RuntimeError(p.stderr.strip() or "THUMBNAIL_GENERATION_FAILED")
+def extract_thumbnail(
+    video: str,
+    output: str,
+    at_s: float = 0.0,
+    ffmpeg_bin: str = "ffmpeg",
+    timeout_seconds: float = 60.0,
+) -> str:
+    """Extract one thumbnail without allowing FFmpeg to block indefinitely."""
+    if timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be positive")
+    output_path = Path(output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        ffmpeg_bin,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-ss",
+        str(max(0.0, at_s)),
+        "-i",
+        video,
+        "-frames:v",
+        "1",
+        "-q:v",
+        "2",
+        output,
+    ]
+    try:
+        process = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as exc:
+        output_path.unlink(missing_ok=True)
+        raise RuntimeError("THUMBNAIL_TIMEOUT") from exc
+    if process.returncode or not output_path.is_file() or output_path.stat().st_size == 0:
+        output_path.unlink(missing_ok=True)
+        raise RuntimeError(process.stderr.strip() or "THUMBNAIL_GENERATION_FAILED")
     return output
 
 
