@@ -2,6 +2,7 @@ import time
 
 from backend.app.orchestrator.cancellation import CancellationRegistry
 from backend.app.orchestrator.heartbeat import LeaseHeartbeat
+from backend.app.orchestrator.queue import JobLease
 
 
 def test_cancellation_registry_is_cooperative():
@@ -17,13 +18,14 @@ def test_heartbeat_renews_lease():
     calls = []
 
     class Queue:
-        def heartbeat(self, job_id, worker_id):
-            calls.append((job_id, worker_id))
-            return True
+        def heartbeat(self, lease):
+            calls.append(lease)
 
-    heartbeat = LeaseHeartbeat(Queue(), "job-1", "worker-1", interval_seconds=0.01)
+    lease = JobLease("job-1", "worker-1", "lease-1", "2099-01-01T00:00:00+00:00")
+    heartbeat = LeaseHeartbeat(Queue(), lease, interval_seconds=0.01)
     heartbeat.start()
     time.sleep(0.035)
     heartbeat.stop()
+
     assert calls
-    assert all(call == ("job-1", "worker-1") for call in calls)
+    assert all(call == lease for call in calls)
