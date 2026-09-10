@@ -1,6 +1,7 @@
 package com.example.data.remote
 
 import com.squareup.moshi.JsonClass
+import com.squareup.moshi.JsonElement
 
 @JsonClass(generateAdapter = true)
 data class BackendJob(
@@ -42,7 +43,7 @@ data class JobEvent(
     val eventType: String,
     val status: String? = null,
     val progress: Double? = null,
-    val payload: Map<String, String> = emptyMap(),
+    val payload: Map<String, JsonElement> = emptyMap(),
     val createdAt: String? = null
 )
 
