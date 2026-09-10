@@ -10,7 +10,7 @@ from .content_planner import DeterministicContentPlanner
 
 
 class AIStoryEngine:
-    """AI-first story director using reusable character and location identity context."""
+    """AI-first story director using reusable country-scoped character/location identity."""
 
     def __init__(self, registry: ModelRegistry) -> None:
         self.registry = registry
@@ -50,15 +50,19 @@ def _story_prompt(brief: ContentBrief, characters: tuple[CharacterProfile, ...],
         for l in locations
     ) or "No saved locations."
     continuity = "; ".join(brief.continuity_rules) or "Preserve identity, voice, appearance, behavior and location continuity across every scene."
+    glossary = "; ".join(f"{k}={v}" for k, v in brief.glossary.items()) or "No glossary terms."
+    context = brief.production_context or {}
     return (
-        "You are the story director for an automated video production system. Return ONLY valid JSON. "
-        "Create a coherent production-ready story. Reuse supplied saved characters and locations exactly; never redesign "
-        "character identity or location architecture/visual identity unless explicitly requested. "
+        "You are the story director for an automated global video production system. Return ONLY valid JSON. "
+        "Create a coherent production-ready story for the selected country/library. Use local cultural context only from "
+        "the supplied project/library context; do not invent a different country. Reuse supplied saved characters and "
+        "locations exactly; never redesign character identity or location architecture/visual identity unless explicitly requested. "
         "Required keys: title, logline, synopsis, scenes. Each scene requires number,title,duration_seconds,visual,"
         "narration,shots. Each shot requires number,prompt,duration_seconds,camera,lighting,style,character_ids,location_ids. "
-        f"Language={brief.language}; Duration={brief.duration_seconds}s; Style={brief.style}; Audience={brief.audience}; "
-        f"Platform={brief.platform}; AspectRatio={brief.aspect_ratio}; Topic={brief.topic}; Continuity={continuity}\n"
-        f"SAVED CHARACTERS:\n{character_context}\nSAVED LOCATIONS:\n{location_context}"
+        f"CountryId={brief.country_id}; LibraryId={brief.library_id}; Language={brief.language}; Dialect={brief.dialect or 'default'}; "
+        f"Duration={brief.duration_seconds}s; Style={brief.style}; Audience={brief.audience}; Platform={brief.platform}; "
+        f"AspectRatio={brief.aspect_ratio}; Topic={brief.topic}; Continuity={continuity}; Glossary={glossary}; "
+        f"ProductionContext={context}\nSAVED CHARACTERS:\n{character_context}\nSAVED LOCATIONS:\n{location_context}"
     )
 
 
