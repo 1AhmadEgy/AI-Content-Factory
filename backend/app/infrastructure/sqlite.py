@@ -7,7 +7,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
-from ..domain.jobs import GenerationJob, JobInput, JobOutput, JobStatus, JobType
+from ..domain.jobs import GenerationJob, JobInput, JobOutput, JobStatus, JobType, utc_now
 from ..domain.projects import Episode, Project, Scene, Shot
 from ..domain.repositories import (
     EpisodeRepository,
@@ -139,7 +139,7 @@ class SQLiteStore:
                 self._connection.execute(
                     "INSERT INTO idempotency_keys(key,operation,request_fingerprint,resource_id,created_at) "
                     "VALUES(?,?,?,?,?)",
-                    (key, operation, fingerprint, resource_id, datetime.now().astimezone().isoformat()),
+                    (key, operation, fingerprint, resource_id, _dt(utc_now())),
                 )
                 return True
             except sqlite3.IntegrityError:
@@ -285,8 +285,7 @@ class SQLiteJobRepository(JobRepository):
 
     def _insert_job(self, connection: sqlite3.Connection, job: GenerationJob) -> None:
         connection.execute(
-            "INSERT INTO jobs(id,parent_job_id,project_id,type,target_type,target_id,priority,status,progress,attempt,max_attempts,provider,model,input_json,output_json,error_code,error_message,created_at,started_at,completed_at,updated_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO jobs(id,parent_job_id,project_id,type,target_type,target_id,priority,status,progress,attempt,max_attempts,provider,model,input_json,output_json,error_code,error_message,created_at,started_at,completed_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 job.id, job.parent_job_id, job.project_id, job.type.value, job.target_type, job.target_id,
                 job.priority, job.status.value, job.progress, job.attempt, job.max_attempts, job.provider,
@@ -330,19 +329,20 @@ class SQLiteJobRepository(JobRepository):
                 ).fetchone()
                 if existing is not None:
                     connection.commit()
+                    matches = (
+                        existing["operation"] == operation
+                        and existing["request_fingerprint"] == fingerprint
+                    )
                     return IdempotencyResult(
                         job=None,
-                        existing_resource_id=existing["resource_id"]
-                        if existing["operation"] == operation and existing["request_fingerprint"] == fingerprint
-                        else None,
-                        conflict=existing["operation"] != operation
-                        or existing["request_fingerprint"] != fingerprint,
+                        existing_resource_id=existing["resource_id"] if matches else None,
+                        conflict=not matches,
                     )
 
                 self._insert_job(connection, job)
                 connection.execute(
                     "INSERT INTO idempotency_keys(key,operation,request_fingerprint,resource_id,created_at) VALUES(?,?,?,?,?)",
-                    (key, operation, fingerprint, job.id, _dt(datetime.now().astimezone())),
+                    (key, operation, fingerprint, job.id, _dt(utc_now())),
                 )
                 connection.commit()
                 return IdempotencyResult(job=job)
