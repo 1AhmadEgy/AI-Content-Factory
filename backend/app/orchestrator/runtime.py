@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -35,6 +36,8 @@ from .job_executor import ExecutionResult, JobExecutor
 from .job_service import JobService
 from .production_pipeline import ProductionPipelineOrchestrator
 from .queue import JobLease
+
+logger = logging.getLogger(__name__)
 
 
 class OrchestratorRuntime:
@@ -142,8 +145,14 @@ class OrchestratorRuntime:
         if job is None:
             raise KeyError("JOB_NOT_FOUND")
         if job.status is JobStatus.RUNNING:
-            worker_id = self.workers.resolve_for_job(job.type)
-            self.workers.get(worker_id).cancel(job.id)
+            try:
+                worker_id = self.workers.resolve_for_job(job.type)
+                self.workers.get(worker_id).cancel(job.id)
+            except Exception:  # noqa: BLE001 - durable cancellation must not depend on worker shutdown
+                logger.exception("Best-effort worker cancellation failed for job %s", job.id)
+        # Persist cancellation even if the worker is unhealthy, missing, or its
+        # process has already exited. The CAS in JobService resolves races with
+        # the executor and prevents a stale snapshot from overwriting a winner.
         return self.job_service.cancel(job_id)
 
     def heartbeat(self, job_id: str, lease_id: str, worker_id: str) -> None:
