@@ -53,9 +53,7 @@ class JobExecutor:
             raise ValueError(f"Job must be RUNNING before execution: {job.status}")
 
         self._event(job, "JOB_STARTED", {"workerId": worker_id, "attempt": job.attempt})
-        job.progress = 0.05
-        self.jobs.update(job)
-        self._event(job, "JOB_PROGRESS", {"stage": "worker_execution"})
+        self._set_progress(job, "worker_execution", 0.05)
 
         heartbeat = LeaseHeartbeat(self.queue, lease, interval_seconds=self.heartbeat_interval_seconds)
         heartbeat.start()
@@ -66,6 +64,7 @@ class JobExecutor:
                     worker_id=worker_id,
                     lease_id=lease.lease_id,
                     metadata={"attempt": job.attempt},
+                    progress_callback=lambda progress, stage: self._set_progress(job, stage, progress),
                 ),
             )
         except Exception as exc:
@@ -76,19 +75,17 @@ class JobExecutor:
         if result.success:
             if not result.asset_ids:
                 return self._fail(job, lease, "MISSING_OUTPUT_ASSET", "Successful worker execution returned no assets", retryable=False)
-            job.output = JobOutput(asset_ids=list(result.asset_ids), metrics=dict(result.metrics),
-                                   provider_run_id=result.provider_run_id)
+            job.output = JobOutput(asset_ids=list(result.asset_ids), metrics=dict(result.metrics), provider_run_id=result.provider_run_id)
             job.error_code = None
             job.error_message = None
-            job.progress = 1.0
+            self._set_progress(job, "completed", 1.0, persist=False)
             transition(job, JobStatus.COMPLETED)
             self.jobs.update(job)
             self.queue.acknowledge(lease, JobStatus.COMPLETED)
             self._event(job, "JOB_COMPLETED", {"assetIds": result.asset_ids, "providerRunId": result.provider_run_id, "progress": 1.0})
             self.on_completed(job)
             return ExecutionResult(job, JobStatus.COMPLETED)
-        return self._fail(job, lease, result.error_code or "WORKER_FAILED",
-                          result.error_message or "Worker execution failed", result.retryable)
+        return self._fail(job, lease, result.error_code or "WORKER_FAILED", result.error_message or "Worker execution failed", result.retryable)
 
     def cancel_claimed(self, job: GenerationJob, lease: JobLease, worker_id: str | None = None) -> ExecutionResult:
         worker = self.workers.get(worker_id or lease.worker_id)
@@ -100,6 +97,12 @@ class JobExecutor:
         self.queue.acknowledge(lease, JobStatus.CANCELLED)
         self._event(job, "JOB_CANCELLED", {})
         return ExecutionResult(job, JobStatus.CANCELLED)
+
+    def _set_progress(self, job: GenerationJob, stage: str, progress: float, *, persist: bool = True) -> None:
+        job.progress = max(0.0, min(1.0, float(progress)))
+        if persist:
+            self.jobs.update(job)
+        self._event(job, "JOB_PROGRESS", {"stage": stage, "progress": job.progress})
 
     def _fail(self, job: GenerationJob, lease: JobLease, code: str, message: str, retryable: bool) -> ExecutionResult:
         job.error_code = code
