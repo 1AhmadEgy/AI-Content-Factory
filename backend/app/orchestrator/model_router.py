@@ -12,7 +12,7 @@ class ModelRoute:
 
 class ModelRouter:
     def __init__(self, routes: list[ModelRoute] | None = None) -> None:
-        self._routes = routes or []
+        self._routes = sorted(routes or [], key=lambda item: item.priority)
 
     def add(self, route: ModelRoute) -> None:
         self._routes.append(route)
@@ -26,4 +26,4 @@ class ModelRouter:
             candidates = [r for r in candidates if r.model == requested_model]
         if not candidates:
             raise LookupError("No model route matches the requested provider/model.")
-        return candidates[0]
+        return min(candidates, key=lambda item: item.priority)
