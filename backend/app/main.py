@@ -8,6 +8,7 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .api.jobs import build_router as build_job_router
 from .api.projects import build_router as build_project_router
@@ -60,8 +61,8 @@ async def request_id_middleware(request: Request, call_next):
     return response
 
 
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException):
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     mapping = {400: "VALIDATION_ERROR", 401: "UNAUTHORIZED", 403: "FORBIDDEN", 404: "NOT_FOUND", 409: "CONFLICT", 422: "DOMAIN_RULE_VIOLATION", 429: "RATE_LIMITED", 500: "INTERNAL_ERROR", 502: "PROVIDER_ERROR", 503: "RESOURCE_UNAVAILABLE", 504: "TIMEOUT"}
     detail = exc.detail if isinstance(exc.detail, str) else "Request failed"
     code = detail if isinstance(detail, str) and detail.isupper() and len(detail) <= 80 else mapping.get(exc.status_code, "INTERNAL_ERROR")
@@ -91,7 +92,7 @@ def health(request: Request) -> dict[str, object]:
 
 
 @app.get("/api/v1/ready", tags=["system"])
-def readiness(request: Request) -> dict[str, object]:
+def readiness(request: Request):
     try:
         repositories.store.connection.execute("SELECT 1").fetchone()
         return {"data": {"status": "READY", "service": "ai-content-factory-backend"}, "requestId": request.state.request_id}
