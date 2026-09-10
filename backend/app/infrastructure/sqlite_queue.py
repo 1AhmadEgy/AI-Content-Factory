@@ -74,8 +74,8 @@ class SQLiteJobQueue(JobQueue):
         expires = datetime.now(timezone.utc) + timedelta(seconds=self.lease_seconds)
         with self.store._lock, self.store.connection:
             cursor = self.store.connection.execute(
-                "UPDATE job_leases SET expires_at=? WHERE job_id=? AND lease_id=?",
-                (expires.isoformat(), lease.job_id, lease.lease_id),
+                "UPDATE job_leases SET expires_at=? WHERE job_id=? AND lease_id=? AND worker_id=?",
+                (expires.isoformat(), lease.job_id, lease.lease_id, lease.worker_id),
             )
             if cursor.rowcount != 1:
                 raise KeyError("JOB_LEASE_NOT_FOUND")
@@ -97,8 +97,8 @@ class SQLiteJobQueue(JobQueue):
             self.store.connection.execute("BEGIN IMMEDIATE")
             try:
                 lease_row = self.store.connection.execute(
-                    "SELECT job_id FROM job_leases WHERE job_id=? AND lease_id=?",
-                    (lease.job_id, lease.lease_id),
+                    "SELECT job_id FROM job_leases WHERE job_id=? AND lease_id=? AND worker_id=?",
+                    (lease.job_id, lease.lease_id, lease.worker_id),
                 ).fetchone()
                 if lease_row is None:
                     raise KeyError("JOB_LEASE_NOT_FOUND")
