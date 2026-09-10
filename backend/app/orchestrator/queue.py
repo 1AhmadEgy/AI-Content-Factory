@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+import math
 from typing import Any, Callable
 
 from ..domain.jobs import GenerationJob, JobStatus
@@ -31,8 +32,15 @@ class WorkerContext:
     progress_callback: Callable[[float, str], None] | None = None
 
     def report_progress(self, progress: float, stage: str) -> None:
+        """Publish only finite, bounded progress so invalid numerics never reach persistence/events."""
+        try:
+            value = float(progress)
+        except (TypeError, ValueError, OverflowError):
+            return
+        if not math.isfinite(value):
+            return
         if self.progress_callback is not None:
-            self.progress_callback(max(0.0, min(1.0, progress)), stage)
+            self.progress_callback(max(0.0, min(1.0, value)), stage)
 
 
 @dataclass(slots=True)
