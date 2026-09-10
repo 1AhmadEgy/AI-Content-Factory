@@ -10,6 +10,7 @@ class JobStatus(str, Enum):
     RUNNING = "RUNNING"
     PAUSED = "PAUSED"
     RETRYING = "RETRYING"
+    BLOCKED = "BLOCKED"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
