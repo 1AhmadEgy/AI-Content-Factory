@@ -16,7 +16,7 @@ from ..infrastructure.sqlite import SQLiteRepositories
 from ..infrastructure.sqlite_queue import SQLiteJobQueue
 from ..infrastructure.storage import LocalAssetStorage
 from ..library.country_catalog import get_country_library
-from ..library.seed import ensure_country_library_projects, ensure_egypt_library
+from ..library.seed import ensure_country_library_projects, ensure_egypt_library, ensure_libya_library
 from ..providers.registry import default_provider_registry
 from ..workers.best_take_worker import BestTakeWorker
 from ..workers.media_document_worker import MediaDocumentWorker
@@ -83,10 +83,11 @@ class OrchestratorRuntime:
         self.pipeline = ContentPipelineOrchestrator(JobService(repositories.jobs), self.queue.enqueue)
         self.completion_gate = CompletionGate(self.assets, self.storage)
         self.executor = JobExecutor(repositories.jobs, self.queue, self.workers, self.events.append, self.pipeline.on_completed, completion_gate=self.completion_gate)
-        # Country metadata is additive. Real content is seeded only for countries
-        # that explicitly provide a content pack; catalog-only countries stay empty.
+        # Country metadata is additive. Each curated pack is seeded into its own
+        # stable library project; catalog-only countries remain metadata-only.
         self.country_library_seed = ensure_country_library_projects(repositories)
         self.library_seed = ensure_egypt_library(repositories)
+        self.libya_library_seed = ensure_libya_library(repositories)
 
     def _resolve_library_scope(self, brief: ContentBrief) -> tuple[str, str]:
         country_id = brief.country_id or "egypt"
