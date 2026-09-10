@@ -82,28 +82,31 @@ class JobService:
         job = self._get(job_id)
         if job.status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}:
             return job
+        expected_status = job.status
         transition(job, JobStatus.CANCELLED)
         job.error_code = "CANCELLED_BY_USER"
         job.error_message = "Job cancelled by user"
-        return self.repository.update(job)
+        return self._update_if_current(job, expected_status)
 
     def pause(self, job_id: str) -> GenerationJob:
         job = self._get(job_id)
         if job.status not in {JobStatus.QUEUED, JobStatus.RUNNING}:
             raise ValueError("JOB_NOT_PAUSABLE")
+        expected_status = job.status
         transition(job, JobStatus.PAUSED)
-        return self.repository.update(job)
+        return self._update_if_current(job, expected_status)
 
     def resume(self, job_id: str) -> GenerationJob:
         job = self._get(job_id)
         if job.status not in {JobStatus.PAUSED, JobStatus.RETRYING, JobStatus.BLOCKED}:
             raise ValueError("JOB_NOT_RESUMABLE")
+        expected_status = job.status
         transition(job, JobStatus.QUEUED)
         job.error_code = None
         job.error_message = None
         job.completed_at = None
         job.updated_at = utc_now()
-        return self.repository.update(job)
+        return self._update_if_current(job, expected_status)
 
     def retry(self, job_id: str) -> GenerationJob:
         job = self._get(job_id)
@@ -111,6 +114,7 @@ class JobService:
             raise ValueError("JOB_NOT_RETRYABLE")
         if job.attempt >= job.max_attempts:
             raise ValueError("MAX_ATTEMPTS_REACHED")
+        expected_status = job.status
         if job.status is JobStatus.FAILED:
             transition(job, JobStatus.RETRYING)
         transition(job, JobStatus.QUEUED)
@@ -118,7 +122,12 @@ class JobService:
         job.error_message = None
         job.completed_at = None
         job.updated_at = utc_now()
-        return self.repository.update(job)
+        return self._update_if_current(job, expected_status)
+
+    def _update_if_current(self, job: GenerationJob, expected_status: JobStatus) -> GenerationJob:
+        if not self.repository.update_if_current(job, expected_status, job.attempt):
+            raise RuntimeError("JOB_STATE_CONFLICT")
+        return job
 
     def _new_job(
         self,
