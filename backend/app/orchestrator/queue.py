@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from ..domain.jobs import GenerationJob, JobStatus
 
@@ -28,6 +28,11 @@ class WorkerContext:
     lease_id: str
     cancellation_requested: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
+    progress_callback: Callable[[float, str], None] | None = None
+
+    def report_progress(self, progress: float, stage: str) -> None:
+        if self.progress_callback is not None:
+            self.progress_callback(max(0.0, min(1.0, progress)), stage)
 
 
 @dataclass(slots=True)
