@@ -4,7 +4,8 @@ import os
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from .api.jobs import build_router as build_job_router
@@ -27,6 +28,22 @@ worker_loop = WorkerLoop(orchestrator_runtime, worker_id=worker_id)
 
 def _worker_autostart_enabled() -> bool:
     return os.getenv("AICF_WORKER_AUTOSTART", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _error_response(request: Request, status_code: int, code: str, message: str, details: object | None = None) -> JSONResponse:
+    request_id = getattr(request.state, "request_id", "unknown")
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "error": {
+                "code": code,
+                "message": message,
+                "details": details if details is not None else {},
+                "requestId": request_id,
+            }
+        },
+        headers={"X-Request-Id": request_id},
+    )
 
 
 @asynccontextmanager
@@ -58,21 +75,41 @@ async def request_id_middleware(request: Request, call_next):
     return response
 
 
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    mapping = {
+        400: "VALIDATION_ERROR",
+        401: "UNAUTHORIZED",
+        403: "FORBIDDEN",
+        404: "NOT_FOUND",
+        409: "CONFLICT",
+        422: "DOMAIN_RULE_VIOLATION",
+        429: "RATE_LIMITED",
+        500: "INTERNAL_ERROR",
+        502: "PROVIDER_ERROR",
+        503: "RESOURCE_UNAVAILABLE",
+        504: "TIMEOUT",
+    }
+    detail = exc.detail if isinstance(exc.detail, str) else "Request failed"
+    code = detail if isinstance(detail, str) and detail.isupper() and len(detail) <= 80 else mapping.get(exc.status_code, "INTERNAL_ERROR")
+    message = detail if code == mapping.get(exc.status_code) else "Request failed"
+    return _error_response(request, exc.status_code, code, message)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return _error_response(
+        request,
+        400,
+        "VALIDATION_ERROR",
+        "Request validation failed",
+        {"errors": exc.errors()},
+    )
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception(request: Request, exc: Exception):
-    request_id = getattr(request.state, "request_id", "unknown")
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": {
-                "code": "INTERNAL_ERROR",
-                "message": "Internal server error",
-                "details": {},
-                "requestId": request_id,
-            }
-        },
-        headers={"X-Request-Id": request_id},
-    )
+    return _error_response(request, 500, "INTERNAL_ERROR", "Internal server error")
 
 
 app.include_router(build_project_router(project_repository))
@@ -84,7 +121,6 @@ app.include_router(pipeline_router)
 @app.get("/api/v1/health", tags=["system"])
 def health(request: Request) -> dict[str, object]:
     return {
-        "status": "ok",
         "data": {"status": "OK", "service": "ai-content-factory-backend"},
         "requestId": request.state.request_id,
     }
@@ -95,23 +131,11 @@ def readiness(request: Request) -> dict[str, object]:
     try:
         repositories.store.connection.execute("SELECT 1").fetchone()
         return {
-            "status": "ready",
             "data": {"status": "READY", "service": "ai-content-factory-backend"},
             "requestId": request.state.request_id,
         }
     except Exception:
-        return JSONResponse(
-            status_code=503,
-            content={
-                "error": {
-                    "code": "RESOURCE_UNAVAILABLE",
-                    "message": "Required dependencies are not ready",
-                    "details": {},
-                    "requestId": request.state.request_id,
-                }
-            },
-            headers={"X-Request-Id": request.state.request_id},
-        )
+        return _error_response(request, 503, "RESOURCE_UNAVAILABLE", "Required dependencies are not ready")
 
 
 @app.get("/api/v1/worker/status", tags=["system"])
