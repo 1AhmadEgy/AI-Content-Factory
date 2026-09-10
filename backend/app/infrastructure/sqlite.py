@@ -170,7 +170,8 @@ class SQLiteJobRepository(JobRepository):
                   job.priority, job.status.value, job.progress, job.attempt, job.max_attempts, job.provider,
                   job.model, _json(_job_input_to_dict(job.input)), _json(_job_output_to_dict(job.output)) if job.output else None,
                   job.error_code, job.error_message, _dt(job.created_at), _dt(job.started_at), _dt(job.completed_at), _dt(job.updated_at))
-        with self.store._lock, self.store.connection:
+        with self.store._lock:
+            self.store.connection.execute("BEGIN IMMEDIATE")
             try:
                 self.store.connection.execute(
                     "INSERT INTO jobs(id,parent_job_id,project_id,type,target_type,target_id,priority,status,progress,attempt,max_attempts,provider,model,input_json,output_json,error_code,error_message,created_at,started_at,completed_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -180,12 +181,18 @@ class SQLiteJobRepository(JobRepository):
                     "INSERT INTO idempotency_keys(key,operation,request_fingerprint,resource_id,created_at) VALUES(?,?,?,?,?)",
                     (key, operation, fingerprint, job.id, datetime.now().astimezone().isoformat()),
                 )
-                return True, None
             except sqlite3.IntegrityError:
+                self.store.connection.rollback()
                 row = self.store.connection.execute(
                     "SELECT * FROM idempotency_keys WHERE key = ? AND operation = ?", (key, operation)
                 ).fetchone()
                 return False, row
+            except Exception:
+                self.store.connection.rollback()
+                raise
+            else:
+                self.store.connection.commit()
+                return True, None
 
     def get(self, job_id: str) -> GenerationJob | None:
         row = self.store._get("jobs", job_id); return _job_from_row(row) if row else None
