@@ -36,6 +36,26 @@ class SQLiteJobQueue(JobQueue):
             raise ValueError("Only QUEUED jobs may be enqueued")
         self.jobs.update(job)
 
+    def _claim_row(self, row, worker_id: str, now: datetime, expires: datetime) -> tuple[GenerationJob, JobLease]:
+        lease = JobLease(
+            job_id=row["id"],
+            worker_id=worker_id,
+            lease_id=str(uuid.uuid4()),
+            expires_at=expires.isoformat(),
+        )
+        self.store.connection.execute(
+            "INSERT INTO job_leases(job_id,worker_id,lease_id,expires_at,created_at) VALUES(?,?,?,?,?)",
+            (lease.job_id, lease.worker_id, lease.lease_id, lease.expires_at, now.isoformat()),
+        )
+        cursor = self.store.connection.execute(
+            "UPDATE jobs SET status='RUNNING', attempt=attempt+1, started_at=?, completed_at=NULL, updated_at=? WHERE id=? AND status IN ('QUEUED', 'RETRYING')",
+            (now.isoformat(), now.isoformat(), lease.job_id),
+        )
+        if cursor.rowcount != 1:
+            self.store.connection.execute("DELETE FROM job_leases WHERE job_id=?", (lease.job_id,))
+            return None
+        return self.jobs.get(lease.job_id), lease
+
     def claim_next(self, worker_id: str) -> tuple[GenerationJob, JobLease] | None:
         if not worker_id.strip():
             raise ValueError("worker_id must not be empty")
@@ -54,28 +74,39 @@ class SQLiteJobQueue(JobQueue):
                 if row is None:
                     self.store.connection.commit()
                     return None
-                lease = JobLease(
-                    job_id=row["id"],
-                    worker_id=worker_id,
-                    lease_id=str(uuid.uuid4()),
-                    expires_at=expires.isoformat(),
-                )
-                self.store.connection.execute(
-                    "INSERT INTO job_leases(job_id,worker_id,lease_id,expires_at,created_at) VALUES(?,?,?,?,?)",
-                    (lease.job_id, lease.worker_id, lease.lease_id, lease.expires_at, now.isoformat()),
-                )
-                self.store.connection.execute(
-                    "UPDATE jobs SET status='RUNNING', attempt=attempt+1, started_at=?, completed_at=NULL, updated_at=? WHERE id=? AND status IN ('QUEUED', 'RETRYING')",
-                    (now.isoformat(), now.isoformat(), lease.job_id),
-                )
+                result = self._claim_row(row, worker_id, now, expires)
                 self.store.connection.commit()
+                return result
             except Exception:
                 self.store.connection.rollback()
                 raise
-        refreshed = self.jobs.get(lease.job_id)
-        if refreshed is None:
-            raise RuntimeError(f"Claimed job disappeared: {lease.job_id}")
-        return refreshed, lease
+
+    def claim_job(self, job_id: str, worker_id: str) -> tuple[GenerationJob, JobLease] | None:
+        """Atomically claim exactly one requested runnable job by id."""
+        if not job_id.strip():
+            raise ValueError("job_id must not be empty")
+        if not worker_id.strip():
+            raise ValueError("worker_id must not be empty")
+        now = datetime.now(timezone.utc)
+        expires = now + timedelta(seconds=self.lease_seconds)
+        with self.store._lock:
+            self.store.connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self.store.connection.execute(
+                    """SELECT j.* FROM jobs j
+                    LEFT JOIN job_leases l ON l.job_id = j.id
+                    WHERE j.id=? AND j.status IN ('QUEUED', 'RETRYING') AND l.job_id IS NULL""",
+                    (job_id,),
+                ).fetchone()
+                if row is None:
+                    self.store.connection.commit()
+                    return None
+                result = self._claim_row(row, worker_id, now, expires)
+                self.store.connection.commit()
+                return result
+            except Exception:
+                self.store.connection.rollback()
+                raise
 
     def heartbeat(self, lease: JobLease) -> None:
         expires = datetime.now(timezone.utc) + timedelta(seconds=self.lease_seconds)
