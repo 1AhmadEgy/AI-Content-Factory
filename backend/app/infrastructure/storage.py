@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
@@ -34,6 +35,40 @@ class LocalAssetStorage:
                     temporary.unlink(missing_ok=True)
                     raise
         return digest, str(target), len(data)
+
+    def put_file(self, source: str | Path) -> tuple[str, str, int]:
+        """Stream a file into content-addressed storage without loading it into RAM."""
+        source_path = Path(source)
+        if not source_path.is_file():
+            raise FileNotFoundError(source_path)
+        digest_state = hashlib.sha256()
+        size = 0
+        temporary: Path | None = None
+        directory: Path | None = None
+        try:
+            with source_path.open("rb") as source_handle:
+                with NamedTemporaryFile(dir=self.root, prefix=".asset-", delete=False) as handle:
+                    temporary = Path(handle.name)
+                    while True:
+                        chunk = source_handle.read(self._HASH_CHUNK_SIZE)
+                        if not chunk:
+                            break
+                        digest_state.update(chunk)
+                        size += len(chunk)
+                        handle.write(chunk)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            digest = digest_state.hexdigest()
+            directory = self.root / digest[:2]
+            directory.mkdir(parents=True, exist_ok=True)
+            target = directory / digest
+            if not target.exists():
+                os.replace(temporary, target)
+                temporary = None
+            return digest, str(target), size
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
     def read_bytes(self, sha256: str) -> bytes:
         path = self.root / sha256[:2] / sha256
