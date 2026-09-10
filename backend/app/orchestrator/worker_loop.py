@@ -62,8 +62,11 @@ class WorkerLoop:
         return self._iterations
 
     def start(self) -> None:
-        if self.running:
+        thread = self._thread
+        if thread is not None and thread.is_alive():
             return
+        if thread is not None and not thread.is_alive():
+            self._thread = None
         self._stop.clear()
         self._thread = threading.Thread(target=self.run_forever, name=f"aicf-worker-{self.worker_id}", daemon=True)
         self._thread.start()
@@ -71,8 +74,15 @@ class WorkerLoop:
     def stop(self, timeout: float = 5.0) -> None:
         self._stop.set()
         thread = self._thread
-        if thread is not None and thread.is_alive():
+        if thread is None:
+            return
+        if thread.is_alive():
             thread.join(timeout=max(0.0, timeout))
+        if thread.is_alive():
+            # Keep the live thread reference so start() cannot create a second
+            # scheduler while the original one is still unwinding.
+            logger.warning("Worker loop did not stop within timeout", extra={"worker_id": self.worker_id})
+            return
         self._thread = None
 
     def run_forever(self) -> None:
