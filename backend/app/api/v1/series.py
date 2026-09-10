@@ -57,23 +57,13 @@ def build_router(runtime) -> APIRouter:
                 character_ids=list(defaults.get("characterIds", [])),
                 location_ids=list(defaults.get("locationIds", [])),
             )
-            context = merge_series_defaults(
-                context,
-                character_ids=list(defaults.get("characterIds", [])),
-                location_ids=list(defaults.get("locationIds", [])),
-                rules=dict(template.get("continuity", {})),
-            )
+            context = merge_series_defaults(context, character_ids=list(defaults.get("characterIds", [])), location_ids=list(defaults.get("locationIds", [])), rules=dict(template.get("continuity", {})))
             context["template"] = deepcopy(template)
         else:
             context = current
             context["templateId"] = context.get("templateId") or body.templateId
             context["genre"] = context.get("genre") or template.get("genre", "")
-            context = merge_series_defaults(
-                context,
-                character_ids=list(defaults.get("characterIds", [])),
-                location_ids=list(defaults.get("locationIds", [])),
-                rules=dict(template.get("continuity", {})),
-            )
+            context = merge_series_defaults(context, character_ids=list(defaults.get("characterIds", [])), location_ids=list(defaults.get("locationIds", [])), rules=dict(template.get("continuity", {})))
         if body.title:
             context["title"] = body.title
         repo.save(project_id, context)
@@ -94,7 +84,6 @@ def build_router(runtime) -> APIRouter:
         if current is None:
             raise HTTPException(404, "SERIES_CONTEXT_NOT_FOUND")
         context = deepcopy(current)
-        # Explicit user edits win. Historical episode snapshots are never rewritten.
         for key, value in body.context.items():
             if key == "episodeSnapshots":
                 raise HTTPException(400, "EPISODE_SNAPSHOTS_APPEND_ONLY")
@@ -105,31 +94,30 @@ def build_router(runtime) -> APIRouter:
     @router.post("/projects/{project_id}/episodes/{episode_id}/snapshot")
     def create_episode_snapshot(project_id: str, episode_id: str, request: Request):
         project_or_404(project_id)
-        episode = runtime.repositories.episodes.get(episode_id)
-        if episode is None or episode.project_id != project_id:
-            raise HTTPException(404, "EPISODE_NOT_FOUND")
+        existing = repo.find_snapshot(project_id, episode_id)
+        if existing is not None:
+            return {"data": existing["context"], "requestId": request.state.request_id, "idempotent": True}
         context = repo.get(project_id)
         if context is None:
             raise HTTPException(404, "SERIES_CONTEXT_NOT_FOUND")
         number = int(context.get("nextEpisodeNumber", 1))
         episode_context = build_episode_context(context, number)
         episode_context["episodeId"] = episode_id
-        # Capture exact library versions used by this episode so later edits do not alter history.
         episode_context["characterVersions"] = {
-            cid: runtime.characters.get(cid).version
+            cid: character.version
             for cid in episode_context.get("characters", [])
-            if runtime.characters.get(cid) is not None
+            if (character := runtime.characters.get(cid)) is not None
         }
         episode_context["locationVersions"] = {
-            lid: runtime.locations.get(lid).version
+            lid: location.version
             for lid in episode_context.get("locations", [])
-            if runtime.locations.get(lid) is not None
+            if (location := runtime.locations.get(lid)) is not None
         }
         snapshot = repo.snapshot(project_id, number, episode_context, episode_id)
         context["nextEpisodeNumber"] = number + 1
         context.setdefault("episodeSnapshots", []).append({"episodeNumber": number, "episodeId": episode_id, "context": snapshot})
         repo.save(project_id, context)
-        return {"data": snapshot, "requestId": request.state.request_id}
+        return {"data": snapshot, "requestId": request.state.request_id, "idempotent": False}
 
     @router.get("/projects/{project_id}/snapshots")
     def snapshots(project_id: str, request: Request):
