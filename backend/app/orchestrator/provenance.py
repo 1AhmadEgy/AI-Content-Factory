@@ -4,7 +4,13 @@ from ..domain.assets import Asset, AssetProvenance, LicenseStatus
 from ..domain.jobs import GenerationJob
 
 
-def build_provenance(job: GenerationJob, *, source_asset_ids: list[str] | None = None, metadata: dict[str, object] | None = None) -> AssetProvenance:
+def build_provenance(
+    job: GenerationJob,
+    *,
+    source_asset_ids: list[str] | None = None,
+    metadata: dict[str, object] | None = None,
+    license_status: LicenseStatus = LicenseStatus.UNKNOWN,
+) -> AssetProvenance:
     """Build a normalized provenance record for every produced asset."""
     return AssetProvenance(
         provider=job.provider or "mock",
@@ -14,7 +20,7 @@ def build_provenance(job: GenerationJob, *, source_asset_ids: list[str] | None =
         seed=job.input.seed,
         source_asset_ids=list(source_asset_ids or job.input.reference_asset_ids),
         job_id=job.id,
-        license_status=LicenseStatus.UNKNOWN,
+        license_status=license_status,
         metadata={
             "jobType": job.type.value,
             "targetType": job.target_type,
