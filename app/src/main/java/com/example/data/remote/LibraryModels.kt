@@ -27,10 +27,13 @@ data class CountryLibrary(
 data class LanguagesEnvelope(val data: List<LanguageInfo>, val requestId: String? = null)
 
 @JsonClass(generateAdapter = true)
+data class LanguageEnvelope(val data: LanguageInfo, val requestId: String? = null)
+
+@JsonClass(generateAdapter = true)
 data class LanguageInfo(
     val id: String,
     val name: String,
     val nativeName: String? = null,
-    val locale: String? = null,
-    val dialects: List<String> = emptyList(),
+    val locales: List<String> = emptyList(),
+    val rtl: Boolean = false,
 )
