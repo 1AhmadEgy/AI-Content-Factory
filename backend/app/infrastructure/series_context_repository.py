@@ -16,6 +16,7 @@ class SQLiteSeriesContextRepository:
             store.connection.execute("CREATE TABLE IF NOT EXISTS series_contexts (project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE, context_json TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
             store.connection.execute("CREATE TABLE IF NOT EXISTS series_context_snapshots (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, episode_number INTEGER NOT NULL, episode_id TEXT, context_json TEXT NOT NULL, created_at TEXT NOT NULL)")
             store.connection.execute("CREATE INDEX IF NOT EXISTS idx_series_snapshots_project_episode ON series_context_snapshots(project_id, episode_number)")
+            store.connection.execute("CREATE INDEX IF NOT EXISTS idx_series_snapshots_project_episode_id ON series_context_snapshots(project_id, episode_id)")
 
     def get(self, project_id: str) -> dict[str, Any] | None:
         row = self.store._get("series_contexts", project_id)
@@ -32,6 +33,13 @@ class SQLiteSeriesContextRepository:
             else:
                 self.store.connection.execute("INSERT INTO series_contexts(project_id,context_json,version,created_at,updated_at) VALUES(?,?,?,?,?)", (project_id, payload, version, now, now))
         return context
+
+    def find_snapshot(self, project_id: str, episode_id: str) -> dict[str, Any] | None:
+        with self.store._lock:
+            row = self.store.connection.execute("SELECT id,episode_number,episode_id,context_json,created_at FROM series_context_snapshots WHERE project_id=? AND episode_id=? ORDER BY id DESC LIMIT 1", (project_id, episode_id)).fetchone()
+        if row is None:
+            return None
+        return {"id": row["id"], "episodeNumber": row["episode_number"], "episodeId": row["episode_id"], "context": json.loads(row["context_json"]), "createdAt": row["created_at"]}
 
     def snapshot(self, project_id: str, episode_number: int, context: dict[str, Any], episode_id: str | None = None) -> dict[str, Any]:
         import uuid
