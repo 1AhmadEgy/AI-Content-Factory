@@ -13,6 +13,7 @@ from ..infrastructure.sqlite import SQLiteRepositories
 from ..infrastructure.sqlite_queue import SQLiteJobQueue
 from ..infrastructure.storage import LocalAssetStorage
 from ..providers.registry import default_provider_registry
+from ..workers.batch_worker import BatchWorker
 from ..workers.best_take_worker import BestTakeWorker
 from ..workers.media_document_worker import MediaDocumentWorker
 from ..workers.mock_worker import DeterministicMockWorker
@@ -69,6 +70,9 @@ class OrchestratorRuntime:
         repurpose = RepurposeWorker(self.storage, self.assets)
         repurpose.initialize()
         self.workers.register(repurpose, capabilities={"REPURPOSE"}, worker_id="repurpose")
+        batch = BatchWorker(self.storage, self.assets, repositories.jobs, self.queue)
+        batch.initialize()
+        self.workers.register(batch, capabilities={"BATCH"}, worker_id="batch")
 
         self.story_engine = AIStoryEngine(self.providers)
         self.script_engine = AIScriptEngine(self.providers)
