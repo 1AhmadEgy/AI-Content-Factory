@@ -68,8 +68,13 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
         fingerprint = _fingerprint(request)
         operation = "POST:/api/v1/jobs"
         input_value = JobInput(parameters=request.input.parameters, reference_asset_ids=request.input.referenceAssetIds, constraints=request.input.constraints, seed=request.input.seed, deterministic=request.input.deterministic)
-        job, existing_resource_id = service.create_with_idempotency(key=idempotency_key, operation=operation, fingerprint=fingerprint, project_id=request.projectId, job_type=request.type, target_type=request.targetType, target_id=request.targetId, parent_job_id=request.parentJobId, priority=request.priority, max_attempts=request.maxAttempts, provider=request.provider, model=request.model, input=input_value)
-        if existing_resource_id == "__IDEMPOTENCY_CONFLICT__": raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
+        result = service.create_with_idempotency(key=idempotency_key, operation=operation, fingerprint=fingerprint, project_id=request.projectId, job_type=request.type, target_type=request.targetType, target_id=request.targetId, parent_job_id=request.parentJobId, priority=request.priority, max_attempts=request.maxAttempts, provider=request.provider, model=request.model, input=input_value)
+        if hasattr(result, "conflict"):
+            if result.conflict: raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
+            job, existing_resource_id = result.job, result.existing_resource_id
+        else:
+            job, existing_resource_id = result
+            if existing_resource_id == "__IDEMPOTENCY_CONFLICT__": raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
         if existing_resource_id:
             existing_job = repository.get(existing_resource_id)
             if existing_job is None: raise HTTPException(status_code=409, detail="IDEMPOTENCY_RESOURCE_MISSING")
