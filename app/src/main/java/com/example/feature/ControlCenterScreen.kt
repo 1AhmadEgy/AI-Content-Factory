@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.example.data.remote.BackendJob
 import com.example.data.remote.NetworkClient
+import com.example.data.remote.ProviderRunModel
 import com.example.data.remote.WorkerData
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -75,6 +76,18 @@ fun ControlCenterScreen() {
 
 @Composable
 private fun ControlCenterJobCard(job: BackendJob, onCancel: () -> Unit) {
+    var runs by remember(job.id) { mutableStateOf<List<ProviderRunModel>>(emptyList()) }
+    var runsError by remember(job.id) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(job.id, job.status) {
+        try {
+            runs = NetworkClient.apiService.getProviderRuns(job.id, limit = 20).data
+            runsError = null
+        } catch (t: Throwable) {
+            runsError = t.message
+        }
+    }
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(job.type, style = MaterialTheme.typography.titleMedium)
@@ -82,6 +95,18 @@ private fun ControlCenterJobCard(job: BackendJob, onCancel: () -> Unit) {
             LinearProgressIndicator(progress = { job.progress.coerceIn(0.0, 1.0).toFloat() }, modifier = Modifier.fillMaxWidth())
             Text("Progress ${(job.progress * 100).toInt()}% · Attempt ${job.attempt}/${job.maxAttempts}")
             if (job.errorMessage != null) Text(job.errorMessage, color = MaterialTheme.colorScheme.error)
+
+            if (runs.isNotEmpty()) {
+                Text("Provider Runs (${runs.size})", style = MaterialTheme.typography.labelLarge)
+                runs.take(5).forEach { run ->
+                    val duration = run.durationMs?.let { " · ${it}ms" } ?: ""
+                    Text("${run.provider}${run.model?.let { "/$it" } ?: ""} · ${run.status}$duration")
+                    run.errorCode?.let { Text("Error: $it", color = MaterialTheme.colorScheme.error) }
+                }
+            } else if (runsError != null) {
+                Text("Provider runs unavailable", color = MaterialTheme.colorScheme.error)
+            }
+
             if (job.status in setOf("PENDING", "QUEUED", "RUNNING")) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     Button(onClick = onCancel) { Text("Cancel") }
