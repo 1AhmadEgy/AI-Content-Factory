@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -15,13 +16,21 @@ from ..orchestrator.queue import JobExecutionResult, Worker, WorkerContext
 
 
 class MediaDocumentWorker(Worker):
-    """Offline-first worker for subtitles, real thumbnails, metadata and final media QC."""
+    """Offline-first worker for subtitles, thumbnails, metadata and final media QC."""
 
     worker_type = "media-document"
 
-    def __init__(self, storage: LocalAssetStorage, assets: AssetRepository, ffmpeg_binary: str = "ffmpeg", ffprobe_binary: str = "ffprobe") -> None:
+    def __init__(
+        self,
+        storage: LocalAssetStorage,
+        assets: AssetRepository,
+        ffmpeg_binary: str = "ffmpeg",
+        ffprobe_binary: str = "ffprobe",
+        subprocess_timeout_seconds: int = 120,
+    ) -> None:
         self.storage, self.assets = storage, assets
         self.ffmpeg_binary, self.ffprobe_binary = ffmpeg_binary, ffprobe_binary
+        self.subprocess_timeout_seconds = max(1, int(subprocess_timeout_seconds))
         self._initialized = False
 
     def initialize(self) -> None:
@@ -61,8 +70,20 @@ class MediaDocumentWorker(Worker):
         digest, path, size = self.storage.put_bytes(payload)
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{job.type.value}:{job.id}:{digest}"))
         asset = Asset(
-            asset_id, job.project_id, kind, path, mime, size, digest, AssetStatus.READY,
-            build_provenance(job, source_asset_ids=list(job.input.reference_asset_ids), metadata={"worker": self.worker_type}, license_status=LicenseStatus.VERIFIED),
+            asset_id,
+            job.project_id,
+            kind,
+            path,
+            mime,
+            size,
+            digest,
+            AssetStatus.READY,
+            build_provenance(
+                job,
+                source_asset_ids=list(job.input.reference_asset_ids),
+                metadata={"worker": self.worker_type},
+                license_status=LicenseStatus.VERIFIED,
+            ),
         )
         self.assets.create(asset)
         return JobExecutionResult(True, [asset_id], {"bytes": size}, f"{self.worker_type}-{job.id}")
@@ -95,25 +116,65 @@ class MediaDocumentWorker(Worker):
             return JobExecutionResult(False, error_code="THUMBNAIL_SOURCE_NOT_READY", error_message="Source asset is not ready")
         if source.type is not AssetType.VIDEO:
             return JobExecutionResult(False, error_code="THUMBNAIL_SOURCE_NOT_VIDEO", error_message="Thumbnail source must be a video")
+        source_path = Path(source.path)
+        if not source_path.is_file():
+            return JobExecutionResult(False, error_code="THUMBNAIL_SOURCE_MISSING", error_message=source.path)
         if shutil.which(self.ffmpeg_binary) is None:
             return JobExecutionResult(False, error_code="FFMPEG_NOT_AVAILABLE", error_message="FFmpeg executable was not found")
         timestamp = str(job.input.parameters.get("timestamp", "00:00:01"))
-        with tempfile_directory() as temp:
-            input_path = temp / "input.mp4"
-            output_path = temp / "thumbnail.jpg"
-            input_path.write_bytes(self.storage.read_bytes(source.sha256))
-            completed = subprocess.run(
-                [self.ffmpeg_binary, "-hide_banner", "-loglevel", "error", "-y", "-ss", timestamp, "-i", str(input_path), "-frames:v", "1", "-q:v", "2", str(output_path)],
-                check=False, capture_output=True,
-            )
+        with tempfile.TemporaryDirectory(prefix="aicf-media-") as temp:
+            output_path = Path(temp) / "thumbnail.jpg"
+            try:
+                completed = subprocess.run(
+                    [
+                        self.ffmpeg_binary,
+                        "-hide_banner",
+                        "-loglevel",
+                        "error",
+                        "-y",
+                        "-ss",
+                        timestamp,
+                        "-i",
+                        str(source_path),
+                        "-frames:v",
+                        "1",
+                        "-q:v",
+                        "2",
+                        str(output_path),
+                    ],
+                    check=False,
+                    capture_output=True,
+                    timeout=self.subprocess_timeout_seconds,
+                )
+            except subprocess.TimeoutExpired:
+                return JobExecutionResult(False, error_code="THUMBNAIL_TIMEOUT", error_message="FFmpeg thumbnail extraction timed out", retryable=True)
             if completed.returncode != 0 or not output_path.is_file():
-                return JobExecutionResult(False, error_code="THUMBNAIL_GENERATION_FAILED", error_message=completed.stderr.decode("utf-8", errors="replace")[-2000:], retryable=True)
+                return JobExecutionResult(
+                    False,
+                    error_code="THUMBNAIL_GENERATION_FAILED",
+                    error_message=completed.stderr.decode("utf-8", errors="replace")[-2000:],
+                    retryable=True,
+                )
             digest, path, size = self.storage.put_bytes(output_path.read_bytes())
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"thumbnail:{job.id}:{digest}"))
-        self.assets.create(Asset(
-            asset_id, job.project_id, AssetType.THUMBNAIL, path, "image/jpeg", size, digest, AssetStatus.READY,
-            build_provenance(job, source_asset_ids=[source.id], metadata={"engine": "ffmpeg", "timestamp": timestamp}, license_status=LicenseStatus.VERIFIED),
-        ))
+        self.assets.create(
+            Asset(
+                asset_id,
+                job.project_id,
+                AssetType.THUMBNAIL,
+                path,
+                "image/jpeg",
+                size,
+                digest,
+                AssetStatus.READY,
+                build_provenance(
+                    job,
+                    source_asset_ids=[source.id],
+                    metadata={"engine": "ffmpeg", "timestamp": timestamp},
+                    license_status=LicenseStatus.VERIFIED,
+                ),
+            )
+        )
         return JobExecutionResult(True, [asset_id], {"bytes": size, "format": "jpeg", "timestamp": timestamp}, f"thumbnail-{job.id}")
 
     def _final_qc(self, job: GenerationJob) -> JobExecutionResult:
@@ -121,24 +182,68 @@ class MediaDocumentWorker(Worker):
         ffprobe_available = shutil.which(self.ffprobe_binary) is not None
         for asset_id in job.input.reference_asset_ids:
             asset = self.assets.get(asset_id)
-            check = {"assetId": asset_id, "exists": asset is not None, "ready": bool(asset and asset.status is AssetStatus.READY), "checksum": bool(asset and asset.sha256)}
+            check = {
+                "assetId": asset_id,
+                "exists": asset is not None,
+                "ready": bool(asset and asset.status is AssetStatus.READY),
+                "checksum": bool(asset and asset.sha256),
+            }
             if asset and asset.type is AssetType.VIDEO:
                 check["ffprobe"] = False
-                if ffprobe_available:
-                    probe = subprocess.run([self.ffprobe_binary, "-v", "error", "-print_format", "json", "-show_streams", "-show_format", asset.path], check=False, capture_output=True)
-                    check["ffprobe"] = probe.returncode == 0
-                    if probe.returncode != 0:
-                        check["error"] = probe.stderr.decode("utf-8", errors="replace")[-1000:]
-                else:
+                if ffprobe_available and Path(asset.path).is_file():
+                    try:
+                        probe = subprocess.run(
+                            [
+                                self.ffprobe_binary,
+                                "-v",
+                                "error",
+                                "-print_format",
+                                "json",
+                                "-show_streams",
+                                "-show_format",
+                                asset.path,
+                            ],
+                            check=False,
+                            capture_output=True,
+                            timeout=self.subprocess_timeout_seconds,
+                        )
+                    except subprocess.TimeoutExpired:
+                        check["error"] = "FFprobe timed out"
+                    else:
+                        check["ffprobe"] = probe.returncode == 0
+                        if probe.returncode != 0:
+                            check["error"] = probe.stderr.decode("utf-8", errors="replace")[-1000:]
+                elif not ffprobe_available:
                     check["error"] = "FFprobe executable was not found"
+                else:
+                    check["error"] = "Media file is missing"
             checks.append(check)
-        passed = bool(checks) and all(c.get("exists") and c.get("ready") and c.get("checksum") and c.get("ffprobe", True) for c in checks)
-        score = round(100 * sum(1 for c in checks if c.get("exists") and c.get("ready") and c.get("checksum") and c.get("ffprobe", True)) / max(len(checks), 1), 2)
+        passed = bool(checks) and all(
+            c.get("exists") and c.get("ready") and c.get("checksum") and c.get("ffprobe", True) for c in checks
+        )
+        score = round(
+            100
+            * sum(
+                1
+                for c in checks
+                if c.get("exists") and c.get("ready") and c.get("checksum") and c.get("ffprobe", True)
+            )
+            / max(len(checks), 1),
+            2,
+        )
         report = {"jobId": job.id, "stage": "FINAL_QC", "passed": passed, "checks": checks, "score": score}
         payload = (json.dumps(report, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
         result = self._document(job, AssetType.DOCUMENT, "application/json; charset=utf-8", payload) if passed else None
         if not passed:
-            return JobExecutionResult(False, error_code="FINAL_QC_FAILED", error_message=";".join(c.get("error", "INVALID_MEDIA") for c in checks if not (c.get("exists") and c.get("ready") and c.get("checksum") and c.get("ffprobe", True))))
+            return JobExecutionResult(
+                False,
+                error_code="FINAL_QC_FAILED",
+                error_message=";".join(
+                    c.get("error", "INVALID_MEDIA")
+                    for c in checks
+                    if not (c.get("exists") and c.get("ready") and c.get("checksum") and c.get("ffprobe", True))
+                ),
+            )
         return result
 
     def cancel(self, job_id: str) -> None:
@@ -146,13 +251,3 @@ class MediaDocumentWorker(Worker):
 
     def shutdown(self) -> None:
         self._initialized = False
-
-
-class tempfile_directory:
-    def __enter__(self) -> Path:
-        import tempfile
-        self._ctx = tempfile.TemporaryDirectory(prefix="aicf-media-")
-        return Path(self._ctx.__enter__())
-
-    def __exit__(self, exc_type, exc, tb):
-        return self._ctx.__exit__(exc_type, exc, tb)
