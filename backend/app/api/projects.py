@@ -8,6 +8,10 @@ from pydantic import BaseModel, Field
 
 from ..domain.projects import Project
 from ..infrastructure.sqlite import SQLiteProjectRepository
+from ..library.country_catalog import get_country_languages, get_country_library
+
+
+DEFAULT_COUNTRY_ID = "egypt"
 
 
 class CreateProjectRequest(BaseModel):
@@ -22,6 +26,46 @@ class UpdateProjectRequest(BaseModel):
     settings: dict | None = None
 
 
+def _country_settings(settings: dict) -> dict:
+    """Normalize project localization settings without inventing country content."""
+    value = dict(settings or {})
+    country_id = str(value.get("countryId") or DEFAULT_COUNTRY_ID).strip().lower()
+    country = get_country_library(country_id)
+    if country is None:
+        raise HTTPException(status_code=404, detail="COUNTRY_LIBRARY_NOT_FOUND")
+
+    languages = get_country_languages(country_id)
+    allowed = {item["id"] for item in languages}
+    source = str(value.get("sourceLanguage") or country["defaultLanguage"])
+    if source not in allowed:
+        raise HTTPException(status_code=400, detail="LANGUAGE_NOT_SUPPORTED_BY_COUNTRY")
+
+    raw_targets = value.get("targetLanguages")
+    targets = list(dict.fromkeys(raw_targets if isinstance(raw_targets, list) else [source]))
+    if any(str(item) not in allowed for item in targets):
+        raise HTTPException(status_code=400, detail="LANGUAGE_NOT_SUPPORTED_BY_COUNTRY")
+
+    dialect = value.get("dialect") or country["locale"]
+    value.update(
+        {
+            "countryId": country_id,
+            "libraryId": country["libraryId"],
+            "sourceLanguage": source,
+            "targetLanguages": [str(item) for item in targets],
+            "dialect": str(dialect),
+            "translationPolicy": {
+                "preserveSource": True,
+                "manualOverridesWin": True,
+                "immutableVersions": True,
+                **dict(value.get("translationPolicy") or {}),
+            },
+            "glossary": dict(value.get("glossary") or {}),
+            "translationVersions": dict(value.get("translationVersions") or {}),
+        }
+    )
+    return value
+
+
 def _serialize(project: Project) -> dict:
     return {"id": project.id, "name": project.name, "description": project.description, "settings": project.settings, "createdAt": project.created_at.isoformat(), "updatedAt": project.updated_at.isoformat()}
 
@@ -31,7 +75,8 @@ def build_router(repository: SQLiteProjectRepository) -> APIRouter:
 
     @router.post("", status_code=status.HTTP_201_CREATED)
     def create_project(request: CreateProjectRequest, http_request: Request):
-        project = Project(id=str(uuid4()), name=request.name, description=request.description, settings=request.settings)
+        settings = _country_settings(request.settings)
+        project = Project(id=str(uuid4()), name=request.name, description=request.description, settings=settings)
         repository.create(project)
         return {"data": _serialize(project), "requestId": http_request.state.request_id}
 
@@ -52,7 +97,8 @@ def build_router(repository: SQLiteProjectRepository) -> APIRouter:
         if project is None: raise HTTPException(status_code=404, detail="PROJECT_NOT_FOUND")
         if request.name is not None: project.name = request.name
         if request.description is not None: project.description = request.description
-        if request.settings is not None: project.settings = request.settings
+        if request.settings is not None: project.settings = _country_settings(request.settings)
+        else: project.settings = _country_settings(project.settings)
         project.updated_at = datetime.now(timezone.utc)
         repository.update(project)
         return {"data": _serialize(project), "requestId": http_request.state.request_id}
