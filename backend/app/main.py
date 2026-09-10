@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
@@ -12,6 +13,7 @@ from .api.v1.factory import build_router as build_factory_router
 from .api.v1.pipeline import router as pipeline_router
 from .infrastructure.sqlite import SQLiteJobRepository, SQLiteProjectRepository, SQLiteRepositories
 from .orchestrator.runtime import OrchestratorRuntime
+from .orchestrator.worker_loop import WorkerLoop
 
 
 DATABASE_PATH = os.getenv("AICF_DATABASE_PATH", "./data/factory.db")
@@ -19,13 +21,31 @@ repositories = SQLiteRepositories(DATABASE_PATH)
 job_repository = SQLiteJobRepository(repositories.store)
 project_repository = SQLiteProjectRepository(repositories.store)
 orchestrator_runtime = OrchestratorRuntime(repositories)
+worker_id = os.getenv("AICF_WORKER_ID", "mock")
+worker_loop = WorkerLoop(orchestrator_runtime, worker_id=worker_id)
+
+
+def _worker_autostart_enabled() -> bool:
+    return os.getenv("AICF_WORKER_AUTOSTART", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    if _worker_autostart_enabled():
+        worker_loop.start()
+    try:
+        yield
+    finally:
+        worker_loop.stop()
+
 
 app = FastAPI(
     title="AI Content Factory API",
-    version="0.2.0",
+    version="0.3.0",
     docs_url="/api/v1/docs",
     redoc_url="/api/v1/redoc",
     openapi_url="/api/v1/openapi.json",
+    lifespan=lifespan,
 )
 
 
@@ -84,6 +104,20 @@ def readiness(request: Request) -> JSONResponse | dict[str, object]:
             },
             headers={"X-Request-Id": request.state.request_id},
         )
+
+
+@app.get("/api/v1/worker/status", tags=["system"])
+def worker_status(request: Request) -> dict[str, object]:
+    return {
+        "data": {
+            "workerId": worker_loop.worker_id,
+            "running": worker_loop.running,
+            "autostart": _worker_autostart_enabled(),
+            "iterations": worker_loop.iterations,
+            "lastError": worker_loop.last_error,
+        },
+        "requestId": request.state.request_id,
+    }
 
 
 @app.get("/api/v1/readiness", include_in_schema=False)
