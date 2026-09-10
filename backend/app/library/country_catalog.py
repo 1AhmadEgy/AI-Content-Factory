@@ -2,8 +2,9 @@ from __future__ import annotations
 
 """Scalable country-library registry.
 
-A country entry is metadata only. Content modules can be added independently
-without changing the registry or overwriting user-created library records.
+A country entry is metadata until a content seed is provided. Each country has
+an independent stable libraryId, so adding content never requires changing the
+API contract or touching another country's records.
 """
 
 from .languages import LANGUAGES
@@ -46,4 +47,5 @@ def get_country_languages(country_id: str) -> list[dict[str, object]]:
     if country is None:
         return []
     allowed = set(country["supportedLanguages"])
-    return [dict(item) for item in LANGUAGES if item["id"] in allowed]
+    dialects = list(country.get("dialects", []))
+    return [dict(item, locale=(item.get("locales") or [None])[0], dialects=dialects if item["id"] == country["defaultLanguage"] else list(item.get("locales", []))) for item in LANGUAGES if item["id"] in allowed]
