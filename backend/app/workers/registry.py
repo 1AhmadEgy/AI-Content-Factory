@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ..domain.jobs import JobType
 from ..orchestrator.queue import Worker
 
 
@@ -36,6 +37,30 @@ class WorkerRegistry:
             item.worker for item in self._workers.values()
             if capability in item.capabilities and item.worker.health_check()
         ]
+
+    def resolve_for_job(self, job_type: JobType | str) -> str:
+        """Select the healthy specialized worker for a job, with provider fallback."""
+        name = job_type.value if isinstance(job_type, JobType) else str(job_type)
+        specialized = {
+            "QC": "quality-control",
+            "BEST_TAKE": "best-take",
+            "TIMELINE": "timeline",
+            "RENDER": "render",
+        }.get(name)
+        if specialized and specialized in self._workers and self._workers[specialized].worker.health_check():
+            return specialized
+        if "provider-generation" in self._workers and self._workers["provider-generation"].worker.health_check():
+            descriptor = self._workers["provider-generation"]
+            if name in descriptor.capabilities:
+                return "provider-generation"
+        if "mock" in self._workers and self._workers["mock"].worker.health_check():
+            return "mock"
+        candidates = self.find(name)
+        if candidates:
+            for worker_id, descriptor in self._workers.items():
+                if descriptor.worker in candidates:
+                    return worker_id
+        raise KeyError(f"No healthy worker for job type: {name}")
 
     def names(self) -> list[str]:
         return sorted(self._workers)
