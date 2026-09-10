@@ -66,12 +66,6 @@ class OrchestratorRuntime:
         script = self.script_engine.generate(brief, story, model_id)
         return self.scene_planner.plan(brief, script, model_id)
 
-    def plan_content(self, brief: ContentBrief, model_id: str | None = None) -> StoryPlan:
-        """Run the AI planning chain with safe deterministic fallback."""
-        story = self.story_engine.generate(brief, model_id)
-        script = self.script_engine.generate(brief, story, model_id)
-        return self.scene_planner.plan(brief, script, model_id)
-
     def execute_next(self, worker_id: str = "mock") -> ExecutionResult | None:
         claimed = self.queue.claim_next(worker_id)
         if claimed is None:
