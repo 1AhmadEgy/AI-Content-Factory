@@ -36,13 +36,14 @@ class ContentPipelineOrchestrator:
     def _create_scene_jobs(self, job: GenerationJob) -> list[GenerationJob]:
         plan = job.input.parameters.get("plan")
         scenes = plan.get("scenes", []) if isinstance(plan, dict) else []
-        return [self._enqueue(job, JobType.SCENE, "scene", f"{job.id}:scene:{int(scene.get('number', i))}", {"scene": scene, "storyJobId": job.id, "sceneNumber": int(scene.get("number", i))}, 1) for i, scene in enumerate(scenes, 1) if isinstance(scene, dict)]
+        brief = {k: job.input.parameters[k] for k in ("topic", "language", "durationSeconds", "style", "audience", "platform", "aspectRatio") if k in job.input.parameters}
+        return [self._enqueue(job, JobType.SCENE, "scene", f"{job.id}:scene:{int(scene.get('number', i))}", {"scene": scene, "brief": brief, "storyJobId": job.id, "sceneNumber": int(scene.get("number", i))}, 1) for i, scene in enumerate(scenes, 1) if isinstance(scene, dict)]
 
     def _create_shot_jobs(self, job: GenerationJob) -> list[GenerationJob]:
         scene = job.input.parameters.get("scene")
         shots = scene.get("shots", []) if isinstance(scene, dict) else []
         scene_id = job.target_id or f"{job.id}:scene"
-        return [self._enqueue(job, JobType.SHOT, "shot", f"{scene_id}:shot:{int(shot.get('number', i))}", {"shot": shot, "scene": scene, "sceneJobId": job.id, "sceneNumber": job.input.parameters.get("sceneNumber"), "shotNumber": int(shot.get("number", i))}, 2) for i, shot in enumerate(shots, 1) if isinstance(shot, dict)]
+        return [self._enqueue(job, JobType.SHOT, "shot", f"{scene_id}:shot:{int(shot.get('number', i))}", {"shot": shot, "scene": scene, "brief": job.input.parameters.get("brief", {}), "sceneJobId": job.id, "sceneNumber": job.input.parameters.get("sceneNumber"), "shotNumber": int(shot.get("number", i))}, 2) for i, shot in enumerate(shots, 1) if isinstance(shot, dict)]
 
     def _create_generation_jobs(self, job: GenerationJob) -> list[GenerationJob]:
         shot_data = job.input.parameters.get("shot")
@@ -80,12 +81,9 @@ class ContentPipelineOrchestrator:
         count = max(1, min(int(job.input.parameters.get("takeCount", 1)), 8))
         created: list[GenerationJob] = []
         for take in range(1, count + 1):
-            for spec in (
-                self.generation_planner.image(brief, scene, shot, take),
-                self.generation_planner.video(brief, scene, shot, take),
-            ):
+            for spec in (self.generation_planner.image(brief, scene, shot, take), self.generation_planner.video(brief, scene, shot, take)):
                 target = {JobType.IMAGE: "image", JobType.VIDEO: "video"}[spec.job_type]
-                params = {"shot": shot_data, "scene": scene_data, "shotJobId": job.id, "shotNumber": shot.number, "takeCount": count, "takeNumber": take, "generationSpec": {"prompt": spec.prompt, "negative_prompt": spec.negative_prompt, "duration_seconds": spec.duration_seconds, "parameters": spec.parameters or {}}}
+                params = {"shot": shot_data, "scene": scene_data, "brief": brief_data, "shotJobId": job.id, "shotNumber": shot.number, "takeCount": count, "takeNumber": take, "generationSpec": {"prompt": spec.prompt, "negative_prompt": spec.negative_prompt, "duration_seconds": spec.duration_seconds, "parameters": spec.parameters or {}}}
                 created.append(self._enqueue(job, spec.job_type, target, f"{job.id}:{target}:take:{take}", params, 3))
         return created
 
