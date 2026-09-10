@@ -40,3 +40,23 @@ def test_get_missing_job() -> None:
     response = TestClient(app).get("/api/v1/jobs/missing")
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "JOB_NOT_FOUND"
+
+def test_execute_targets_requested_job_instead_of_next_priority_job() -> None:
+    client = TestClient(app)
+    project_id = client.post("/api/v1/projects", json={"name": "Targeted execute"}).json()["data"]["id"]
+    first = client.post(
+        "/api/v1/jobs",
+        json={"projectId": project_id, "type": "IMAGE", "targetType": "shot", "priority": 1000},
+        headers={"Idempotency-Key": "targeted-first"},
+    ).json()["data"]
+    second = client.post(
+        "/api/v1/jobs",
+        json={"projectId": project_id, "type": "IMAGE", "targetType": "shot", "priority": 1},
+        headers={"Idempotency-Key": "targeted-second"},
+    ).json()["data"]
+
+    executed = client.post(f"/api/v1/jobs/{second['id']}/execute")
+    assert executed.status_code == 200
+    assert executed.json()["data"]["id"] == second["id"]
+    assert executed.json()["data"]["status"] == "COMPLETED"
+    assert client.get(f"/api/v1/jobs/{first['id']}").json()["data"]["status"] == "QUEUED"
