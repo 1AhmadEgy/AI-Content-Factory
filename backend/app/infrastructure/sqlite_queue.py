@@ -32,9 +32,19 @@ class SQLiteJobQueue(JobQueue):
             )
 
     def enqueue(self, job: GenerationJob) -> None:
+        """Validate queueability without rewriting a possibly stale job snapshot.
+
+        Jobs are already durably created before enqueue is called. Rewriting the
+        complete row here could overwrite a newer execution-owned state if a
+        stale in-memory instance reached this method concurrently.
+        """
         if job.status is not JobStatus.QUEUED:
             raise ValueError("Only QUEUED jobs may be enqueued")
-        self.jobs.update(job)
+        current = self.jobs.get(job.id)
+        if current is None:
+            raise KeyError(f"Job not found: {job.id}")
+        if current.status is not JobStatus.QUEUED:
+            raise RuntimeError(f"Job is no longer QUEUED: {job.id}")
 
     def claim_next(self, worker_id: str) -> tuple[GenerationJob, JobLease] | None:
         return self._claim(worker_id, None)
