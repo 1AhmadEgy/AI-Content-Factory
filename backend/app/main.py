@@ -17,6 +17,7 @@ from .api.v1.models import build_router as build_models_router
 from .api.v1.pipeline import router as pipeline_router
 from .api.v1.publishing import build_router as build_publishing_router
 from .api.v1.qc import build_router as build_qc_router
+from .api.v1.render import build_router as build_render_router
 from .api.v1.system import build_router as build_system_router
 from .infrastructure.asset_repository import SQLiteAssetRepository
 from .infrastructure.sqlite import SQLiteJobRepository, SQLiteProjectRepository, SQLiteRepositories
@@ -44,7 +45,7 @@ async def lifespan(_: FastAPI):
     finally: worker_loop.stop()
 
 
-app = FastAPI(title="AI Content Factory API", version="0.5.0", docs_url="/api/v1/docs", redoc_url="/api/v1/redoc", openapi_url="/api/v1/openapi.json", lifespan=lifespan)
+app = FastAPI(title="AI Content Factory API", version="0.6.0", docs_url="/api/v1/docs", redoc_url="/api/v1/redoc", openapi_url="/api/v1/openapi.json", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -71,6 +72,7 @@ app.include_router(build_models_router(orchestrator_runtime))
 app.include_router(build_publishing_router(orchestrator_runtime, job_repository))
 app.include_router(build_qc_router(orchestrator_runtime, job_repository))
 app.include_router(build_best_take_router(orchestrator_runtime, job_repository))
+app.include_router(build_render_router(orchestrator_runtime, job_repository))
 app.include_router(build_system_router(orchestrator_runtime))
 app.include_router(pipeline_router)
 
