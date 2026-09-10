@@ -11,6 +11,10 @@ from .default_library import DEFAULT_LIBRARY_PROJECT_ID, default_characters, def
 from .egypt_catalog import EGYPT_LIBRARY_CATEGORIES, EGYPT_LIBRARY_NAME, EGYPT_LIBRARY_VERSION, EGYPT_SERIES_TEMPLATE_IDS
 from .egypt_expanded import expanded_characters, expanded_locations
 from .egypt_common import common_characters, common_locations
+from .countries.libya import LIBRARY_PROJECT_ID as LIBYA_LIBRARY_PROJECT_ID
+from .countries.libya import characters as libya_characters
+from .countries.libya import locations as libya_locations
+from .countries.libya import LIBRARY_VERSION as LIBYA_LIBRARY_VERSION
 
 
 def ensure_country_library_projects(repositories) -> dict[str, int]:
@@ -49,6 +53,35 @@ def ensure_country_library_projects(repositories) -> dict[str, int]:
     return {"created": created}
 
 
+def _seed_reusable_records(repositories, project_id: str, characters, locations) -> dict[str, int]:
+    character_repo = SQLiteCharacterRepository(repositories.store)
+    location_repo = SQLiteLocationRepository(repositories.store)
+    added_characters = 0
+    added_locations = 0
+    for item in characters:
+        if item.project_id == project_id and character_repo.get(item.id) is None:
+            character_repo.create(item)
+            added_characters += 1
+    for item in locations:
+        if item.project_id == project_id and location_repo.get(item.id) is None:
+            location_repo.create(item)
+            added_locations += 1
+    return {"characters": added_characters, "locations": added_locations}
+
+
+def ensure_libya_library(repositories) -> dict[str, int]:
+    """Seed the curated Libya starter pack additively; never overwrite user records."""
+    if os.getenv("AICF_SEED_LIBYA_LIBRARY", "true").strip().lower() in {"0", "false", "no", "off"}:
+        return {"characters": 0, "locations": 0}
+    ensure_country_library_projects(repositories)
+    return _seed_reusable_records(
+        repositories,
+        LIBYA_LIBRARY_PROJECT_ID,
+        libya_characters(),
+        libya_locations(),
+    )
+
+
 def ensure_egypt_library(repositories) -> dict[str, int]:
     """Seed the reusable Egypt library additively; never overwrite user-owned records."""
     if os.getenv("AICF_SEED_DEFAULT_LIBRARY", "true").strip().lower() in {"0", "false", "no", "off"}:
@@ -77,18 +110,11 @@ def ensure_egypt_library(repositories) -> dict[str, int]:
             updated_at=now,
         ))
 
-    characters = SQLiteCharacterRepository(repositories.store)
-    locations = SQLiteLocationRepository(repositories.store)
-    added_characters = 0
-    added_locations = 0
     character_items = [*default_characters(), *expanded_characters(), *common_characters()]
     location_items = [*default_locations(), *expanded_locations(), *common_locations()]
-    for item in character_items:
-        if item.project_id == DEFAULT_LIBRARY_PROJECT_ID and characters.get(item.id) is None:
-            characters.create(item)
-            added_characters += 1
-    for item in location_items:
-        if item.project_id == DEFAULT_LIBRARY_PROJECT_ID and locations.get(item.id) is None:
-            locations.create(item)
-            added_locations += 1
-    return {"characters": added_characters, "locations": added_locations}
+    return _seed_reusable_records(
+        repositories,
+        DEFAULT_LIBRARY_PROJECT_ID,
+        character_items,
+        location_items,
+    )
