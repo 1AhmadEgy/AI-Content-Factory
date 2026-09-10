@@ -10,7 +10,14 @@ class InvalidJobTransition(ValueError):
 _ALLOWED: dict[JobStatus, set[JobStatus]] = {
     JobStatus.PENDING: {JobStatus.QUEUED, JobStatus.CANCELLED},
     JobStatus.QUEUED: {JobStatus.RUNNING, JobStatus.PAUSED, JobStatus.CANCELLED},
-    JobStatus.RUNNING: {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.RETRYING, JobStatus.PAUSED, JobStatus.CANCELLED, JobStatus.BLOCKED},
+    JobStatus.RUNNING: {
+        JobStatus.COMPLETED,
+        JobStatus.FAILED,
+        JobStatus.RETRYING,
+        JobStatus.PAUSED,
+        JobStatus.CANCELLED,
+        JobStatus.BLOCKED,
+    },
     JobStatus.PAUSED: {JobStatus.QUEUED, JobStatus.CANCELLED},
     JobStatus.RETRYING: {JobStatus.QUEUED, JobStatus.FAILED, JobStatus.CANCELLED},
     JobStatus.BLOCKED: {JobStatus.QUEUED, JobStatus.CANCELLED},
@@ -20,7 +27,15 @@ _ALLOWED: dict[JobStatus, set[JobStatus]] = {
 }
 
 
-def transition(job: GenerationJob, target: JobStatus, *, now: datetime | None = None) -> GenerationJob:
+_TERMINAL_STATES = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}
+
+
+def transition(
+    job: GenerationJob,
+    target: JobStatus,
+    *,
+    now: datetime | None = None,
+) -> GenerationJob:
     if target not in _ALLOWED[job.status]:
         raise InvalidJobTransition(f"Cannot transition {job.status} -> {target}")
 
@@ -35,7 +50,7 @@ def transition(job: GenerationJob, target: JobStatus, *, now: datetime | None = 
     elif target == JobStatus.COMPLETED:
         job.progress = 1.0
         job.completed_at = now
-    elif target in {JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.BLOCKED}:
+    elif target in _TERMINAL_STATES:
         job.completed_at = now
 
     return job
