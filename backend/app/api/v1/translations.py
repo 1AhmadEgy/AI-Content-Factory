@@ -43,7 +43,23 @@ class TranslationBatchBody(BaseModel):
 
 
 def _serialize(result):
-    return {"id": result.id, "sourceLanguage": result.source_language, "targetLanguage": result.target_language, "sourceText": result.source_text, "translatedText": result.translated_text, "contentType": result.content_type, "sourceId": result.source_id, "provider": result.provider, "model": result.model, "glossaryVersion": result.glossary_version, "version": result.version, "manual": result.manual, "createdAt": result.created_at, "metadata": result.metadata}
+    return {
+        "id": result.id,
+        "sourceLanguage": result.source_language,
+        "targetLanguage": result.target_language,
+        "sourceText": result.source_text,
+        "translatedText": result.translated_text,
+        "contentType": result.content_type,
+        "sourceId": result.source_id,
+        "sourceVersion": result.source_version,
+        "provider": result.provider,
+        "model": result.model,
+        "glossaryVersion": result.glossary_version,
+        "version": result.version,
+        "manual": result.manual,
+        "createdAt": result.created_at,
+        "metadata": result.metadata,
+    }
 
 
 def build_router(store=None) -> APIRouter:
@@ -58,7 +74,10 @@ def build_router(store=None) -> APIRouter:
     def history(request: Request, sourceId: str | None = None, targetLanguage: str | None = None, limit: int = 100):
         if repository is None:
             return {"data": [], "requestId": request.state.request_id}
-        return {"data": [_serialize(item) for item in repository.list(source_id=sourceId, target_language=targetLanguage, limit=limit)], "requestId": request.state.request_id}
+        return {
+            "data": [_serialize(item) for item in repository.list(source_id=sourceId, target_language=targetLanguage, limit=limit)],
+            "requestId": request.state.request_id,
+        }
 
     @router.get("/{translation_id}")
     def get_translation(translation_id: str, request: Request):
@@ -70,7 +89,17 @@ def build_router(store=None) -> APIRouter:
         return {"data": _serialize(result), "requestId": request.state.request_id}
 
     def _request(body: TranslationBody, target: str) -> TranslationRequest:
-        return TranslationRequest(source_language=body.sourceLanguage, target_language=target, text=body.text, content_type=body.contentType, source_id=body.sourceId, source_version=body.sourceVersion, preserve_terms=tuple(body.preserveTerms), glossary=body.glossary, context=body.context)
+        return TranslationRequest(
+            source_language=body.sourceLanguage,
+            target_language=target,
+            text=body.text,
+            content_type=body.contentType,
+            source_id=body.sourceId,
+            source_version=body.sourceVersion,
+            preserve_terms=tuple(body.preserveTerms),
+            glossary=body.glossary,
+            context=body.context,
+        )
 
     @router.post("")
     def translate(body: TranslationBody, request: Request):
@@ -82,9 +111,15 @@ def build_router(store=None) -> APIRouter:
                 existing = repository.latest(translation_request)
                 if existing is not None:
                     return {"data": _serialize(existing), "requestId": request.state.request_id, "idempotent": True}
-            result = TranslationService().translate(translation_request, manual_text=body.manualText, provider=body.provider, model=body.model, version=body.version)
+            result = TranslationService().translate(
+                translation_request,
+                manual_text=body.manualText,
+                provider=body.provider,
+                model=body.model,
+                version=body.version,
+            )
             if repository is not None:
-                repository.save(result, translation_request)
+                result = repository.save(result, translation_request)
         except TranslationProviderUnavailable:
             raise HTTPException(503, "TRANSLATION_PROVIDER_NOT_CONFIGURED")
         except ValueError as exc:
@@ -100,23 +135,42 @@ def build_router(store=None) -> APIRouter:
         errors: list[dict[str, str]] = []
         for target in targets:
             try:
-                translation_request = TranslationRequest(source_language=body.sourceLanguage, target_language=target, text=body.text, content_type=body.contentType, source_id=body.sourceId, source_version=body.sourceVersion, preserve_terms=tuple(body.preserveTerms), glossary=body.glossary, context=body.context)
+                translation_request = TranslationRequest(
+                    source_language=body.sourceLanguage,
+                    target_language=target,
+                    text=body.text,
+                    content_type=body.contentType,
+                    source_id=body.sourceId,
+                    source_version=body.sourceVersion,
+                    preserve_terms=tuple(body.preserveTerms),
+                    glossary=body.glossary,
+                    context=body.context,
+                )
                 manual_text = body.manualTexts.get(target)
                 if repository is not None and manual_text is None:
                     existing = repository.latest(translation_request)
                     if existing is not None:
                         results.append(_serialize(existing))
                         continue
-                result = TranslationService().translate(translation_request, manual_text=manual_text, provider=body.provider, model=body.model, version=body.version)
+                result = TranslationService().translate(
+                    translation_request,
+                    manual_text=manual_text,
+                    provider=body.provider,
+                    model=body.model,
+                    version=body.version,
+                )
                 if repository is not None:
-                    repository.save(result, translation_request)
+                    result = repository.save(result, translation_request)
                 results.append(_serialize(result))
             except TranslationProviderUnavailable:
                 errors.append({"targetLanguage": target, "error": "TRANSLATION_PROVIDER_NOT_CONFIGURED"})
             except ValueError as exc:
                 errors.append({"targetLanguage": target, "error": str(exc)})
         if errors and not results:
-            raise HTTPException(503 if all(e["error"] == "TRANSLATION_PROVIDER_NOT_CONFIGURED" for e in errors) else 400, {"results": results, "errors": errors})
+            raise HTTPException(
+                503 if all(e["error"] == "TRANSLATION_PROVIDER_NOT_CONFIGURED" for e in errors) else 400,
+                {"results": results, "errors": errors},
+            )
         return {"data": results, "errors": errors, "requestId": request.state.request_id}
 
     return router
