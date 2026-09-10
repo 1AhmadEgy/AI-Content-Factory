@@ -30,9 +30,9 @@ from ..workers.repurpose_worker import RepurposeWorker
 from ..workers.timeline_worker import TimelineWorker
 from ..workers.registry import WorkerRegistry
 from .completion_gate import CompletionGate
-from .content_pipeline import ContentPipelineOrchestrator
 from .job_executor import ExecutionResult, JobExecutor
 from .job_service import JobService
+from .production_pipeline import ProductionPipelineOrchestrator
 from .queue import JobLease
 
 
@@ -84,7 +84,7 @@ class OrchestratorRuntime:
         self.story_engine = AIStoryEngine(self.providers)
         self.script_engine = AIScriptEngine(self.providers)
         self.scene_planner = AIScenePlanner(self.providers)
-        self.pipeline = ContentPipelineOrchestrator(JobService(repositories.jobs), self.queue.enqueue)
+        self.pipeline = ProductionPipelineOrchestrator(JobService(repositories.jobs), self.queue.enqueue)
         self.completion_gate = CompletionGate(self.assets, self.storage)
         self.executor = JobExecutor(repositories.jobs, self.queue, self.workers, self.events.append, self.pipeline.on_completed, completion_gate=self.completion_gate)
         self.country_library_seed = ensure_country_library_projects(repositories)
