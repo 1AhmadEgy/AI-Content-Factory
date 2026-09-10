@@ -81,8 +81,11 @@ class SQLiteJobQueue(JobQueue):
                     "INSERT INTO job_leases(job_id,worker_id,lease_id,expires_at,created_at) VALUES(?,?,?,?,?)",
                     (lease.job_id, lease.worker_id, lease.lease_id, lease.expires_at, now.isoformat()),
                 )
+                # The queue owns the RUNNING transition and therefore the attempt
+                # counter. JobExecutor must not increment the attempt again.
                 cursor = self.store.connection.execute(
-                    """UPDATE jobs SET status='RUNNING', attempt=attempt+1, started_at=?, completed_at=NULL, updated_at=?
+                    """UPDATE jobs SET status='RUNNING', attempt=attempt+1,
+                    started_at=?, completed_at=NULL, updated_at=?
                     WHERE id=? AND status IN ('QUEUED', 'RETRYING')""",
                     (now.isoformat(), now.isoformat(), lease.job_id),
                 )
@@ -99,11 +102,12 @@ class SQLiteJobQueue(JobQueue):
         return refreshed, lease
 
     def heartbeat(self, lease: JobLease) -> None:
-        expires = datetime.now(timezone.utc) + timedelta(seconds=self.lease_seconds)
+        now = datetime.now(timezone.utc)
+        expires = now + timedelta(seconds=self.lease_seconds)
         with self.store._lock, self.store.connection:
             cursor = self.store.connection.execute(
                 "UPDATE job_leases SET expires_at=? WHERE job_id=? AND lease_id=? AND expires_at > ?",
-                (expires.isoformat(), lease.job_id, lease.lease_id, datetime.now(timezone.utc).isoformat()),
+                (expires.isoformat(), lease.job_id, lease.lease_id, now.isoformat()),
             )
             if cursor.rowcount != 1:
                 raise KeyError("JOB_LEASE_NOT_FOUND")
@@ -138,14 +142,15 @@ class SQLiteJobQueue(JobQueue):
                 if lease_row is None:
                     raise KeyError("JOB_LEASE_NOT_FOUND")
 
+                completed_at = (
+                    now.isoformat()
+                    if status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}
+                    else None
+                )
                 cursor = self.store.connection.execute(
-                    "UPDATE jobs SET status=?, completed_at=?, updated_at=? WHERE id=? AND status='RUNNING'",
-                    (
-                        status.value,
-                        now.isoformat() if status is not JobStatus.RETRYING else None,
-                        now.isoformat(),
-                        lease.job_id,
-                    ),
+                    """UPDATE jobs SET status=?, completed_at=?, updated_at=?
+                    WHERE id=? AND status='RUNNING'""",
+                    (status.value, completed_at, now.isoformat(), lease.job_id),
                 )
                 if cursor.rowcount != 1:
                     raise RuntimeError(f"Job is no longer RUNNING: {lease.job_id}")
@@ -176,12 +181,15 @@ class SQLiteJobQueue(JobQueue):
                     next_status = "RETRYING" if row["attempt"] < row["max_attempts"] else "FAILED"
                     cursor = self.store.connection.execute(
                         """UPDATE jobs SET status=?, updated_at=?, completed_at=?,
-                        error_code='LEASE_EXPIRED', error_message=? WHERE id=? AND status='RUNNING'""",
+                        error_code='LEASE_EXPIRED', error_message=?
+                        WHERE id=? AND status='RUNNING'""",
                         (
                             next_status,
                             now.isoformat(),
                             now.isoformat() if next_status == "FAILED" else None,
-                            "Worker lease expired; job scheduled for retry" if next_status == "RETRYING" else "Worker lease expired; retry budget exhausted",
+                            "Worker lease expired; job scheduled for retry"
+                            if next_status == "RETRYING"
+                            else "Worker lease expired; retry budget exhausted",
                             row["job_id"],
                         ),
                     )
