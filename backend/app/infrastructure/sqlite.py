@@ -126,7 +126,7 @@ class SQLiteJobRepository(JobRepository):
             cursor = self.store.connection.execute("UPDATE jobs SET parent_job_id=?,project_id=?,type=?,target_type=?,target_id=?,priority=?,status=?,progress=?,attempt=?,max_attempts=?,provider=?,model=?,input_json=?,output_json=?,error_code=?,error_message=?,created_at=?,started_at=?,completed_at=?,updated_at=? WHERE id=?", (job.parent_job_id, job.project_id, job.type.value, job.target_type, job.target_id, job.priority, job.status.value, job.progress, job.attempt, job.max_attempts, job.provider, job.model, _json(_job_input_to_dict(job.input)), _json(_job_output_to_dict(job.output)) if job.output else None, job.error_code, job.error_message, _dt(job.created_at), _dt(job.started_at), _dt(job.completed_at), _dt(job.updated_at), job.id))
             if cursor.rowcount != 1: raise KeyError(f"Job not found: {job.id}")
         return job
-    def update_if_current(self, job: GenerationJob, expected_status: JobStatus, expected_attempt: int) -> GenerationJob:
+    def update_if_current(self, job: GenerationJob, expected_status: JobStatus, expected_attempt: int) -> bool:
         """Persist only when the row is still owned by the expected execution attempt."""
         with self.store._lock, self.store.connection:
             cursor = self.store.connection.execute(
@@ -134,9 +134,7 @@ class SQLiteJobRepository(JobRepository):
                 WHERE id=? AND status=? AND attempt=?""",
                 (job.parent_job_id, job.project_id, job.type.value, job.target_type, job.target_id, job.priority, job.status.value, job.progress, job.attempt, job.max_attempts, job.provider, job.model, _json(_job_input_to_dict(job.input)), _json(_job_output_to_dict(job.output)) if job.output else None, job.error_code, job.error_message, _dt(job.created_at), _dt(job.started_at), _dt(job.completed_at), _dt(job.updated_at), job.id, expected_status.value, expected_attempt),
             )
-            if cursor.rowcount != 1:
-                return job
-        return job
+            return cursor.rowcount == 1
     def list_by_parent(self, parent_job_id: str) -> list[GenerationJob]:
         with self.store._lock: rows = self.store.connection.execute("SELECT * FROM jobs WHERE parent_job_id = ? ORDER BY created_at, id", (parent_job_id,)).fetchall()
         return [_job_from_row(row) for row in rows]
