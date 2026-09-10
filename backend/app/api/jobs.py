@@ -12,7 +12,6 @@ from pydantic import BaseModel, Field
 from ..domain.job_events import JobEvent
 from ..domain.jobs import GenerationJob, JobInput, JobStatus, JobType
 from ..infrastructure.job_event_repository import SQLiteJobEventRepository
-from ..infrastructure.provider_run_repository import SQLiteProviderRunRepository
 from ..infrastructure.sqlite import SQLiteJobRepository
 from ..orchestrator.job_service import JobService
 from ..orchestrator.runtime import OrchestratorRuntime
@@ -44,9 +43,6 @@ def _serialize(job: GenerationJob) -> dict[str, Any]:
 def _serialize_event(event: JobEvent) -> dict[str, Any]:
     return {"id": event.id, "jobId": event.job_id, "projectId": event.project_id, "eventType": event.event_type, "status": event.status, "progress": event.progress, "payload": event.payload, "createdAt": event.created_at.isoformat()}
 
-def _serialize_provider_run(run) -> dict[str, Any]:
-    return {"id": run.id, "jobId": run.job_id, "provider": run.provider, "model": run.model, "status": run.status, "requestMetadata": run.request_metadata, "responseMetadata": run.response_metadata, "startedAt": run.started_at.isoformat(), "completedAt": run.completed_at.isoformat() if run.completed_at else None, "durationMs": run.duration_ms, "errorCode": run.error_code, "createdAt": run.created_at.isoformat()}
-
 def _fingerprint(request: CreateJobRequest) -> str:
     canonical = json.dumps(request.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -54,7 +50,6 @@ def _fingerprint(request: CreateJobRequest) -> str:
 def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime | None = None, events: SQLiteJobEventRepository | None = None) -> APIRouter:
     service = JobService(repository)
     event_repository = events or (SQLiteJobEventRepository(runtime.repositories.store) if runtime else None)
-    provider_runs = runtime.provider_runs if runtime else None
 
     @router.get("")
     def list_jobs(request: Request, project_id: str | None = Query(default=None, alias="projectId"), job_status: JobStatus | None = Query(default=None, alias="status"), limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
@@ -65,18 +60,15 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
     def create_job(request: CreateJobRequest, http_request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
         if not idempotency_key: raise HTTPException(status_code=400, detail="IDEMPOTENCY_KEY_REQUIRED")
         if repository.store._get("projects", request.projectId) is None: raise HTTPException(status_code=404, detail="PROJECT_NOT_FOUND")
-        fingerprint = _fingerprint(request)
-        operation = "POST:/api/v1/jobs"
         input_value = JobInput(parameters=request.input.parameters, reference_asset_ids=request.input.referenceAssetIds, constraints=request.input.constraints, seed=request.input.seed, deterministic=request.input.deterministic)
-        job, existing_resource_id = service.create_with_idempotency(key=idempotency_key, operation=operation, fingerprint=fingerprint, project_id=request.projectId, job_type=request.type, target_type=request.targetType, target_id=request.targetId, parent_job_id=request.parentJobId, priority=request.priority, max_attempts=request.maxAttempts, provider=request.provider, model=request.model, input=input_value)
-        if existing_resource_id == "__IDEMPOTENCY_CONFLICT__": raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
-        if existing_resource_id:
-            existing_job = repository.get(existing_resource_id)
-            if existing_job is None: raise HTTPException(status_code=409, detail="IDEMPOTENCY_RESOURCE_MISSING")
-            return {"data": _serialize(existing_job), "requestId": http_request.state.request_id, "idempotentReplay": True}
-        if job is None: raise HTTPException(status_code=500, detail="JOB_CREATION_FAILED")
-        if runtime: runtime.queue.enqueue(job)
-        return {"data": _serialize(job), "requestId": http_request.state.request_id}
+        result = service.create_with_idempotency(key=idempotency_key, operation="POST:/api/v1/jobs", fingerprint=_fingerprint(request), project_id=request.projectId, job_type=request.type, target_type=request.targetType, target_id=request.targetId, parent_job_id=request.parentJobId, priority=request.priority, max_attempts=request.maxAttempts, provider=request.provider, model=request.model, input=input_value)
+        if result.conflict: raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
+        if result.replayed:
+            if result.job is None: raise HTTPException(status_code=409, detail="IDEMPOTENCY_RESOURCE_MISSING")
+            return {"data": _serialize(result.job), "requestId": http_request.state.request_id, "idempotentReplay": True}
+        if result.job is None: raise HTTPException(status_code=500, detail="JOB_CREATION_FAILED")
+        if runtime: runtime.queue.enqueue(result.job)
+        return {"data": _serialize(result.job), "requestId": http_request.state.request_id}
 
     @router.get("/{job_id}")
     def get_job(job_id: str, request: Request) -> dict[str, Any]:
@@ -84,50 +76,11 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
         if job is None: raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
         return {"data": _serialize(job), "requestId": request.state.request_id}
 
-    @router.get("/{job_id}/provider-runs")
-    def get_provider_runs(job_id: str, request: Request, limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
-        if repository.get(job_id) is None: raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
-        if provider_runs is None: raise HTTPException(status_code=503, detail="PROVIDER_RUNS_NOT_CONFIGURED")
-        data = [_serialize_provider_run(run) for run in provider_runs.list_for_job(job_id, limit)]
-        return {"data": data, "meta": {"count": len(data), "limit": limit}, "requestId": request.state.request_id}
-
-    @router.get("/{job_id}/provider-runs/{run_id}")
-    def get_provider_run(job_id: str, run_id: str, request: Request) -> dict[str, Any]:
-        if repository.get(job_id) is None: raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
-        if provider_runs is None: raise HTTPException(status_code=503, detail="PROVIDER_RUNS_NOT_CONFIGURED")
-        try: run = provider_runs.get(run_id)
-        except KeyError as exc: raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
-        if run.job_id != job_id: raise HTTPException(status_code=404, detail="PROVIDER_RUN_NOT_FOUND")
-        return {"data": _serialize_provider_run(run), "requestId": request.state.request_id}
-
     @router.post("/{job_id}/cancel")
     def cancel_job(job_id: str, request: Request) -> dict[str, Any]:
         try: job = service.cancel(job_id)
         except KeyError as exc: raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
         return {"data": _serialize(job), "requestId": request.state.request_id}
-
-    @router.post("/{job_id}/pause")
-    def pause_job(job_id: str, request: Request) -> dict[str, Any]:
-        try: job=service.pause(job_id)
-        except KeyError as exc: raise HTTPException(404,str(exc.args[0])) from exc
-        except ValueError as exc: raise HTTPException(409,str(exc)) from exc
-        return {"data":_serialize(job),"requestId":request.state.request_id}
-
-    @router.post("/{job_id}/resume")
-    def resume_job(job_id: str, request: Request) -> dict[str, Any]:
-        try: job=service.resume(job_id)
-        except KeyError as exc: raise HTTPException(404,str(exc.args[0])) from exc
-        except ValueError as exc: raise HTTPException(409,str(exc)) from exc
-        if runtime: runtime.queue.enqueue(job)
-        return {"data":_serialize(job),"requestId":request.state.request_id}
-
-    @router.post("/{job_id}/retry")
-    def retry_job(job_id: str, request: Request) -> dict[str, Any]:
-        try: job=service.retry(job_id)
-        except KeyError as exc: raise HTTPException(404,str(exc.args[0])) from exc
-        except ValueError as exc: raise HTTPException(409,str(exc)) from exc
-        if runtime: runtime.queue.enqueue(job)
-        return {"data":_serialize(job),"requestId":request.state.request_id}
 
     @router.post("/{job_id}/execute")
     def execute_job(job_id: str, request: Request) -> dict[str, Any]:
@@ -137,43 +90,10 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
         if result is None: raise HTTPException(status_code=409, detail="JOB_NOT_RUNNABLE")
         return {"data": _serialize(result.job), "execution": {"status": result.status.value, "retried": result.retried}, "requestId": request.state.request_id}
 
-    @router.post("/{job_id}/heartbeat")
-    def heartbeat_job(job_id: str, request: Request, lease_id: str = Header(..., alias="X-Lease-Id"), worker_id: str = Header(..., alias="X-Worker-Id")) -> dict[str, Any]:
-        if runtime is None: raise HTTPException(status_code=503, detail="ORCHESTRATOR_NOT_CONFIGURED")
-        try: runtime.heartbeat(job_id, lease_id, worker_id)
-        except KeyError as exc: raise HTTPException(status_code=404 if str(exc.args[0]) == "JOB_NOT_FOUND" else 409, detail=str(exc.args[0])) from exc
-        return {"data": {"jobId": job_id, "workerId": worker_id, "leaseId": lease_id, "status": "HEARTBEAT_ACCEPTED"}, "requestId": request.state.request_id}
-
-    @router.post("/maintenance/recover-expired")
-    def recover_expired(request: Request) -> dict[str, Any]:
-        if runtime is None: raise HTTPException(status_code=503, detail="ORCHESTRATOR_NOT_CONFIGURED")
-        return {"data": {"recovered": runtime.recover_expired()}, "requestId": request.state.request_id}
-
     @router.get("/{job_id}/events")
     def get_job_events(job_id: str, request: Request, limit: int = Query(default=200, ge=1, le=500)) -> dict[str, Any]:
         if repository.get(job_id) is None: raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
         if event_repository is None: return {"data": [], "requestId": request.state.request_id}
         return {"data": [_serialize_event(event) for event in event_repository.list_for_job(job_id, limit)], "requestId": request.state.request_id}
-
-    @router.get("/{job_id}/events/stream")
-    async def stream_job_events(job_id: str, request: Request, last_event_id: str | None = Header(default=None, alias="Last-Event-ID")):
-        if repository.get(job_id) is None: raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
-        if event_repository is None: raise HTTPException(status_code=503, detail="EVENTS_NOT_CONFIGURED")
-        async def generate():
-            cursor=last_event_id
-            idle=0
-            while idle < 150:
-                if await request.is_disconnected(): break
-                events_now=event_repository.list_for_job_after(job_id,cursor,100)
-                if events_now:
-                    for event in events_now:
-                        payload=json.dumps(_serialize_event(event),ensure_ascii=False,separators=(",",":"))
-                        yield f"id: {event.id}\nevent: job\ndata: {payload}\n\n"
-                        cursor=event.id
-                    idle=0
-                else:
-                    yield ": heartbeat\n\n"; idle+=1
-                await asyncio.sleep(2)
-        return StreamingResponse(generate(),media_type="text/event-stream",headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
 
     return router
