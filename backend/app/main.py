@@ -26,7 +26,7 @@ worker_loop = WorkerLoop(orchestrator_runtime, worker_id=worker_id)
 
 
 def _worker_autostart_enabled() -> bool:
-    return os.getenv("AICF_WORKER_AUTOSTART", "false").strip().lower() in {"1", "true", "yes", "on"}
+    return os.getenv("AICF_WORKER_AUTOSTART", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 
 @asynccontextmanager
@@ -39,14 +39,7 @@ async def lifespan(_: FastAPI):
         worker_loop.stop()
 
 
-app = FastAPI(
-    title="AI Content Factory API",
-    version="0.3.0",
-    docs_url="/api/v1/docs",
-    redoc_url="/api/v1/redoc",
-    openapi_url="/api/v1/openapi.json",
-    lifespan=lifespan,
-)
+app = FastAPI(title="AI Content Factory API", version="0.3.0", docs_url="/api/v1/docs", redoc_url="/api/v1/redoc", openapi_url="/api/v1/openapi.json", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -61,18 +54,7 @@ async def request_id_middleware(request: Request, call_next):
 @app.exception_handler(Exception)
 async def unhandled_exception(request: Request, exc: Exception):
     request_id = getattr(request.state, "request_id", "unknown")
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": {
-                "code": "INTERNAL_ERROR",
-                "message": "Internal server error",
-                "details": {},
-                "requestId": request_id,
-            }
-        },
-        headers={"X-Request-Id": request_id},
-    )
+    return JSONResponse(status_code=500, content={"error": {"code": "INTERNAL_ERROR", "message": "Internal server error", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
 
 
 app.include_router(build_project_router(project_repository))
@@ -83,49 +65,21 @@ app.include_router(pipeline_router)
 
 @app.get("/api/v1/health", tags=["system"])
 def health(request: Request) -> dict[str, object]:
-    return {
-        "status": "ok",
-        "data": {"status": "OK", "service": "ai-content-factory-backend"},
-        "requestId": request.state.request_id,
-    }
+    return {"status": "ok", "data": {"status": "OK", "service": "ai-content-factory-backend"}, "requestId": request.state.request_id}
 
 
 @app.get("/api/v1/ready", tags=["system"])
-def readiness(request: Request) -> dict[str, object]:
+def readiness(request: Request):
     try:
         repositories.store.connection.execute("SELECT 1").fetchone()
-        return {
-            "status": "ready",
-            "data": {"status": "READY", "service": "ai-content-factory-backend"},
-            "requestId": request.state.request_id,
-        }
+        return {"status": "ready", "data": {"status": "READY", "service": "ai-content-factory-backend"}, "requestId": request.state.request_id}
     except Exception:
-        return JSONResponse(
-            status_code=503,
-            content={
-                "error": {
-                    "code": "RESOURCE_UNAVAILABLE",
-                    "message": "Required dependencies are not ready",
-                    "details": {},
-                    "requestId": request.state.request_id,
-                }
-            },
-            headers={"X-Request-Id": request.state.request_id},
-        )
+        return JSONResponse(status_code=503, content={"error": {"code": "RESOURCE_UNAVAILABLE", "message": "Required dependencies are not ready", "details": {}, "requestId": request.state.request_id}}, headers={"X-Request-Id": request.state.request_id})
 
 
 @app.get("/api/v1/worker/status", tags=["system"])
-def worker_status(request: Request) -> dict[str, object]:
-    return {
-        "data": {
-            "workerId": worker_loop.worker_id,
-            "running": worker_loop.running,
-            "autostart": _worker_autostart_enabled(),
-            "iterations": worker_loop.iterations,
-            "lastError": worker_loop.last_error,
-        },
-        "requestId": request.state.request_id,
-    }
+def worker_status(request: Request):
+    return {"data": {"workerId": worker_loop.worker_id, "running": worker_loop.running, "autostart": _worker_autostart_enabled(), "iterations": worker_loop.iterations, "lastError": worker_loop.last_error}, "requestId": request.state.request_id}
 
 
 @app.get("/api/v1/readiness", include_in_schema=False)
