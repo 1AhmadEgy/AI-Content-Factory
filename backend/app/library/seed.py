@@ -8,10 +8,11 @@ from ..infrastructure.character_repository import SQLiteCharacterRepository
 from ..infrastructure.location_repository import SQLiteLocationRepository
 from .default_library import DEFAULT_LIBRARY_PROJECT_ID, default_characters, default_locations
 from .egypt_expanded import expanded_characters, expanded_locations
+from .egypt_common import common_characters, common_locations
 
 
 def ensure_egypt_library(repositories) -> dict[str, int]:
-    """Seed built-ins once, without overwriting user edits or deleting local data."""
+    """Seed built-ins additively; never overwrite, delete, or reset user-owned records."""
     if os.getenv("AICF_SEED_DEFAULT_LIBRARY", "true").strip().lower() in {"0", "false", "no", "off"}:
         return {"characters": 0, "locations": 0}
 
@@ -22,7 +23,7 @@ def ensure_egypt_library(repositories) -> dict[str, int]:
             id=DEFAULT_LIBRARY_PROJECT_ID,
             name="مكتبة مصر المحلية",
             description="مكتبة محلية قابلة لإعادة الاستخدام للشخصيات والمواقع والقوالب الجاهزة.",
-            settings={"kind":"reusable-library","country":"Egypt","seedVersion":2},
+            settings={"kind": "reusable-library", "country": "Egypt", "seedVersion": 3},
             created_at=now,
             updated_at=now,
         ))
@@ -32,18 +33,18 @@ def ensure_egypt_library(repositories) -> dict[str, int]:
     added_characters = 0
     added_locations = 0
 
-    # Existing records are deliberately left untouched. This is the key persistence rule.
-    for item in [*default_characters(), *expanded_characters()]:
-        if item.project_id != DEFAULT_LIBRARY_PROJECT_ID:
-            continue
-        if characters.get(item.id) is None:
+    character_items = [*default_characters(), *expanded_characters(), *common_characters()]
+    location_items = [*default_locations(), *expanded_locations(), *common_locations()]
+
+    # IMPORTANT: only missing IDs are inserted. Existing rows are never replaced,
+    # including rows edited by the user after a previous seed.
+    for item in character_items:
+        if item.project_id == DEFAULT_LIBRARY_PROJECT_ID and characters.get(item.id) is None:
             characters.create(item)
             added_characters += 1
 
-    for item in [*default_locations(), *expanded_locations()]:
-        if item.project_id != DEFAULT_LIBRARY_PROJECT_ID:
-            continue
-        if locations.get(item.id) is None:
+    for item in location_items:
+        if item.project_id == DEFAULT_LIBRARY_PROJECT_ID and locations.get(item.id) is None:
             locations.create(item)
             added_locations += 1
 
