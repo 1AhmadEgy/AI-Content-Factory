@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import uuid
 
 from ..domain.asset_repositories import AssetRepository
@@ -29,15 +30,35 @@ class BestTakeWorker(Worker):
         return self._initialized
 
     def execute(self, job: GenerationJob, context: WorkerContext) -> JobExecutionResult:
+        if not self._initialized:
+            return JobExecutionResult(False, error_code="WORKER_NOT_INITIALIZED", error_message="Worker is not initialized")
         candidates = job.input.parameters.get("candidates", [])
         if not isinstance(candidates, list) or not candidates:
             return JobExecutionResult(False, error_code="BEST_TAKE_NO_CANDIDATES", error_message="No candidates supplied")
-        valid = [c for c in candidates if isinstance(c, dict) and self.assets.get(str(c.get("assetId", "")))]
+
+        valid: list[dict[str, object]] = []
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            asset_id = str(candidate.get("assetId", "")).strip()
+            asset = self.assets.get(asset_id) if asset_id else None
+            try:
+                score = float(candidate.get("score", 0))
+            except (TypeError, ValueError):
+                continue
+            if not asset or asset.status is not AssetStatus.READY or asset.project_id != job.project_id:
+                continue
+            if asset.type is not AssetType.VIDEO or not math.isfinite(score):
+                continue
+            valid.append({**candidate, "assetId": asset_id, "score": score})
+
         if not valid:
-            return JobExecutionResult(False, error_code="BEST_TAKE_NO_VALID_CANDIDATES", error_message="No valid candidates")
-        winner = max(valid, key=lambda c: float(c.get("score", 0)))
+            return JobExecutionResult(False, error_code="BEST_TAKE_NO_VALID_CANDIDATES", error_message="No valid video candidates")
+
+        winner = max(valid, key=lambda candidate: float(candidate["score"]))
         winner_id = str(winner["assetId"])
-        decision = {"selectedAssetId": winner_id, "score": float(winner.get("score", 0)), "candidates": valid}
+        winner_score = float(winner["score"])
+        decision = {"selectedAssetId": winner_id, "score": winner_score, "candidates": valid}
         payload = (json.dumps(decision, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
         digest = hashlib.sha256(payload).hexdigest()
         _, path, size = self.storage.put_bytes(payload)
@@ -51,10 +72,15 @@ class BestTakeWorker(Worker):
             size_bytes=size,
             sha256=digest,
             status=AssetStatus.READY,
-            provenance=build_provenance(job, source_asset_ids=[winner_id], metadata={"selectedAssetId": winner_id, "score": float(winner.get("score", 0))}, license_status=LicenseStatus.VERIFIED),
+            provenance=build_provenance(job, source_asset_ids=[winner_id], metadata={"selectedAssetId": winner_id, "score": winner_score}, license_status=LicenseStatus.VERIFIED),
         )
         self.assets.create(asset)
-        return JobExecutionResult(success=True, asset_ids=[winner_id, decision_id], metrics={"score": float(winner.get("score", 0))}, provider_run_id=f"best-take-{job.id}")
+        return JobExecutionResult(
+            success=True,
+            asset_ids=[decision_id],
+            metrics={"score": winner_score, "selectedAssetId": winner_id},
+            provider_run_id=f"best-take-{job.id}",
+        )
 
     def cancel(self, job_id: str) -> None:
         return None
