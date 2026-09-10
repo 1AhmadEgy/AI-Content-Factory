@@ -15,7 +15,7 @@ from ..infrastructure.provider_run_repository import SQLiteProviderRunRepository
 from ..infrastructure.sqlite import SQLiteRepositories
 from ..infrastructure.sqlite_queue import SQLiteJobQueue
 from ..infrastructure.storage import LocalAssetStorage
-from ..library.seed import ensure_egypt_library
+from ..library.seed import ensure_country_library_projects, ensure_egypt_library
 from ..providers.registry import default_provider_registry
 from ..workers.best_take_worker import BestTakeWorker
 from ..workers.media_document_worker import MediaDocumentWorker
@@ -82,7 +82,9 @@ class OrchestratorRuntime:
         self.pipeline = ContentPipelineOrchestrator(JobService(repositories.jobs), self.queue.enqueue)
         self.completion_gate = CompletionGate(self.assets, self.storage)
         self.executor = JobExecutor(repositories.jobs, self.queue, self.workers, self.events.append, self.pipeline.on_completed, completion_gate=self.completion_gate)
-        # Seed only missing built-ins. Existing local records, including user edits, are never replaced.
+        # Create independent metadata records for all registered countries, then
+        # add the complete Egypt built-in content without replacing user edits.
+        self.country_library_seed = ensure_country_library_projects(repositories)
         self.library_seed = ensure_egypt_library(repositories)
 
     def plan_content(self, brief: ContentBrief, model_id: str | None = None) -> StoryPlan:
