@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
 
 from ..application.pipeline import AssetCheckInput, MediaPipelineService
 from ..domain.best_take import TakeCandidate
 from ..domain.timeline import Timeline
 from ..rendering.ffmpeg_renderer import FfmpegRenderer, FfmpegRenderOptions
-from ..rendering.media_artifacts import create_provenance_manifest, extract_thumbnail, sha256_file, write_metadata_sidecar, write_srt
+from ..rendering.media_artifacts import SubtitleCue, create_provenance_manifest, extract_thumbnail, sha256_file, write_metadata_sidecar, write_srt
 from ..rendering.renderer import DeterministicMockRenderer, RenderProfile, Renderer
 
 
@@ -41,7 +42,7 @@ class PipelineRunner:
             return renderer
         return DeterministicMockRenderer()
 
-    def run(self, *, assets: list[AssetCheckInput], candidates: list[TakeCandidate], timeline: Timeline, output_path: str, subtitle_cues: list[object] | None = None, metadata: dict[str, str] | None = None) -> PipelineRunResult:
+    def run(self, *, assets: list[AssetCheckInput], candidates: list[TakeCandidate], timeline: Timeline, output_path: str, subtitle_cues: list[SubtitleCue] | None = None, metadata: dict[str, str] | None = None) -> PipelineRunResult:
         qc_results = {item.asset_id: self.service.qc_asset(item) for item in assets}
         best = self.service.select_take(candidates, qc_results)
         if best is None:
@@ -55,15 +56,18 @@ class PipelineRunner:
 
         renderer: Renderer | None = None
         staging_path: Path | None = None
+        final_path = Path(output_path)
+        profile = RenderProfile()
+        if final_path.exists() and not self.ffmpeg_options.overwrite:
+            return PipelineRunResult(False, best.asset_id, None, ["OUTPUT_EXISTS"])
+
         try:
             renderer = self._renderer()
-            result = self.service.render(renderer, timeline, RenderProfile(), str(Path(output_path).with_suffix(".staging.mp4")))
+            final_path.parent.mkdir(parents=True, exist_ok=True)
+            staging_path = final_path.with_name(f".{final_path.stem}.staging-{uuid4().hex}.mp4")
+            result = self.service.render(renderer, timeline, profile, str(staging_path))
             if not result.success or not result.output_path:
                 return PipelineRunResult(False, best.asset_id, None, [result.error or "RENDER_FAILED"])
-
-            final_path = Path(output_path)
-            final_path.parent.mkdir(parents=True, exist_ok=True)
-            staging_path = Path(result.output_path)
 
             if self.production and isinstance(renderer, FfmpegRenderer):
                 probe = renderer.probe(str(staging_path))
@@ -78,7 +82,7 @@ class PipelineRunner:
             thumb = extract_thumbnail(str(final_path), str(final_path.with_suffix(".jpg")))
             meta = write_metadata_sidecar(str(final_path.with_suffix(".metadata.json")), metadata or {})
             digest = sha256_file(str(final_path))
-            provenance = create_provenance_manifest(str(final_path), timeline_id=timeline.id, timeline_version="1", render_profile=RenderProfile().name, renderer=type(renderer).__name__, renderer_version="1", source_assets=self.assets, qc={"passed": True, "sha256": digest})
+            provenance = create_provenance_manifest(str(final_path), timeline_id=timeline.id, timeline_version="1", render_profile=profile.name, renderer=type(renderer).__name__, renderer_version="1", source_assets=self.assets, qc={"passed": True, "sha256": digest})
             if subtitle_cues:
                 write_srt(subtitle_cues, str(final_path.with_suffix(".srt")))
             return PipelineRunResult(True, best.asset_id, str(final_path), [], thumb, meta, provenance, digest)
