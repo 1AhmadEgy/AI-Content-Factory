@@ -11,7 +11,6 @@ from ..infrastructure.asset_repository import SQLiteAssetRepository
 from ..infrastructure.job_event_repository import SQLiteJobEventRepository
 from ..infrastructure.provider_run_repository import SQLiteProviderRunRepository
 from ..infrastructure.sqlite import SQLiteRepositories
-from ..infrastructure.sqlite_queue import SQLiteJobQueue
 from ..infrastructure.storage import LocalAssetStorage
 from ..providers.registry import default_provider_registry
 from ..workers.best_take_worker import BestTakeWorker
@@ -38,6 +37,7 @@ class OrchestratorRuntime:
         self.assets = SQLiteAssetRepository(repositories.store)
         self.events = SQLiteJobEventRepository(repositories.store)
         self.provider_runs = SQLiteProviderRunRepository(repositories.store)
+        from ..infrastructure.sqlite_queue import SQLiteJobQueue
         self.queue = SQLiteJobQueue(repositories.store, repositories.jobs)
         root = storage_root or os.getenv("AICF_ASSET_ROOT", "./data/assets")
         self.storage = LocalAssetStorage(root)
@@ -46,17 +46,14 @@ class OrchestratorRuntime:
         self.providers = default_provider_registry()
         provider_worker = ProviderGenerationWorker(self.providers, self.storage, self.assets, self.provider_runs)
         provider_worker.initialize()
-        self.workers.register(provider_worker, capabilities={
-            "STORY", "CHARACTER", "WORLD", "SCENE", "SHOT", "IMAGE", "VIDEO", "TTS", "LIPSYNC", "MUSIC", "SFX", "UPSCALE", "INTERPOLATION"
-        }, worker_id="provider-generation")
-        mock = DeterministicMockWorker(self.storage, self.assets)
-        mock.initialize()
-        self.workers.register(mock, capabilities={"IMAGE", "VIDEO", "AUDIO", "DOCUMENT", "SUBTITLE"}, worker_id="mock")
+        self.workers.register(provider_worker, capabilities={"STORY","CHARACTER","WORLD","SCENE","SHOT","IMAGE","VIDEO","TTS","LIPSYNC","MUSIC","SFX","UPSCALE","INTERPOLATION"}, worker_id="provider-generation")
+        mock = DeterministicMockWorker(self.storage, self.assets); mock.initialize()
+        self.workers.register(mock, capabilities={"IMAGE","VIDEO","AUDIO","DOCUMENT","SUBTITLE"}, worker_id="mock")
         qc = QualityControlWorker(self.storage, self.assets); qc.initialize(); self.workers.register(qc, capabilities={"DOCUMENT"}, worker_id="quality-control")
         best_take = BestTakeWorker(self.storage, self.assets); best_take.initialize(); self.workers.register(best_take, capabilities={"DOCUMENT"}, worker_id="best-take")
         timeline = TimelineWorker(self.storage, self.assets); timeline.initialize(); self.workers.register(timeline, capabilities={"DOCUMENT"}, worker_id="timeline")
         render = RenderWorker(self.storage, self.assets); render.initialize(); self.workers.register(render, capabilities={"VIDEO"}, worker_id="render")
-        media = MediaDocumentWorker(self.storage, self.assets); media.initialize(); self.workers.register(media, capabilities={"SUBTITLE", "THUMBNAIL", "METADATA"}, worker_id="media-document")
+        media = MediaDocumentWorker(self.storage, self.assets); media.initialize(); self.workers.register(media, capabilities={"SUBTITLE","THUMBNAIL","METADATA"}, worker_id="media-document")
         publisher = PublishWorker(self.storage, self.assets); publisher.initialize(); self.workers.register(publisher, capabilities={"PUBLISH"}, worker_id="publish")
         repurpose = RepurposeWorker(self.storage, self.assets); repurpose.initialize(); self.workers.register(repurpose, capabilities={"REPURPOSE"}, worker_id="repurpose")
 
@@ -73,15 +70,21 @@ class OrchestratorRuntime:
 
     def execute_next(self, worker_id: str = "auto") -> ExecutionResult | None:
         claimed = self.queue.claim_next(worker_id)
-        if claimed is None:
-            return None
+        if claimed is None: return None
+        job, lease = claimed
+        selected_worker = worker_id if worker_id != "auto" else self.workers.resolve_for_job(job.type)
+        return self.executor.execute_claimed(job, lease, worker_id=selected_worker)
+
+    def execute_job(self, job_id: str, worker_id: str = "auto") -> ExecutionResult | None:
+        """Claim and execute exactly the requested job."""
+        claimed = self.queue.claim_job(job_id, worker_id)
+        if claimed is None: return None
         job, lease = claimed
         selected_worker = worker_id if worker_id != "auto" else self.workers.resolve_for_job(job.type)
         return self.executor.execute_claimed(job, lease, worker_id=selected_worker)
 
     def heartbeat(self, job_id: str, lease_id: str, worker_id: str) -> None:
-        if self.repositories.jobs.get(job_id) is None:
-            raise KeyError("JOB_NOT_FOUND")
+        if self.repositories.jobs.get(job_id) is None: raise KeyError("JOB_NOT_FOUND")
         self.queue.heartbeat(JobLease(job_id=job_id, worker_id=worker_id, lease_id=lease_id, expires_at=""))
 
     def recover_expired(self) -> int:
