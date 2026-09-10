@@ -71,12 +71,14 @@ class OrchestratorRuntime:
         script = self.script_engine.generate(brief, story, model_id)
         return self.scene_planner.plan(brief, script, model_id)
 
-    def execute_next(self, worker_id: str = "mock") -> ExecutionResult | None:
+    def execute_next(self, worker_id: str = "auto") -> ExecutionResult | None:
+        """Claim one job and dispatch it to the correct healthy worker."""
         claimed = self.queue.claim_next(worker_id)
         if claimed is None:
             return None
         job, lease = claimed
-        return self.executor.execute_claimed(job, lease, worker_id=worker_id)
+        selected_worker = worker_id if worker_id != "auto" else self.workers.resolve_for_job(job.type)
+        return self.executor.execute_claimed(job, lease, worker_id=selected_worker)
 
     def heartbeat(self, job_id: str, lease_id: str, worker_id: str) -> None:
         if self.repositories.jobs.get(job_id) is None:
