@@ -116,9 +116,12 @@ class ContentPipelineOrchestrator:
         shots = [j for j in self.job_service.repository.list_by_parent(scene.id) if j.type is JobType.SHOT]
         best = [j for shot in shots for j in self.job_service.repository.list_by_parent(shot.id) if j.type is JobType.BEST_TAKE and j.status is JobStatus.COMPLETED and j.output and j.output.asset_ids]
         if not shots or len(best) < len(shots): return []
-        audio_qcs = [j for a in self.job_service.repository.list_by_parent(scene.id) if a.type in {JobType.TTS, JobType.MUSIC, JobType.SFX} for j in self.job_service.repository.list_by_parent(a.id) if j.type is JobType.QC and j.status is JobStatus.COMPLETED and j.output and j.output.asset_ids]
+        audio_jobs = [j for j in self.job_service.repository.list_by_parent(scene.id) if j.type in {JobType.TTS, JobType.MUSIC, JobType.SFX}]
+        if len(audio_jobs) < 3: return []
+        audio_qcs = [qc for audio in audio_jobs for qc in self.job_service.repository.list_by_parent(audio.id) if qc.type is JobType.QC and qc.status is JobStatus.COMPLETED and qc.output and qc.output.asset_ids]
+        if len(audio_qcs) < len(audio_jobs): return []
         refs = [j.output.asset_ids[0] for j in best]
-        refs.extend(j.output.asset_ids[0] for j in audio_qcs)
+        refs.extend(qc.output.asset_ids[0] for qc in audio_qcs)
         duration_us = int(float(scene.input.parameters.get("scene", {}).get("durationSeconds", 5)) * 1_000_000)
         return [self._enqueue(scene, JobType.TIMELINE, "timeline", f"{scene.id}:timeline", {"durationUs": duration_us, "sceneJobId": scene.id}, 6, refs)]
 
@@ -142,13 +145,14 @@ class ContentPipelineOrchestrator:
             reference_asset_ids=list(reference_asset_ids or []),
             deterministic=parent.input.deterministic,
         )
+        priority = max(parent.priority - priority_offset, 0)
         fingerprint_payload = {
             "parentJobId": parent.id,
             "projectId": parent.project_id,
             "jobType": job_type.value,
             "targetType": target_type,
             "targetId": target_id,
-            "priority": max(parent.priority - priority_offset, 0),
+            "priority": priority,
             "provider": parent.provider,
             "model": parent.model,
             "input": {
@@ -171,7 +175,7 @@ class ContentPipelineOrchestrator:
             target_id=target_id,
             parent_job_id=parent.id,
             input=input_data,
-            priority=fingerprint_payload["priority"],
+            priority=priority,
             max_attempts=3,
             provider=parent.provider,
             model=parent.model,
