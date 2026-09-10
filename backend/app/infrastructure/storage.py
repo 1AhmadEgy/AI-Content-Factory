@@ -11,6 +11,8 @@ from ..domain.assets import Asset
 class LocalAssetStorage:
     """Atomic local filesystem storage keyed by SHA-256 content."""
 
+    _HASH_CHUNK_SIZE = 1024 * 1024
+
     def __init__(self, root: str | Path) -> None:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
@@ -23,10 +25,14 @@ class LocalAssetStorage:
         if not target.exists():
             with NamedTemporaryFile(dir=directory, prefix=f".{digest}.", delete=False) as handle:
                 temporary = Path(handle.name)
-                handle.write(data)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary, target)
+                try:
+                    handle.write(data)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                    os.replace(temporary, target)
+                except BaseException:
+                    temporary.unlink(missing_ok=True)
+                    raise
         return digest, str(target), len(data)
 
     def read_bytes(self, sha256: str) -> bytes:
@@ -45,7 +51,16 @@ class LocalAssetStorage:
             path.unlink()
 
     def verify(self, asset: Asset) -> bool:
-        if not self.exists(asset.sha256):
+        path = self.root / asset.sha256[:2] / asset.sha256
+        if not path.is_file():
             return False
-        data = self.read_bytes(asset.sha256)
-        return len(data) == asset.size_bytes
+        try:
+            if path.stat().st_size != asset.size_bytes:
+                return False
+            digest = hashlib.sha256()
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(self._HASH_CHUNK_SIZE), b""):
+                    digest.update(chunk)
+            return digest.hexdigest() == asset.sha256
+        except OSError:
+            return False
