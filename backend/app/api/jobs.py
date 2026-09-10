@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from ..domain.job_events import JobEvent
 from ..domain.jobs import GenerationJob, JobInput, JobStatus, JobType
 from ..infrastructure.job_event_repository import SQLiteJobEventRepository
+from ..infrastructure.provider_run_repository import SQLiteProviderRunRepository
 from ..infrastructure.sqlite import SQLiteJobRepository
 from ..orchestrator.job_service import JobService
 from ..orchestrator.runtime import OrchestratorRuntime
@@ -43,6 +44,9 @@ def _serialize(job: GenerationJob) -> dict[str, Any]:
 def _serialize_event(event: JobEvent) -> dict[str, Any]:
     return {"id": event.id, "jobId": event.job_id, "projectId": event.project_id, "eventType": event.event_type, "status": event.status, "progress": event.progress, "payload": event.payload, "createdAt": event.created_at.isoformat()}
 
+def _serialize_provider_run(run) -> dict[str, Any]:
+    return {"id": run.id, "jobId": run.job_id, "provider": run.provider, "model": run.model, "status": run.status, "requestMetadata": run.request_metadata, "responseMetadata": run.response_metadata, "startedAt": run.started_at.isoformat(), "completedAt": run.completed_at.isoformat() if run.completed_at else None, "durationMs": run.duration_ms, "errorCode": run.error_code, "createdAt": run.created_at.isoformat()}
+
 def _fingerprint(request: CreateJobRequest) -> str:
     canonical = json.dumps(request.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -50,6 +54,7 @@ def _fingerprint(request: CreateJobRequest) -> str:
 def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime | None = None, events: SQLiteJobEventRepository | None = None) -> APIRouter:
     service = JobService(repository)
     event_repository = events or (SQLiteJobEventRepository(runtime.repositories.store) if runtime else None)
+    provider_runs = runtime.provider_runs if runtime else None
 
     @router.get("")
     def list_jobs(request: Request, project_id: str | None = Query(default=None, alias="projectId"), job_status: JobStatus | None = Query(default=None, alias="status"), limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
@@ -76,6 +81,22 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
         job = repository.get(job_id)
         if job is None: raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
         return {"data": _serialize(job), "requestId": request.state.request_id}
+
+    @router.get("/{job_id}/provider-runs")
+    def get_provider_runs(job_id: str, request: Request, limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
+        if repository.get(job_id) is None: raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
+        if provider_runs is None: raise HTTPException(status_code=503, detail="PROVIDER_RUNS_NOT_CONFIGURED")
+        data = [_serialize_provider_run(run) for run in provider_runs.list_for_job(job_id, limit)]
+        return {"data": data, "meta": {"count": len(data), "limit": limit}, "requestId": request.state.request_id}
+
+    @router.get("/{job_id}/provider-runs/{run_id}")
+    def get_provider_run(job_id: str, run_id: str, request: Request) -> dict[str, Any]:
+        if repository.get(job_id) is None: raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
+        if provider_runs is None: raise HTTPException(status_code=503, detail="PROVIDER_RUNS_NOT_CONFIGURED")
+        try: run = provider_runs.get(run_id)
+        except KeyError as exc: raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+        if run.job_id != job_id: raise HTTPException(status_code=404, detail="PROVIDER_RUN_NOT_FOUND")
+        return {"data": _serialize_provider_run(run), "requestId": request.state.request_id}
 
     @router.post("/{job_id}/cancel")
     def cancel_job(job_id: str, request: Request) -> dict[str, Any]:
