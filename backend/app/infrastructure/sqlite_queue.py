@@ -60,7 +60,7 @@ class SQLiteJobQueue(JobQueue):
                 return None
             return self._claim_id_locked(row["id"], worker_id)
 
-    def _claim_id_locked(self, job_id: str, worker_id: str) -> tuple[GenerationJob, JobLease]:
+    def _claim_id_locked(self, job_id: str, worker_id: str) -> tuple[GenerationJob, JobLease] | None:
         now = datetime.now(timezone.utc)
         expires = now + timedelta(seconds=self.lease_seconds)
         self.store.connection.execute("BEGIN IMMEDIATE")
@@ -70,13 +70,13 @@ class SQLiteJobQueue(JobQueue):
             ).fetchone()
             if row is None:
                 self.store.connection.rollback()
-                return None  # type: ignore[return-value]
+                return None
             existing = self.store.connection.execute(
                 "SELECT 1 FROM job_leases WHERE job_id=?", (job_id,)
             ).fetchone()
             if existing is not None:
                 self.store.connection.rollback()
-                return None  # type: ignore[return-value]
+                return None
             lease = JobLease(job_id, worker_id, str(uuid.uuid4()), expires.isoformat())
             self.store.connection.execute(
                 "INSERT INTO job_leases(job_id,worker_id,lease_id,expires_at,created_at) VALUES(?,?,?,?,?)",
