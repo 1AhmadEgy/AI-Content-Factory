@@ -11,18 +11,16 @@ class SQLiteJobEventRepository:
     def __init__(self, store: SQLiteStore) -> None:
         self.store = store
         with store._lock, store.connection:
-            store.connection.execute(
-                """CREATE TABLE IF NOT EXISTS job_events (
-                    id TEXT PRIMARY KEY,
-                    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
-                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-                    event_type TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    progress REAL NOT NULL,
-                    payload_json TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                )"""
-            )
+            store.connection.execute("""CREATE TABLE IF NOT EXISTS job_events (
+                id TEXT PRIMARY KEY,
+                job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                event_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                progress REAL NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )""")
             store.connection.execute("CREATE INDEX IF NOT EXISTS idx_job_events_job_created ON job_events(job_id, created_at, id)")
 
     def append(self, event: JobEvent) -> JobEvent:
@@ -34,14 +32,20 @@ class SQLiteJobEventRepository:
 
     def list_for_job(self, job_id: str, limit: int = 200) -> list[JobEvent]:
         with self.store._lock:
-            rows = self.store.connection.execute(
-                "SELECT * FROM job_events WHERE job_id=? ORDER BY created_at ASC, id ASC LIMIT ?",
-                (job_id, max(1, min(limit, 1000))),
-            ).fetchall()
-        return [
-            JobEvent(
-                id=row["id"], job_id=row["job_id"], project_id=row["project_id"],
-                event_type=row["event_type"], status=row["status"], progress=row["progress"],
-                payload=json.loads(row["payload_json"]), created_at=_parse_dt(row["created_at"]),
-            ) for row in rows
-        ]
+            rows = self.store.connection.execute("SELECT * FROM job_events WHERE job_id=? ORDER BY created_at ASC, id ASC LIMIT ?", (job_id, max(1, min(limit, 1000)))).fetchall()
+        return [self._event(r) for r in rows]
+
+    def list_for_job_after(self, job_id: str, after_id: str | None = None, limit: int = 100) -> list[JobEvent]:
+        with self.store._lock:
+            if after_id:
+                row=self.store.connection.execute("SELECT created_at,id FROM job_events WHERE id=? AND job_id=?",(after_id,job_id)).fetchone()
+                if row:
+                    rows=self.store.connection.execute("SELECT * FROM job_events WHERE job_id=? AND (created_at>? OR (created_at=? AND id>?)) ORDER BY created_at,id LIMIT ?",(job_id,row["created_at"],row["created_at"],after_id,max(1,min(limit,200)))).fetchall()
+                else: rows=self.store.connection.execute("SELECT * FROM job_events WHERE job_id=? ORDER BY created_at,id LIMIT ?",(job_id,max(1,min(limit,200)))).fetchall()
+            else:
+                rows=self.store.connection.execute("SELECT * FROM job_events WHERE job_id=? ORDER BY created_at,id LIMIT ?",(job_id,max(1,min(limit,200)))).fetchall()
+        return [self._event(r) for r in rows]
+
+    @staticmethod
+    def _event(row) -> JobEvent:
+        return JobEvent(id=row["id"],job_id=row["job_id"],project_id=row["project_id"],event_type=row["event_type"],status=row["status"],progress=row["progress"],payload=json.loads(row["payload_json"]),created_at=_parse_dt(row["created_at"]))
