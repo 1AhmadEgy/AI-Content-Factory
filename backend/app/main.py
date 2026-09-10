@@ -15,6 +15,7 @@ from .api.v1.batches import build_router as build_batch_router
 from .api.v1.best_take import build_router as build_best_take_router
 from .api.v1.content import build_router as build_content_router
 from .api.v1.factory import build_router as build_factory_router
+from .api.v1.library import build_router as build_library_router
 from .api.v1.models import build_router as build_models_router
 from .api.v1.pipeline import router as pipeline_router
 from .api.v1.publishing import build_router as build_publishing_router
@@ -117,6 +118,7 @@ app.include_router(build_job_router(job_repository, runtime=orchestrator_runtime
 app.include_router(build_batch_router(project_repository, job_repository, orchestrator_runtime))
 app.include_router(build_scheduling_router(project_repository, schedule_repository, persistent_scheduler))
 app.include_router(build_factory_router(project_repository, job_repository, orchestrator_runtime))
+app.include_router(build_library_router())
 app.include_router(build_series_router(orchestrator_runtime))
 app.include_router(build_content_router(orchestrator_runtime, job_repository))
 app.include_router(build_assets_router(asset_repository))
