@@ -37,34 +37,61 @@ class SQLiteJobQueue(JobQueue):
     def claim_next(self, worker_id: str) -> tuple[GenerationJob, JobLease] | None:
         if not worker_id.strip():
             raise ValueError("worker_id must not be empty")
+        with self.store._lock:
+            row = self.store.connection.execute(
+                """SELECT j.id FROM jobs j LEFT JOIN job_leases l ON l.job_id = j.id
+                WHERE j.status='QUEUED' AND l.job_id IS NULL
+                ORDER BY j.priority DESC, j.created_at ASC LIMIT 1"""
+            ).fetchone()
+            if row is None:
+                return None
+            return self._claim_id_locked(row["id"], worker_id)
+
+    def claim(self, job_id: str, worker_id: str) -> tuple[GenerationJob, JobLease] | None:
+        if not job_id.strip() or not worker_id.strip():
+            raise ValueError("job_id and worker_id must not be empty")
+        with self.store._lock:
+            row = self.store.connection.execute(
+                """SELECT j.id FROM jobs j LEFT JOIN job_leases l ON l.job_id=j.id
+                WHERE j.id=? AND j.status='QUEUED' AND l.job_id IS NULL""",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._claim_id_locked(row["id"], worker_id)
+
+    def _claim_id_locked(self, job_id: str, worker_id: str) -> tuple[GenerationJob, JobLease]:
         now = datetime.now(timezone.utc)
         expires = now + timedelta(seconds=self.lease_seconds)
-        with self.store._lock:
-            self.store.connection.execute("BEGIN IMMEDIATE")
-            try:
-                row = self.store.connection.execute(
-                    """SELECT j.* FROM jobs j LEFT JOIN job_leases l ON l.job_id = j.id
-                    WHERE j.status = 'QUEUED' AND l.job_id IS NULL
-                    ORDER BY j.priority DESC, j.created_at ASC LIMIT 1"""
-                ).fetchone()
-                if row is None:
-                    self.store.connection.commit()
-                    return None
-                lease = JobLease(row["id"], worker_id, str(uuid.uuid4()), expires.isoformat())
-                self.store.connection.execute(
-                    "INSERT INTO job_leases(job_id,worker_id,lease_id,expires_at,created_at) VALUES(?,?,?,?,?)",
-                    (lease.job_id, lease.worker_id, lease.lease_id, lease.expires_at, now.isoformat()),
-                )
-                updated = self.store.connection.execute(
-                    "UPDATE jobs SET status='RUNNING', attempt=attempt+1, started_at=?, updated_at=? WHERE id=? AND status='QUEUED'",
-                    (now.isoformat(), now.isoformat(), lease.job_id),
-                )
-                if updated.rowcount != 1:
-                    raise RuntimeError("JOB_CLAIM_CONFLICT")
-                self.store.connection.commit()
-            except Exception:
+        self.store.connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.store.connection.execute(
+                "SELECT id FROM jobs WHERE id=? AND status='QUEUED'", (job_id,)
+            ).fetchone()
+            if row is None:
                 self.store.connection.rollback()
-                raise
+                return None  # type: ignore[return-value]
+            existing = self.store.connection.execute(
+                "SELECT 1 FROM job_leases WHERE job_id=?", (job_id,)
+            ).fetchone()
+            if existing is not None:
+                self.store.connection.rollback()
+                return None  # type: ignore[return-value]
+            lease = JobLease(job_id, worker_id, str(uuid.uuid4()), expires.isoformat())
+            self.store.connection.execute(
+                "INSERT INTO job_leases(job_id,worker_id,lease_id,expires_at,created_at) VALUES(?,?,?,?,?)",
+                (lease.job_id, lease.worker_id, lease.lease_id, lease.expires_at, now.isoformat()),
+            )
+            updated = self.store.connection.execute(
+                "UPDATE jobs SET status='RUNNING', attempt=attempt+1, started_at=?, updated_at=? WHERE id=? AND status='QUEUED'",
+                (now.isoformat(), now.isoformat(), lease.job_id),
+            )
+            if updated.rowcount != 1:
+                raise RuntimeError("JOB_CLAIM_CONFLICT")
+            self.store.connection.commit()
+        except Exception:
+            self.store.connection.rollback()
+            raise
         refreshed = self.jobs.get(lease.job_id)
         if refreshed is None:
             raise RuntimeError(f"Claimed job disappeared: {lease.job_id}")
