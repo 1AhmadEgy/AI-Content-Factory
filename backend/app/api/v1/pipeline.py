@@ -19,6 +19,7 @@ class AssetInput(BaseModel):
     readable: bool = True
     size_bytes: int = Field(gt=0)
     license_status: str = "UNKNOWN"
+    path: str | None = None
 
 
 class CandidateInput(BaseModel):
@@ -35,15 +36,17 @@ class PipelineRequest(BaseModel):
     candidates: list[CandidateInput]
     duration_us: int = Field(gt=0)
     output_name: str = "mock-render.mp4"
+    production: bool = True
 
 
 @router.post("/run")
 def run_pipeline(request: PipelineRequest) -> dict[str, object]:
-    assets = [AssetCheckInput(**item.model_dump()) for item in request.assets]
+    assets = [AssetCheckInput(**{key: value for key, value in item.model_dump().items() if key != "path"}) for item in request.assets]
     candidates = [TakeCandidate(**item.model_dump()) for item in request.candidates]
     timeline = Timeline(id=f"timeline-{request.project_id}", project_id=request.project_id, duration_us=request.duration_us)
     output = str(Path(gettempdir()) / "ai-content-factory" / request.output_name)
-    result = PipelineRunner().run(
+    asset_paths = {item.asset_id: item.path for item in request.assets if item.path}
+    result = PipelineRunner(assets=asset_paths, production=request.production).run(
         assets=assets,
         candidates=candidates,
         timeline=timeline,
