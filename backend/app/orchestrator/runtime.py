@@ -17,6 +17,7 @@ from ..workers.best_take_worker import BestTakeWorker
 from ..workers.mock_worker import DeterministicMockWorker
 from ..workers.provider_worker import ProviderGenerationWorker
 from ..workers.qc_worker import QualityControlWorker
+from ..workers.render_worker import RenderWorker
 from ..workers.timeline_worker import TimelineWorker
 from ..workers.registry import WorkerRegistry
 from .content_pipeline import ContentPipelineOrchestrator
@@ -57,6 +58,10 @@ class OrchestratorRuntime:
         timeline = TimelineWorker(self.storage, self.assets)
         timeline.initialize()
         self.workers.register(timeline, capabilities={"DOCUMENT"}, worker_id="timeline")
+
+        render = RenderWorker(self.storage, self.assets)
+        render.initialize()
+        self.workers.register(render, capabilities={"VIDEO"}, worker_id="render")
 
         self.story_engine = AIStoryEngine(self.providers)
         self.script_engine = AIScriptEngine(self.providers)
