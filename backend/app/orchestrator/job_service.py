@@ -26,3 +26,23 @@ class JobService:
         job.error_code = "CANCELLED_BY_USER"
         job.error_message = "Job cancelled by user"
         return self.repository.update(job)
+
+    def retry(self, job_id: str) -> GenerationJob:
+        job = self.repository.get(job_id)
+        if job is None:
+            raise KeyError("JOB_NOT_FOUND")
+        if job.status is JobStatus.COMPLETED:
+            raise ValueError("JOB_ALREADY_COMPLETED")
+        if job.status is JobStatus.CANCELLED:
+            raise ValueError("CANCELLED_JOB_CANNOT_RETRY")
+        if job.status is JobStatus.FAILED:
+            transition(job, JobStatus.RETRYING)
+        elif job.status is not JobStatus.RETRYING:
+            raise ValueError("JOB_NOT_RETRYABLE")
+        job.attempt = 0
+        job.progress = 0.0
+        job.output = None
+        job.error_code = None
+        job.error_message = None
+        transition(job, JobStatus.QUEUED)
+        return self.repository.update(job)
