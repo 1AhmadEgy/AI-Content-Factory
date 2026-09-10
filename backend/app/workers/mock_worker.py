@@ -8,6 +8,7 @@ from ..domain.asset_repositories import AssetRepository
 from ..domain.assets import Asset, AssetProvenance, AssetStatus, AssetType, LicenseStatus
 from ..domain.jobs import GenerationJob
 from ..infrastructure.storage import LocalAssetStorage
+from ..orchestrator.provenance import build_provenance
 from ..orchestrator.queue import JobExecutionResult, Worker, WorkerContext
 
 
@@ -45,14 +46,8 @@ class DeterministicMockWorker(Worker):
             size_bytes=size,
             sha256=digest,
             status=AssetStatus.READY,
-            provenance=AssetProvenance(
-                provider="mock",
-                model="deterministic-fixture-v1",
-                prompt=str(job.input.parameters.get("prompt", "")),
-                seed=job.input.seed,
-                source_asset_ids=list(job.input.reference_asset_ids),
-                job_id=job.id,
-                license_status=LicenseStatus.VERIFIED,
+            provenance=build_provenance(
+                job,
                 metadata={"deterministic": True, "workerType": self.worker_type},
             ),
         )
