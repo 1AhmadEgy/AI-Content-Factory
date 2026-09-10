@@ -10,7 +10,9 @@ from ..infrastructure.sqlite_queue import SQLiteJobQueue
 from ..infrastructure.storage import LocalAssetStorage
 from ..workers.mock_worker import DeterministicMockWorker
 from ..workers.registry import WorkerRegistry
+from .content_pipeline import ContentPipelineOrchestrator
 from .job_executor import ExecutionResult, JobExecutor
+from .job_service import JobService
 from .queue import JobLease
 
 
@@ -28,7 +30,9 @@ class OrchestratorRuntime:
         mock = DeterministicMockWorker(self.storage, self.assets)
         mock.initialize()
         self.workers.register(mock, capabilities={"IMAGE", "VIDEO", "AUDIO", "DOCUMENT", "SUBTITLE"}, worker_id="mock")
-        self.executor = JobExecutor(repositories.jobs, self.queue, self.workers, self.events.append)
+        self.pipeline = ContentPipelineOrchestrator(JobService(repositories.jobs), self.queue.enqueue)
+        self.executor = JobExecutor(repositories.jobs, self.queue, self.workers,
+                                    self.events.append, self.pipeline.on_completed)
 
     def execute_next(self, worker_id: str = "mock") -> ExecutionResult | None:
         claimed = self.queue.claim_next(worker_id)
