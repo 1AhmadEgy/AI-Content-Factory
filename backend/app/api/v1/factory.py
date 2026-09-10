@@ -122,7 +122,11 @@ def build_router(
 
         brief = _brief(request)
         plan = runtime.plan_content(brief, request.model)
-        job = job_service.create(
+        job_input = JobInput(parameters={**request.model_dump(), "plan": _serialize_plan(plan)}, deterministic=request.model is None)
+        job, existing_resource_id = job_service.create_with_idempotency(
+            key=idempotency_key,
+            operation=operation,
+            fingerprint=fingerprint,
             project_id=project_id,
             job_type=JobType.STORY,
             target_type="project",
@@ -130,10 +134,22 @@ def build_router(
             priority=100,
             provider=request.provider or "mock",
             model=request.model or "mock-deterministic",
-            input=JobInput(parameters={**request.model_dump(), "plan": _serialize_plan(plan)}, deterministic=request.model is None),
+            input=job_input,
         )
-        if not store.claim_idempotency(idempotency_key, operation, fingerprint, job.id):
+        if existing_resource_id == "__IDEMPOTENCY_CONFLICT__":
             raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
+        if existing_resource_id:
+            existing_job = jobs.get(existing_resource_id)
+            if existing_job is None:
+                raise HTTPException(status_code=409, detail="IDEMPOTENCY_RESOURCE_MISSING")
+            return {
+                "data": {"projectId": project_id, "jobId": existing_job.id, "stage": existing_job.type.value, "status": existing_job.status.value},
+                "requestId": http_request.state.request_id,
+                "idempotentReplay": True,
+            }
+        if job is None:
+            raise HTTPException(status_code=500, detail="JOB_CREATION_FAILED")
+
         runtime.queue.enqueue(job)
         return {
             "data": {
