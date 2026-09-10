@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import math
+import re
 import shutil
 import subprocess
 import tempfile
@@ -21,6 +23,7 @@ class MediaDocumentWorker(Worker):
     """Offline-first worker for language-aware subtitles, thumbnails, metadata and QC."""
 
     worker_type = "media-document"
+    _VTT_CLOCK = re.compile(r"^(?:(\d{2,}):)?(\d{2}):(\d{2})(?:\.(\d{1,3}))?$")
 
     def __init__(self, storage: LocalAssetStorage, assets: AssetRepository, ffmpeg_binary: str = "ffmpeg", ffprobe_binary: str = "ffprobe", subprocess_timeout_seconds: int = 120) -> None:
         self.storage, self.assets = storage, assets
@@ -67,18 +70,41 @@ class MediaDocumentWorker(Worker):
         self.assets.create(Asset(asset_id, job.project_id, kind, path, mime, size, digest, AssetStatus.READY, build_provenance(job, source_asset_ids=list(job.input.reference_asset_ids), metadata={"worker": self.worker_type}, license_status=LicenseStatus.VERIFIED)))
         return JobExecutionResult(True, [asset_id], {"bytes": size}, f"{self.worker_type}-{job.id}")
 
-    @staticmethod
-    def _vtt_time(value: Any, default: str) -> str:
-        if isinstance(value, (int, float)):
-            total = max(0.0, float(value))
+    @classmethod
+    def _vtt_time(cls, value: Any, default: str) -> str:
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            total = float(value)
+            if not math.isfinite(total) or total < 0:
+                raise ValueError("INVALID_SUBTITLE_TIME")
             hours = int(total // 3600)
             minutes = int((total % 3600) // 60)
             seconds = total % 60
             return f"{hours:02d}:{minutes:02d}:{seconds:06.3f}"
-        text = str(value or default)
+        text = str(value or default).strip()
         if len(text) == 5 and text.count(":") == 1:
-            return "00:" + text + ".000"
-        return text
+            text = "00:" + text + ".000"
+        match = cls._VTT_CLOCK.fullmatch(text)
+        if not match:
+            raise ValueError("INVALID_SUBTITLE_TIME")
+        hours = int(match.group(1) or 0)
+        minutes = int(match.group(2))
+        seconds = int(match.group(3))
+        fraction = match.group(4) or ""
+        if minutes >= 60 or seconds >= 60:
+            raise ValueError("INVALID_SUBTITLE_TIME")
+        milliseconds = int(fraction.ljust(3, "0")) if fraction else 0
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
+
+    @classmethod
+    def _vtt_seconds(cls, value: str) -> float:
+        match = cls._VTT_CLOCK.fullmatch(value)
+        if not match:
+            raise ValueError("INVALID_SUBTITLE_TIME")
+        hours = int(match.group(1) or 0)
+        minutes = int(match.group(2))
+        seconds = int(match.group(3))
+        fraction = int((match.group(4) or "").ljust(3, "0") or 0)
+        return hours * 3600 + minutes * 60 + seconds + fraction / 1000
 
     @classmethod
     def _subtitle(cls, job: GenerationJob) -> bytes:
@@ -90,13 +116,17 @@ class MediaDocumentWorker(Worker):
             if text:
                 cues = [{"text": text, "start": 0, "end": job.input.parameters.get("end", "00:00:05.000")}]
         lines = ["WEBVTT", ""]
-        for index, cue in enumerate(cues, 1):
+        output_index = 1
+        for cue in cues:
             text = str(cue.get("text", "")).strip()
             if not text:
                 continue
             start = cls._vtt_time(cue.get("start", cue.get("startTime")), "00:00:00.000")
             end = cls._vtt_time(cue.get("end", cue.get("endTime")), "00:00:05.000")
-            lines.extend([str(index), f"{start} --> {end}", text, ""])
+            if cls._vtt_seconds(end) <= cls._vtt_seconds(start):
+                raise ValueError("INVALID_SUBTITLE_TIMING")
+            lines.extend([str(output_index), f"{start} --> {end}", text, ""])
+            output_index += 1
         header = f"NOTE language={language}\n\n" if language else ""
         return (header + "\n".join(lines)).encode("utf-8")
 
@@ -113,7 +143,11 @@ class MediaDocumentWorker(Worker):
         source_path = Path(source.path)
         if not source_path.is_file(): return JobExecutionResult(False, error_code="THUMBNAIL_SOURCE_MISSING", error_message=source.path)
         if shutil.which(self.ffmpeg_binary) is None: return JobExecutionResult(False, error_code="FFMPEG_NOT_AVAILABLE", error_message="FFmpeg executable was not found")
-        timestamp = str(job.input.parameters.get("timestamp", "00:00:01"))
+        timestamp = str(job.input.parameters.get("timestamp", "00:00:01")).strip()
+        try:
+            timestamp = self._vtt_time(timestamp, "00:00:01.000")
+        except ValueError:
+            return JobExecutionResult(False, error_code="THUMBNAIL_TIMESTAMP_INVALID", error_message="Invalid thumbnail timestamp")
         with tempfile.TemporaryDirectory(prefix="aicf-media-") as temp:
             output_path = Path(temp) / "thumbnail.jpg"
             try:
@@ -122,7 +156,7 @@ class MediaDocumentWorker(Worker):
                 return JobExecutionResult(False, error_code="THUMBNAIL_TIMEOUT", error_message="FFmpeg thumbnail extraction timed out", retryable=True)
             if completed.returncode != 0 or not output_path.is_file():
                 return JobExecutionResult(False, error_code="THUMBNAIL_GENERATION_FAILED", error_message=completed.stderr.decode("utf-8", errors="replace")[-2000:], retryable=True)
-            digest, path, size = self.storage.put_bytes(output_path.read_bytes())
+            digest, path, size = self.storage.put_file(output_path)
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"thumbnail:{job.id}:{digest}"))
         self.assets.create(Asset(asset_id, job.project_id, AssetType.THUMBNAIL, path, "image/jpeg", size, digest, AssetStatus.READY, build_provenance(job, source_asset_ids=[source.id], metadata={"engine": "ffmpeg", "timestamp": timestamp}, license_status=LicenseStatus.VERIFIED)))
         return JobExecutionResult(True, [asset_id], {"bytes": size, "format": "jpeg", "timestamp": timestamp}, f"thumbnail-{job.id}")
