@@ -5,10 +5,12 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from ...application.translation_pipeline import ContentSegment, TranslationPipeline
 from ...library.series_templates import get_series_template, list_series_templates
 from ...library.continuity import build_episode_context, merge_series_defaults, new_series_context
 from ...library.country_catalog import get_country_library, get_country_languages
 from ...infrastructure.series_context_repository import SQLiteSeriesContextRepository
+from ...infrastructure.translation_repository import SQLiteTranslationRepository
 
 
 class ApplyTemplateRequest(BaseModel):
@@ -22,6 +24,24 @@ class ApplyTemplateRequest(BaseModel):
 
 class ContextPatchRequest(BaseModel):
     context: dict[str, Any]
+
+
+class SeriesTranslationSegment(BaseModel):
+    id: str = Field(min_length=1, max_length=200)
+    text: str = Field(min_length=1)
+    contentType: str = Field(default="dialogue", min_length=1, max_length=50)
+    version: int = Field(default=1, ge=1)
+    context: dict[str, Any] = Field(default_factory=dict)
+    preserveTerms: list[str] = Field(default_factory=list)
+
+
+class SeriesTranslationRequest(BaseModel):
+    segments: list[SeriesTranslationSegment] = Field(min_length=1, max_length=500)
+    targetLanguages: list[str] | None = Field(default=None, max_length=20)
+    provider: str | None = None
+    model: str | None = None
+    translationVersion: int = Field(default=1, ge=1)
+    manualTexts: dict[str, dict[str, str]] = Field(default_factory=dict)
 
 
 def _language_defaults(country_id: str, source_language: str | None, target_languages: list[str], dialect: str | None) -> dict[str, Any]:
@@ -100,6 +120,7 @@ def _validate_context_language(context: dict[str, Any]) -> None:
 def build_router(runtime) -> APIRouter:
     router = APIRouter(prefix="/api/v1/series", tags=["series"])
     repo = SQLiteSeriesContextRepository(runtime.repositories.store)
+    translation_repo = SQLiteTranslationRepository(runtime.repositories.store)
 
     def project_or_404(project_id: str):
         project = runtime.repositories.projects.get(project_id)
@@ -181,6 +202,69 @@ def build_router(runtime) -> APIRouter:
         _validate_context_language(context)
         repo.save(project_id, context)
         return {"data": context, "requestId": request.state.request_id}
+
+    @router.post("/projects/{project_id}/translate")
+    def translate_series(project_id: str, body: SeriesTranslationRequest, request: Request):
+        """Translate series content using the languages, glossary and policy stored on its context."""
+        project_or_404(project_id)
+        context = repo.get(project_id)
+        if context is None:
+            raise HTTPException(404, "SERIES_CONTEXT_NOT_FOUND")
+        _validate_context_language(context)
+
+        source_language = str(context.get("sourceLanguage", ""))
+        configured_targets = [str(item) for item in context.get("targetLanguages", [])]
+        targets = list(dict.fromkeys(body.targetLanguages or configured_targets))
+        allowed = {item["id"] for item in get_country_languages(str(context["countryId"]))}
+        if source_language not in allowed or any(target not in allowed for target in targets):
+            raise HTTPException(400, "LANGUAGE_NOT_SUPPORTED_BY_COUNTRY")
+        if any(target not in configured_targets for target in targets):
+            raise HTTPException(400, "TARGET_LANGUAGE_NOT_ENABLED_FOR_SERIES")
+
+        policy = context.get("translationPolicy") or {}
+        if policy.get("preserveSource") is False:
+            raise HTTPException(409, "SERIES_TRANSLATION_SOURCE_MUST_BE_PRESERVED")
+
+        segments = [
+            ContentSegment(
+                id=item.id,
+                text=item.text,
+                content_type=item.contentType,
+                version=item.version,
+                context={**item.context, "seriesId": project_id, "dialect": context.get("dialect")},
+                preserve_terms=tuple(item.preserveTerms),
+            )
+            for item in body.segments
+        ]
+        output = TranslationPipeline(repository=translation_repo).translate_segments(
+            segments,
+            source_language=source_language,
+            target_languages=targets,
+            glossary=dict(context.get("glossary") or {}),
+            provider=body.provider,
+            model=body.model,
+            manual_texts=body.manualTexts,
+            translation_version=body.translationVersion,
+        )
+        context["translationVersions"] = {
+            **dict(context.get("translationVersions") or {}),
+            str(body.translationVersion): {
+                "sourceLanguage": source_language,
+                "targetLanguages": targets,
+                "segmentCount": len(segments),
+            },
+        }
+        repo.save(project_id, context)
+        return {
+            "data": output["results"],
+            "errors": output["errors"],
+            "sourceLanguage": source_language,
+            "targetLanguages": targets,
+            "translationVersion": body.translationVersion,
+            "sourcePreserved": True,
+            "seriesId": project_id,
+            "requestId": request.state.request_id,
+        }
 
     @router.post("/projects/{project_id}/episodes/{episode_id}/snapshot")
     def create_episode_snapshot(project_id: str, episode_id: str, request: Request):
