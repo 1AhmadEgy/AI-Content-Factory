@@ -3,7 +3,6 @@ package com.example.data.remote
 import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import com.squareup.moshi.Moshi
-import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import java.util.concurrent.TimeUnit
@@ -13,9 +12,9 @@ object NetworkClient {
     // Replace with your actual backend URL or IP when running on physical device or cloud.
     private const val BASE_URL = "http://10.0.2.2:8000/"
 
-    private val moshi = Moshi.Builder()
-        .add(KotlinJsonAdapterFactory())
-        .build()
+    // All current API DTOs use Moshi code generation (@JsonClass(generateAdapter = true)),
+    // so reflection is unnecessary and can be removed from the hot startup path.
+    private val moshi = Moshi.Builder().build()
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
