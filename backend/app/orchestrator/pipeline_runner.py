@@ -6,7 +6,9 @@ from pathlib import Path
 from ..application.pipeline import AssetCheckInput, MediaPipelineService
 from ..domain.best_take import TakeCandidate
 from ..domain.timeline import Timeline
-from ..rendering.renderer import DeterministicMockRenderer, RenderProfile
+from ..rendering.ffmpeg_renderer import FfmpegRenderer, FfmpegRenderOptions
+from ..rendering.media_artifacts import create_provenance_manifest, extract_thumbnail, sha256_file, write_metadata_sidecar, write_srt
+from ..rendering.renderer import DeterministicMockRenderer, RenderProfile, Renderer
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,43 +17,67 @@ class PipelineRunResult:
     best_asset_id: str | None
     rendered_path: str | None
     errors: list[str]
+    thumbnail_path: str | None = None
+    metadata_path: str | None = None
+    provenance_path: str | None = None
+    sha256: str | None = None
 
 
 class PipelineRunner:
-    """Deterministic end-to-end media runner used by mock/offline mode."""
+    """End-to-end media runner. Offline mode is explicit; production mode uses FFmpeg."""
 
-    def __init__(self, service: MediaPipelineService | None = None) -> None:
+    def __init__(self, service: MediaPipelineService | None = None, *, assets: dict[str, str] | None = None, production: bool = True, ffmpeg_options: FfmpegRenderOptions | None = None) -> None:
         self.service = service or MediaPipelineService()
+        self.assets = assets or {}
+        self.production = production
+        self.ffmpeg_options = ffmpeg_options or FfmpegRenderOptions()
 
-    def run(
-        self,
-        *,
-        assets: list[AssetCheckInput],
-        candidates: list[TakeCandidate],
-        timeline: Timeline,
-        output_path: str,
-    ) -> PipelineRunResult:
+    def _renderer(self) -> Renderer:
+        if self.production:
+            renderer = FfmpegRenderer(self.assets, self.ffmpeg_options)
+            health = renderer.health_check()
+            if not health["available"]:
+                raise RuntimeError("FFMPEG_UNAVAILABLE")
+            return renderer
+        return DeterministicMockRenderer()
+
+    def run(self, *, assets: list[AssetCheckInput], candidates: list[TakeCandidate], timeline: Timeline, output_path: str, subtitle_cues: list[object] | None = None, metadata: dict[str, str] | None = None) -> PipelineRunResult:
         qc_results = {item.asset_id: self.service.qc_asset(item) for item in assets}
         best = self.service.select_take(candidates, qc_results)
         if best is None:
-            errors = [
-                finding.code
-                for result in qc_results.values()
-                for finding in result.findings
-                if not result.passed
-            ]
+            errors = [finding.code for result in qc_results.values() for finding in result.findings if not result.passed]
             return PipelineRunResult(False, None, None, errors + ["NO_ELIGIBLE_BEST_TAKE"])
 
-        # Candidate-level failures are expected during best-take selection. A
-        # pipeline run is QC-passing when the selected take itself passed QC;
-        # rejected alternative takes must not invalidate the final result.
         selected_qc = qc_results[best.asset_id]
         selected_errors = [finding.code for finding in selected_qc.findings if not selected_qc.passed]
         if selected_errors or selected_qc.blocked:
             return PipelineRunResult(False, best.asset_id, None, selected_errors or ["SELECTED_TAKE_BLOCKED"])
 
-        renderer = DeterministicMockRenderer()
-        result = self.service.render(renderer, timeline, RenderProfile(), str(Path(output_path)))
-        if not result.success:
-            return PipelineRunResult(False, best.asset_id, None, [result.error or "RENDER_FAILED"])
-        return PipelineRunResult(True, best.asset_id, result.output_path, [])
+        try:
+            renderer = self._renderer()
+            result = self.service.render(renderer, timeline, RenderProfile(), str(Path(output_path).with_suffix(".staging.mp4")))
+            if not result.success or not result.output_path:
+                return PipelineRunResult(False, best.asset_id, None, [result.error or "RENDER_FAILED"])
+
+            final_path = Path(output_path)
+            final_path.parent.mkdir(parents=True, exist_ok=True)
+            staging_path = Path(result.output_path)
+
+            if self.production and isinstance(renderer, FfmpegRenderer):
+                probe = renderer.probe(str(staging_path))
+                streams = probe.get("streams", [])
+                if not streams or not any(s.get("codec_type") == "video" for s in streams):
+                    return PipelineRunResult(False, best.asset_id, None, ["QC_NO_VIDEO_STREAM"])
+                if not any(s.get("codec_type") == "audio" for s in streams):
+                    return PipelineRunResult(False, best.asset_id, None, ["QC_NO_AUDIO_STREAM"])
+
+            staging_path.replace(final_path)
+            thumb = extract_thumbnail(str(final_path), str(final_path.with_suffix(".jpg")))
+            meta = write_metadata_sidecar(str(final_path.with_suffix(".metadata.json")), metadata or {})
+            digest = sha256_file(str(final_path))
+            provenance = create_provenance_manifest(str(final_path), timeline_id=timeline.id, timeline_version="1", render_profile=RenderProfile().name, renderer=type(renderer).__name__, renderer_version="1", source_assets=self.assets, qc={"passed": True, "sha256": digest})
+            if subtitle_cues:
+                write_srt(subtitle_cues, str(final_path.with_suffix(".srt")))
+            return PipelineRunResult(True, best.asset_id, str(final_path), [], thumb, meta, provenance, digest)
+        except Exception as exc:
+            return PipelineRunResult(False, best.asset_id, None, [str(exc)])
