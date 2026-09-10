@@ -117,22 +117,9 @@ class JobExecutor:
 
     def _persist_claimed(self, job: GenerationJob, lease: JobLease) -> None:
         if hasattr(self.jobs, "update_if_current"):
-            self.jobs.update_if_current(job, JobStatus.RUNNING, lease_attempt(job))
+            self.jobs.update_if_current(job, JobStatus.RUNNING, job.attempt)
             return
         self.jobs.update(job)
 
     def _event(self, job: GenerationJob, event_type: str, payload: dict[str, object]) -> None:
         self.emit(JobEvent.create(job.id, job.project_id, event_type, job.status.value, job.progress, payload))
-
-
-def lease_attempt(lease: JobLease) -> int:
-    """Return the attempt encoded by the lease's owning job at execution time.
-
-    The lease contract intentionally contains no mutable job state. The
-    executor stores the claimed attempt on the job object and callers pass
-    the original object, so this helper exists only to keep the persistence
-    guard's call site explicit.
-    """
-    # The attempt is resolved by the caller's current job object through the
-    # repository guard; this placeholder is replaced by the executor helper.
-    raise RuntimeError("JOB_ATTEMPT_NOT_AVAILABLE")
