@@ -7,9 +7,15 @@ from backend.app.orchestrator.queue import WorkerContext
 class Assets:
     def __init__(self):
         self.items = set()
+        self.created = []
 
     def get(self, asset_id):
         return object() if asset_id in self.items else None
+
+    def create(self, asset):
+        self.items.add(asset.id)
+        self.created.append(asset)
+        return asset
 
 
 def test_timeline_worker_builds_valid_manifest(tmp_path):
@@ -27,5 +33,5 @@ def test_timeline_worker_builds_valid_manifest(tmp_path):
     result = worker.execute(job, WorkerContext(worker_id="timeline", lease_id="lease"))
     assert result.success is True
     assert len(result.asset_ids) == 1
-    asset = assets.get(result.asset_ids[0])
-    assert asset is not None
+    assert len(assets.created) == 1
+    assert assets.created[0].type.value == "DOCUMENT"
