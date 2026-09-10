@@ -129,21 +129,23 @@ class JobExecutor:
     def _persist_claimed(self, job: GenerationJob, lease: JobLease) -> bool:
         if not self.queue.is_lease_active(lease):
             return False
-        return self.jobs.update_if_current(job, JobStatus.RUNNING, job.attempt)
+        update_if_current = getattr(self.jobs, "update_if_current", None)
+        if update_if_current is not None:
+            return bool(update_if_current(job, JobStatus.RUNNING, job.attempt))
+        self.jobs.update(job)
+        return True
 
     def _require_persisted(self, job: GenerationJob, lease: JobLease) -> None:
         if not self._persist_claimed(job, lease):
             raise RuntimeError("JOB_LEASE_LOST")
 
     def _notify_completed(self, job: GenerationJob) -> None:
-        """Post-commit hooks must never turn a durable completion into a failure."""
         try:
             self.on_completed(job)
         except Exception:
             logger.exception("Post-completion callback failed for job %s", job.id)
 
     def _event(self, job: GenerationJob, event_type: str, payload: dict[str, object]) -> None:
-        """Observability failures must not break the durable job lifecycle."""
         try:
             self.emit(JobEvent.create(job.id, job.project_id, event_type, job.status.value, job.progress, payload))
         except Exception:
