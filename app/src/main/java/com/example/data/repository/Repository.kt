@@ -3,6 +3,7 @@ package com.example.data.repository
 import android.util.Log
 import com.example.core.model.*
 import com.example.data.local.FactoryDao
+import com.example.data.remote.BackendJob
 import com.example.data.remote.NetworkClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -69,13 +70,32 @@ class Repository(private val dao: FactoryDao) {
         syncJobs()
     }
 
+    private fun BackendJob.toLocalJob(): GenerationJob {
+        fun parseTime(value: String?): Long? = value?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() }
+        return GenerationJob(
+            id = id,
+            jobType = type,
+            targetType = targetType,
+            targetId = targetId,
+            status = runCatching { JobStatus.valueOf(status.uppercase()) }.getOrDefault(JobStatus.FAILED),
+            priority = priority,
+            attempt = attempt,
+            maxAttempts = maxAttempts,
+            provider = provider,
+            model = model,
+            progress = (progress.coerceIn(0.0, 1.0) * 100).toInt(),
+            errorCode = errorCode,
+            errorMessage = errorMessage,
+            createdAt = parseTime(createdAt) ?: System.currentTimeMillis(),
+            startedAt = parseTime(startedAt),
+            completedAt = parseTime(completedAt)
+        )
+    }
+
     suspend fun syncJobs(projectId: String? = null) {
         try {
             val feed = api.listJobs(projectId = projectId, limit = 200)
-            feed.data.forEach { remote ->
-                val local = remote.copy(progress = remote.progress.coerceIn(0, 100))
-                dao.insertJob(local)
-            }
+            feed.data.forEach { dao.insertJob(it.toLocalJob()) }
         } catch (e: Exception) {
             Log.w("Repository", "Job sync unavailable; retaining local state", e)
         }
@@ -83,26 +103,32 @@ class Repository(private val dao: FactoryDao) {
 
     suspend fun cancelJob(jobId: String): GenerationJob? {
         return try {
-            val envelope = api.cancelJob(jobId)
-            val data = envelope["data"]
-            val cancelled = data as? Map<*, *>
-            val status = (cancelled?.get("status") as? String)?.uppercase() ?: "CANCELLED"
-            val current = jobs.value.find { it.id == jobId }
-            current?.copy(status = runCatching { JobStatus.valueOf(status) }.getOrDefault(JobStatus.CANCELLED))?.also { dao.insertJob(it) }
+            val remote = api.cancelJob(jobId).data
+            val local = remote.toLocalJob()
+            dao.insertJob(local)
+            local
         } catch (e: Exception) {
             Log.e("Repository", "cancelJob failed", e)
             null
         }
     }
 
+    suspend fun retryJob(jobId: String): GenerationJob? {
+        return try {
+            val remote = api.retryJob(jobId).data
+            val local = remote.toLocalJob()
+            dao.insertJob(local)
+            local
+        } catch (e: Exception) {
+            Log.e("Repository", "retryJob failed", e)
+            null
+        }
+    }
+
     suspend fun refreshJob(jobId: String) {
         try {
-            val envelope = api.getJob(jobId)
-            val data = envelope["data"] as? Map<*, *> ?: return
-            val current = jobs.value.find { it.id == jobId } ?: return
-            val status = (data["status"] as? String)?.uppercase() ?: current.status.name
-            val progress = ((data["progress"] as? Number)?.toDouble()?.let { (it * 100).toInt() } ?: current.progress).coerceIn(0, 100)
-            dao.insertJob(current.copy(status = runCatching { JobStatus.valueOf(status) }.getOrDefault(current.status), progress = progress))
+            val local = api.getJob(jobId).data.toLocalJob()
+            dao.insertJob(local)
         } catch (e: Exception) { Log.w("Repository", "refreshJob failed", e) }
     }
 }
