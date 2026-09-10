@@ -15,7 +15,7 @@ class TranslationProviderUnavailable(RuntimeError):
 
 
 class TranslationService:
-    """Translation orchestration that never overwrites source content."""
+    """Translate content without overwriting the source."""
 
     def __init__(self, provider: Callable[[TranslationRequest], str] | None = None):
         self._provider = provider
@@ -28,17 +28,27 @@ class TranslationService:
         if request.source_language == request.target_language:
             if manual_text is not None and manual_text != request.text:
                 raise ValueError("IDENTITY_TRANSLATION_MUST_MATCH_SOURCE")
-            return TranslationResult.create(request, request.text, provider="identity", model=model, version=version, manual=False, metadata={"requestedProvider": provider} if provider else {})
-        translated = manual_text if manual_text is not None else (self._provider(request) if self._provider else None)
-        if translated is None:
+            return TranslationResult.create(request, request.text, provider="identity", model=model, version=version, metadata={"sourcePreserved": True})
+
+        if manual_text is not None:
+            if not manual_text.strip():
+                raise ValueError("TRANSLATION_OUTPUT_EMPTY")
+            translated = manual_text
+            used_provider = "manual"
+            is_manual = True
+        elif self._provider is not None:
+            translated = self._provider(request)
+            used_provider = provider or "provider"
+            is_manual = False
+        else:
             raise TranslationProviderUnavailable(_TRANSLATION_CAPABILITY)
+
         translated = self._validate_output(request, translated)
-        metadata = {"requestedProvider": provider} if provider else {}
-        return TranslationResult.create(request, translated, provider=provider or ("manual" if manual_text is not None else "provider"), model=model, version=version, manual=manual_text is not None, metadata=metadata)
+        return TranslationResult.create(request, translated, provider=used_provider, model=model, version=version, manual=is_manual, metadata={"sourcePreserved": True, "sourceVersion": request.source_version, "sourceId": request.source_id, "contentType": request.content_type, "targetLanguage": request.target_language})
 
     @staticmethod
     def _validate_output(request: TranslationRequest, translated: str) -> str:
-        if not translated.strip():
+        if not translated or not translated.strip():
             raise ValueError("TRANSLATION_OUTPUT_EMPTY")
         source_tokens = _PLACEHOLDER.findall(request.text)
         target_tokens = _PLACEHOLDER.findall(translated)
