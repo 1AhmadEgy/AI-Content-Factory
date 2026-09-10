@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from ...domain.characters import CharacterProfile
+from ...domain.locations import LocationProfile
 from ...domain.jobs import JobInput, JobType
 from ...infrastructure.sqlite import SQLiteJobRepository
 from ...orchestrator.job_service import JobService
@@ -19,6 +20,9 @@ class PatchResourceRequest(BaseModel):
 class CharacterWrite(BaseModel):
     projectId:str; name:str=Field(min_length=1,max_length=200); aliases:list[str]=Field(default_factory=list); description:str=""
     personality:dict[str,object]=Field(default_factory=dict); appearance:dict[str,object]=Field(default_factory=dict); voice:dict[str,object]=Field(default_factory=dict); speakingStyle:dict[str,object]=Field(default_factory=dict); visualStyle:dict[str,object]=Field(default_factory=dict); behaviorRules:list[str]=Field(default_factory=list); referenceAssetIds:list[str]=Field(default_factory=list); providerCharacterId:str|None=None; metadata:dict[str,object]=Field(default_factory=dict)
+class LocationWrite(BaseModel):
+    projectId:str; name:str=Field(min_length=1,max_length=200); aliases:list[str]=Field(default_factory=list); description:str=""
+    geography:dict[str,object]=Field(default_factory=dict); architecture:dict[str,object]=Field(default_factory=dict); environment:dict[str,object]=Field(default_factory=dict); visualStyle:dict[str,object]=Field(default_factory=dict); lighting:dict[str,object]=Field(default_factory=dict); weather:dict[str,object]=Field(default_factory=dict); timeOfDay:str|None=None; props:list[str]=Field(default_factory=list); rules:list[str]=Field(default_factory=list); negativeConstraints:list[str]=Field(default_factory=list); referenceAssetIds:list[str]=Field(default_factory=list); providerLocationId:str|None=None; metadata:dict[str,object]=Field(default_factory=dict)
 
 def build_router(runtime:OrchestratorRuntime,jobs:SQLiteJobRepository)->APIRouter:
     router=APIRouter(prefix="/api/v1",tags=["content"]); store=jobs.store
@@ -88,6 +92,7 @@ def build_router(runtime:OrchestratorRuntime,jobs:SQLiteJobRepository)->APIRoute
     def char_data(c): return c.snapshot()|{"createdAt":c.created_at.isoformat(),"updatedAt":c.updated_at.isoformat()}
     @router.post("/characters",status_code=201,tags=["characters"])
     def create_character(body:CharacterWrite,request:Request):
+        if runtime.repositories.projects.get(body.projectId) is None: raise HTTPException(404,"PROJECT_NOT_FOUND")
         now=datetime.now(timezone.utc); c=CharacterProfile(id=f"char_{uuid.uuid4().hex}",project_id=body.projectId,name=body.name.strip(),aliases=tuple(body.aliases),description=body.description,personality=body.personality,appearance=body.appearance,voice=body.voice,speaking_style=body.speakingStyle,visual_style=body.visualStyle,behavior_rules=tuple(body.behaviorRules),reference_asset_ids=tuple(body.referenceAssetIds),provider_character_id=body.providerCharacterId,metadata=body.metadata,created_at=now,updated_at=now)
         return {"data":char_data(runtime.characters.create(c)),"requestId":request.state.request_id}
     @router.get("/characters",tags=["characters"])
@@ -102,10 +107,37 @@ def build_router(runtime:OrchestratorRuntime,jobs:SQLiteJobRepository)->APIRoute
     def update_character(character_id,body:CharacterWrite,request:Request):
         old=runtime.characters.get(character_id)
         if not old: raise HTTPException(404,"CHARACTER_NOT_FOUND")
+        if runtime.repositories.projects.get(body.projectId) is None: raise HTTPException(404,"PROJECT_NOT_FOUND")
         c=CharacterProfile(id=old.id,project_id=body.projectId,name=body.name.strip(),aliases=tuple(body.aliases),description=body.description,personality=body.personality,appearance=body.appearance,voice=body.voice,speaking_style=body.speakingStyle,visual_style=body.visualStyle,behavior_rules=tuple(body.behaviorRules),reference_asset_ids=tuple(body.referenceAssetIds),provider_character_id=body.providerCharacterId,metadata=body.metadata,version=old.version,created_at=old.created_at,updated_at=old.updated_at)
         return {"data":char_data(runtime.characters.update(c)),"requestId":request.state.request_id}
     @router.delete("/characters/{character_id}",tags=["characters"])
     def delete_character(character_id,request:Request):
         if not runtime.characters.delete(character_id): raise HTTPException(404,"CHARACTER_NOT_FOUND")
         return {"data":{"id":character_id,"deleted":True},"requestId":request.state.request_id}
+
+    def location_data(x): return x.snapshot()|{"createdAt":x.created_at.isoformat(),"updatedAt":x.updated_at.isoformat()}
+    @router.post("/locations",status_code=201,tags=["locations"])
+    def create_location(body:LocationWrite,request:Request):
+        if runtime.repositories.projects.get(body.projectId) is None: raise HTTPException(404,"PROJECT_NOT_FOUND")
+        now=datetime.now(timezone.utc); x=LocationProfile(id=f"loc_{uuid.uuid4().hex}",project_id=body.projectId,name=body.name.strip(),aliases=tuple(body.aliases),description=body.description,geography=body.geography,architecture=body.architecture,environment=body.environment,visual_style=body.visualStyle,lighting=body.lighting,weather=body.weather,time_of_day=body.timeOfDay,props=tuple(body.props),rules=tuple(body.rules),negative_constraints=tuple(body.negativeConstraints),reference_asset_ids=tuple(body.referenceAssetIds),provider_location_id=body.providerLocationId,metadata=body.metadata,created_at=now,updated_at=now)
+        return {"data":location_data(runtime.locations.create(x)),"requestId":request.state.request_id}
+    @router.get("/locations",tags=["locations"])
+    def list_locations(request:Request,projectId:str|None=None,q:str|None=None,limit:int=Query(100,ge=1,le=500)):
+        items=runtime.locations.list(project_id=projectId,query=q,limit=limit); return {"data":[location_data(x) for x in items],"meta":{"count":len(items),"limit":limit},"requestId":request.state.request_id}
+    @router.get("/locations/{location_id}",tags=["locations"])
+    def get_location(location_id,request:Request):
+        x=runtime.locations.get(location_id)
+        if not x: raise HTTPException(404,"LOCATION_NOT_FOUND")
+        return {"data":location_data(x),"requestId":request.state.request_id}
+    @router.put("/locations/{location_id}",tags=["locations"])
+    def update_location(location_id,body:LocationWrite,request:Request):
+        old=runtime.locations.get(location_id)
+        if not old: raise HTTPException(404,"LOCATION_NOT_FOUND")
+        if runtime.repositories.projects.get(body.projectId) is None: raise HTTPException(404,"PROJECT_NOT_FOUND")
+        x=LocationProfile(id=old.id,project_id=body.projectId,name=body.name.strip(),aliases=tuple(body.aliases),description=body.description,geography=body.geography,architecture=body.architecture,environment=body.environment,visual_style=body.visualStyle,lighting=body.lighting,weather=body.weather,time_of_day=body.timeOfDay,props=tuple(body.props),rules=tuple(body.rules),negative_constraints=tuple(body.negativeConstraints),reference_asset_ids=tuple(body.referenceAssetIds),provider_location_id=body.providerLocationId,metadata=body.metadata,version=old.version,created_at=old.created_at,updated_at=old.updated_at)
+        return {"data":location_data(runtime.locations.update(x)),"requestId":request.state.request_id}
+    @router.delete("/locations/{location_id}",tags=["locations"])
+    def delete_location(location_id,request:Request):
+        if not runtime.locations.delete(location_id): raise HTTPException(404,"LOCATION_NOT_FOUND")
+        return {"data":{"id":location_id,"deleted":True},"requestId":request.state.request_id}
     return router
