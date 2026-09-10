@@ -1,0 +1,105 @@
+from __future__ import annotations
+
+import uuid
+from typing import Any
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
+
+from ...library.series_templates import get_series_template, list_series_templates
+from ...library.continuity import build_episode_context, merge_series_defaults, new_series_context
+from ...infrastructure.series_context_repository import SQLiteSeriesContextRepository
+
+
+class ApplyTemplateRequest(BaseModel):
+    templateId: str = Field(min_length=1, max_length=100)
+    title: str | None = Field(default=None, max_length=500)
+
+
+class ContextPatchRequest(BaseModel):
+    context: dict[str, Any]
+
+
+def build_router(runtime) -> APIRouter:
+    router = APIRouter(prefix="/api/v1/series", tags=["series"])
+    repo = SQLiteSeriesContextRepository(runtime.repositories.store)
+
+    def project_or_404(project_id: str):
+        project = runtime.repositories.projects.get(project_id)
+        if project is None:
+            raise HTTPException(404, "PROJECT_NOT_FOUND")
+        return project
+
+    @router.get("/templates")
+    def templates(request: Request):
+        return {"data": list_series_templates(), "requestId": request.state.request_id}
+
+    @router.get("/templates/{template_id}")
+    def template(template_id: str, request: Request):
+        value = get_series_template(template_id)
+        if value is None:
+            raise HTTPException(404, "SERIES_TEMPLATE_NOT_FOUND")
+        return {"data": value, "requestId": request.state.request_id}
+
+    @router.post("/projects/{project_id}/apply-template")
+    def apply_template(project_id: str, body: ApplyTemplateRequest, request: Request):
+        project_or_404(project_id)
+        template = get_series_template(body.templateId)
+        if template is None:
+            raise HTTPException(404, "SERIES_TEMPLATE_NOT_FOUND")
+        current = repo.get(project_id)
+        if current is None:
+            context = new_series_context(project_id, body.title or template["name"], body.templateId)
+        else:
+            context = current
+        context = merge_series_defaults(context, template)
+        if body.title:
+            context["title"] = body.title
+        repo.save(project_id, context)
+        return {"data": context, "requestId": request.state.request_id}
+
+    @router.get("/projects/{project_id}/context")
+    def get_context(project_id: str, request: Request):
+        project_or_404(project_id)
+        context = repo.get(project_id)
+        if context is None:
+            raise HTTPException(404, "SERIES_CONTEXT_NOT_FOUND")
+        return {"data": context, "requestId": request.state.request_id}
+
+    @router.patch("/projects/{project_id}/context")
+    def patch_context(project_id: str, body: ContextPatchRequest, request: Request):
+        project_or_404(project_id)
+        current = repo.get(project_id)
+        if current is None:
+            raise HTTPException(404, "SERIES_CONTEXT_NOT_FOUND")
+        # Explicit user edits win; no defaults or historical snapshots are rewritten.
+        context = dict(current)
+        context.update(body.context)
+        context["updatedAt"] = context.get("updatedAt")
+        repo.save(project_id, context)
+        return {"data": context, "requestId": request.state.request_id}
+
+    @router.post("/projects/{project_id}/episodes/{episode_id}/snapshot")
+    def create_episode_snapshot(project_id: str, episode_id: str, request: Request):
+        project_or_404(project_id)
+        episode = runtime.repositories.episodes.get(episode_id)
+        if episode is None or episode.project_id != project_id:
+            raise HTTPException(404, "EPISODE_NOT_FOUND")
+        context = repo.get(project_id)
+        if context is None:
+            raise HTTPException(404, "SERIES_CONTEXT_NOT_FOUND")
+        number = int(context.get("nextEpisodeNumber", 1))
+        episode_context = build_episode_context(context, number)
+        episode_context["episodeId"] = episode_id
+        snapshot = repo.snapshot(project_id, number, episode_context, episode_id)
+        context["nextEpisodeNumber"] = number + 1
+        context["updatedAt"] = snapshot.get("updatedAt", context.get("updatedAt"))
+        context.setdefault("episodeSnapshots", []).append({"episodeNumber": number, "episodeId": episode_id, "context": snapshot})
+        repo.save(project_id, context)
+        return {"data": snapshot, "requestId": request.state.request_id}
+
+    @router.get("/projects/{project_id}/snapshots")
+    def snapshots(project_id: str, request: Request):
+        project_or_404(project_id)
+        return {"data": repo.list_snapshots(project_id), "requestId": request.state.request_id}
+
+    return router
