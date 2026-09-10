@@ -70,19 +70,16 @@ class ContentPipelineOrchestrator:
     def _create_qc_job(self, job: GenerationJob) -> list[GenerationJob]:
         if not job.output or not job.output.asset_ids:
             return []
-        qc = self._enqueue(job, JobType.QC, "qc", f"{job.id}:qc", {"sourceJobId": job.id}, 4)
-        qc.input.reference_asset_ids = list(job.output.asset_ids)
-        return [qc]
+        return [self._enqueue(job, JobType.QC, "qc", f"{job.id}:qc", {"sourceJobId": job.id}, 4, list(job.output.asset_ids))]
 
     def _create_best_take_job(self, job: GenerationJob) -> list[GenerationJob]:
         if not job.input.reference_asset_ids:
             return []
         score = float(job.output.metrics.get("score", 0)) if job.output else 0.0
         candidates = [{"assetId": asset_id, "score": score} for asset_id in job.input.reference_asset_ids]
-        best = self._enqueue(job, JobType.BEST_TAKE, "best_take", f"{job.id}:best-take", {"candidates": candidates, "qcJobId": job.id}, 5)
-        return [best]
+        return [self._enqueue(job, JobType.BEST_TAKE, "best_take", f"{job.id}:best-take", {"candidates": candidates, "qcJobId": job.id}, 5)]
 
-    def _enqueue(self, parent: GenerationJob, job_type: JobType, target_type: str, target_id: str, parameters: dict[str, object], priority_offset: int) -> GenerationJob:
+    def _enqueue(self, parent: GenerationJob, job_type: JobType, target_type: str, target_id: str, parameters: dict[str, object], priority_offset: int, reference_asset_ids: list[str] | None = None) -> GenerationJob:
         child = self.job_service.create(
             project_id=parent.project_id,
             job_type=job_type,
@@ -92,7 +89,7 @@ class ContentPipelineOrchestrator:
             priority=max(parent.priority - priority_offset, 0),
             provider=parent.provider,
             model=parent.model,
-            input=JobInput(parameters=parameters, deterministic=parent.input.deterministic),
+            input=JobInput(parameters=parameters, reference_asset_ids=list(reference_asset_ids or []), deterministic=parent.input.deterministic),
         )
         self.enqueue(child)
         return child
