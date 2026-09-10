@@ -37,6 +37,8 @@ CREATE INDEX IF NOT EXISTS idx_translations_source_target
   ON translations(source_id, target_language, version, created_at);
 CREATE INDEX IF NOT EXISTS idx_translations_fingerprint
   ON translations(source_fingerprint);
+CREATE INDEX IF NOT EXISTS idx_translations_current
+  ON translations(source_fingerprint, manual DESC, version DESC, created_at DESC);
 
 ALTER TABLE translations ENABLE ROW LEVEL SECURITY;
 -- Translation rows are immutable history. If project-scoped ownership is introduced later,
