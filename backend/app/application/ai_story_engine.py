@@ -30,9 +30,23 @@ class AIStoryEngine:
         if data is None:
             return self.fallback.plan(brief)
         try:
-            return _story_from_dict(data)
+            story = _story_from_dict(data)
+            _validate_identity_scope(story, characters, locations)
+            return story
         except (KeyError, TypeError, ValueError):
             return self.fallback.plan(brief)
+
+
+def _validate_identity_scope(story: StoryPlan, characters: tuple[CharacterProfile, ...], locations: tuple[LocationProfile, ...]) -> None:
+    """Reject provider output that references identities outside the supplied library scope."""
+    allowed_characters = {c.id for c in characters}
+    allowed_locations = {l.id for l in locations}
+    for scene in story.scenes:
+        for shot in scene.shots:
+            unknown_characters = set(shot.character_ids) - allowed_characters
+            unknown_locations = set(shot.location_ids) - allowed_locations
+            if unknown_characters or unknown_locations:
+                raise ValueError("story references identities outside the selected library scope")
 
 
 def _story_prompt(brief: ContentBrief, characters: tuple[CharacterProfile, ...], locations: tuple[LocationProfile, ...]) -> str:
@@ -57,6 +71,8 @@ def _story_prompt(brief: ContentBrief, characters: tuple[CharacterProfile, ...],
         "Create a coherent production-ready story for the selected country/library. Use local cultural context only from "
         "the supplied project/library context; do not invent a different country. Reuse supplied saved characters and "
         "locations exactly; never redesign character identity or location architecture/visual identity unless explicitly requested. "
+        "Only use character IDs and location IDs appearing in the supplied lists. Never create, guess, substitute, or import IDs. "
+        "If no saved identity exists, leave its corresponding ID list empty rather than inventing one. "
         "Required keys: title, logline, synopsis, scenes. Each scene requires number,title,duration_seconds,visual,"
         "narration,shots. Each shot requires number,prompt,duration_seconds,camera,lighting,style,character_ids,location_ids. "
         f"CountryId={brief.country_id}; LibraryId={brief.library_id}; Language={brief.language}; Dialect={brief.dialect or 'default'}; "
