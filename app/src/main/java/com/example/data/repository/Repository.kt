@@ -42,6 +42,7 @@ class Repository(private val dao: FactoryDao) {
                 dao.insertEpisode(episode)
                 dao.insertScene(Scene(episodeId = episode.id, number = 1, description = "A character enters the room surprised", location = "Living Room", emotion = "Surprise"))
                 dao.insertScene(Scene(episodeId = episode.id, number = 2, description = "Character finds a mysterious box", location = "Living Room", emotion = "Curiosity"))
+                snapshotEpisodeContext(series.projectId, episode.id)
             }
             syncJobs()
         }
@@ -57,13 +58,18 @@ class Repository(private val dao: FactoryDao) {
     }
 
     suspend fun addSeries(projectId: String, title: String) {
-        // Series are currently local-first; the backend has no series endpoint.
         dao.insertSeries(Series(projectId = projectId, title = title))
     }
 
     suspend fun addEpisode(seriesId: String, number: Int, title: String) {
-        // Episodes are currently local-first; the backend has no episode endpoint.
-        dao.insertEpisode(Episode(seriesId = seriesId, number = number, title = title))
+        val episode = Episode(seriesId = seriesId, number = number, title = title)
+        dao.insertEpisode(episode)
+        dao.findProjectIdForSeries(seriesId)?.let { projectId -> snapshotEpisodeContext(projectId, episode.id) }
+    }
+
+    private suspend fun snapshotEpisodeContext(projectId: String, episodeId: String) {
+        runCatching { api.snapshotEpisodeContext(projectId, episodeId) }
+            .onFailure { Log.w("Repository", "Episode continuity snapshot unavailable; local episode retained", it) }
     }
 
     suspend fun generateScene(sceneId: String) {
