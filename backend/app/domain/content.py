@@ -13,6 +13,7 @@ class ContentBrief:
     platform: str = "youtube"
     aspect_ratio: str = "16:9"
     character_ids: tuple[str, ...] = ()
+    location_ids: tuple[str, ...] = ()
     continuity_rules: tuple[str, ...] = ()
 
 
@@ -43,3 +44,4 @@ class ShotPlan:
     lighting: str = "natural"
     style: str = "cinematic"
     character_ids: tuple[str, ...] = ()
+    location_ids: tuple[str, ...] = ()
