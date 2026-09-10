@@ -20,6 +20,8 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    env:
+      PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/backend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -29,5 +31,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Install package
         run: python -m pip install -e ".[test]"
+      - name: Verify imports
+        run: python -c "import backend.app.main; import app.main"
       - name: Run tests
         run: python -m pytest -q
