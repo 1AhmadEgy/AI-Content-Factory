@@ -20,6 +20,7 @@ class PublishResult:
     status: str
     external_id: str | None = None
     error: str | None = None
+    payload: Mapping[str, Any] | None = None
 
 
 class PublishingAdapter(ABC):
@@ -36,7 +37,6 @@ class PublishingAdapter(ABC):
 
 
 class DryRunAdapter(PublishingAdapter):
-    """Safe default adapter. Real providers can implement the same contract without touching orchestration."""
     name = "dry-run"
 
     def validate(self, request: PublishRequest) -> list[str]:
@@ -46,12 +46,51 @@ class DryRunAdapter(PublishingAdapter):
         errors = self.validate(request)
         if errors:
             return PublishResult(self.name, "FAILED", error=";".join(errors))
-        return PublishResult(self.name, "DRY_RUN", external_id=f"dry:{request.title}")
+        return PublishResult(self.name, "DRY_RUN", external_id=f"dry:{request.title}", payload={"scheduledAt": request.scheduled_at})
+
+
+class _PlatformAdapter(PublishingAdapter):
+    platform: str
+
+    @property
+    def name(self) -> str:
+        return self.platform
+
+    def validate(self, request: PublishRequest) -> list[str]:
+        errors: list[str] = []
+        if not request.asset_path:
+            errors.append("ASSET_PATH_REQUIRED")
+        if not request.title.strip():
+            errors.append("TITLE_REQUIRED")
+        return errors
+
+    def publish(self, request: PublishRequest) -> PublishResult:
+        errors = self.validate(request)
+        if errors:
+            return PublishResult(self.name, "FAILED", error=";".join(errors))
+        return PublishResult(self.name, "READY", external_id=None, payload={"assetPath": request.asset_path, "title": request.title, "description": request.description, "scheduledAt": request.scheduled_at, "metadata": dict(request.metadata or {})})
+
+
+class YouTubeAdapter(_PlatformAdapter):
+    platform = "youtube"
+
+
+class TikTokAdapter(_PlatformAdapter):
+    platform = "tiktok"
+
+
+class InstagramAdapter(_PlatformAdapter):
+    platform = "instagram"
+
+
+class FacebookAdapter(_PlatformAdapter):
+    platform = "facebook"
 
 
 class AdapterRegistry:
     def __init__(self, adapters: list[PublishingAdapter] | None = None):
-        self._adapters = {a.name: a for a in (adapters or [DryRunAdapter()])}
+        defaults = [DryRunAdapter(), YouTubeAdapter(), TikTokAdapter(), InstagramAdapter(), FacebookAdapter()]
+        self._adapters = {a.name: a for a in (adapters or defaults)}
 
     def register(self, adapter: PublishingAdapter) -> None:
         self._adapters[adapter.name] = adapter
