@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..domain.job_events import JobEvent
@@ -81,6 +83,29 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
         except KeyError as exc: raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
         return {"data": _serialize(job), "requestId": request.state.request_id}
 
+    @router.post("/{job_id}/pause")
+    def pause_job(job_id: str, request: Request) -> dict[str, Any]:
+        try: job=service.pause(job_id)
+        except KeyError as exc: raise HTTPException(404,str(exc.args[0])) from exc
+        except ValueError as exc: raise HTTPException(409,str(exc)) from exc
+        return {"data":_serialize(job),"requestId":request.state.request_id}
+
+    @router.post("/{job_id}/resume")
+    def resume_job(job_id: str, request: Request) -> dict[str, Any]:
+        try: job=service.resume(job_id)
+        except KeyError as exc: raise HTTPException(404,str(exc.args[0])) from exc
+        except ValueError as exc: raise HTTPException(409,str(exc)) from exc
+        if runtime: runtime.queue.enqueue(job)
+        return {"data":_serialize(job),"requestId":request.state.request_id}
+
+    @router.post("/{job_id}/retry")
+    def retry_job(job_id: str, request: Request) -> dict[str, Any]:
+        try: job=service.retry(job_id)
+        except KeyError as exc: raise HTTPException(404,str(exc.args[0])) from exc
+        except ValueError as exc: raise HTTPException(409,str(exc)) from exc
+        if runtime: runtime.queue.enqueue(job)
+        return {"data":_serialize(job),"requestId":request.state.request_id}
+
     @router.post("/{job_id}/execute")
     def execute_job(job_id: str, request: Request) -> dict[str, Any]:
         if runtime is None: raise HTTPException(status_code=503, detail="ORCHESTRATOR_NOT_CONFIGURED")
@@ -106,5 +131,26 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
         if repository.get(job_id) is None: raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
         if event_repository is None: return {"data": [], "requestId": request.state.request_id}
         return {"data": [_serialize_event(event) for event in event_repository.list_for_job(job_id, limit)], "requestId": request.state.request_id}
+
+    @router.get("/{job_id}/events/stream")
+    async def stream_job_events(job_id: str, request: Request, last_event_id: str | None = Header(default=None, alias="Last-Event-ID")):
+        if repository.get(job_id) is None: raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
+        if event_repository is None: raise HTTPException(status_code=503, detail="EVENTS_NOT_CONFIGURED")
+        async def generate():
+            cursor=last_event_id
+            idle=0
+            while idle < 150:
+                if await request.is_disconnected(): break
+                events_now=event_repository.list_for_job_after(job_id,cursor,100)
+                if events_now:
+                    for event in events_now:
+                        payload=json.dumps(_serialize_event(event),ensure_ascii=False,separators=(",",":"))
+                        yield f"id: {event.id}\nevent: job\ndata: {payload}\n\n"
+                        cursor=event.id
+                    idle=0
+                else:
+                    yield ": heartbeat\n\n"; idle+=1
+                await asyncio.sleep(2)
+        return StreamingResponse(generate(),media_type="text/event-stream",headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
 
     return router
