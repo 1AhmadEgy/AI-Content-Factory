@@ -83,13 +83,10 @@ class ContentPipelineOrchestrator:
             for spec in (
                 self.generation_planner.image(brief, scene, shot, take),
                 self.generation_planner.video(brief, scene, shot, take),
-                self.generation_planner.tts(brief, scene),
             ):
-                target = {JobType.IMAGE: "image", JobType.VIDEO: "video", JobType.TTS: "voice"}[spec.job_type]
-                params = {"shot": shot_data, "scene": scene_data, "shotJobId": job.id, "shotNumber": shot.number, "takeCount": count, "takeNumber": take}
-                params.update({"generationSpec": {"prompt": spec.prompt, "negative_prompt": spec.negative_prompt, "duration_seconds": spec.duration_seconds, "parameters": spec.parameters or {}}})
-                child = self._enqueue(job, spec.job_type, target, f"{job.id}:{target}:take:{take}", params, 3)
-                created.append(child)
+                target = {JobType.IMAGE: "image", JobType.VIDEO: "video"}[spec.job_type]
+                params = {"shot": shot_data, "scene": scene_data, "shotJobId": job.id, "shotNumber": shot.number, "takeCount": count, "takeNumber": take, "generationSpec": {"prompt": spec.prompt, "negative_prompt": spec.negative_prompt, "duration_seconds": spec.duration_seconds, "parameters": spec.parameters or {}}}
+                created.append(self._enqueue(job, spec.job_type, target, f"{job.id}:{target}:take:{take}", params, 3))
         return created
 
     def _create_qc_job(self, job: GenerationJob) -> list[GenerationJob]:
@@ -112,7 +109,7 @@ class ContentPipelineOrchestrator:
     def _create_render_job(self, job: GenerationJob) -> list[GenerationJob]:
         if not job.output or not job.output.asset_ids:
             return []
-        return [self._enqueue(job, JobType.RENDER, "render", {"resolution": job.input.parameters.get("resolution", "1080p"), "aspectRatio": job.input.parameters.get("aspectRatio", "16:9"), "fps": job.input.parameters.get("fps", 30)}, 7, [job.output.asset_ids[0]])]
+        return [self._enqueue(job, JobType.RENDER, "render", f"{job.id}:render", {"resolution": job.input.parameters.get("resolution", "1080p"), "aspectRatio": job.input.parameters.get("aspectRatio", "16:9"), "fps": job.input.parameters.get("fps", 30)}, 7, [job.output.asset_ids[0]])]
 
     def _create_final_qc_job(self, job: GenerationJob) -> list[GenerationJob]:
         if not job.output or not job.output.asset_ids:
