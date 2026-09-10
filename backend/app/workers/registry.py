@@ -32,7 +32,7 @@ class WorkerRegistry:
 
     def resolve_for_job(self, job_type: JobType | str) -> str:
         name = job_type.value if isinstance(job_type, JobType) else str(job_type)
-        specialized = {"QC": "quality-control", "BEST_TAKE": "best-take", "TIMELINE": "timeline", "RENDER": "render", "SUBTITLE": "media-document", "THUMBNAIL": "media-document", "METADATA": "media-document", "PUBLISH": "publish", "REPURPOSE": "repurpose"}
+        specialized = {"QC": "quality-control", "BEST_TAKE": "best-take", "TIMELINE": "timeline", "RENDER": "render", "LANGUAGE_PACK": "language-pack", "SUBTITLE": "media-document", "THUMBNAIL": "media-document", "METADATA": "media-document", "PUBLISH": "publish", "REPURPOSE": "repurpose"}
         worker_id = specialized.get(name)
         if worker_id:
             descriptor = self._workers.get(worker_id)
@@ -44,7 +44,6 @@ class WorkerRegistry:
         descriptor = self._workers.get("provider-generation")
         if descriptor is not None and descriptor.worker.health_check() and name in descriptor.capabilities:
             return "provider-generation"
-        # Do not silently route unsupported work to a mock worker.
         candidates = self.find(name)
         for worker_id, descriptor in self._workers.items():
             if descriptor.worker in candidates:
