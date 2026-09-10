@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from .api.jobs import build_router as build_job_router
 from .api.projects import build_router as build_project_router
+from .api.v1.factory import build_router as build_factory_router
 from .api.v1.pipeline import router as pipeline_router
 from .infrastructure.sqlite import SQLiteJobRepository, SQLiteProjectRepository, SQLiteRepositories
 from .orchestrator.runtime import OrchestratorRuntime
@@ -21,7 +22,7 @@ orchestrator_runtime = OrchestratorRuntime(repositories)
 
 app = FastAPI(
     title="AI Content Factory API",
-    version="0.1.0",
+    version="0.2.0",
     docs_url="/api/v1/docs",
     redoc_url="/api/v1/redoc",
     openapi_url="/api/v1/openapi.json",
@@ -56,6 +57,7 @@ async def unhandled_exception(request: Request, exc: Exception):
 
 app.include_router(build_project_router(project_repository))
 app.include_router(build_job_router(job_repository, runtime=orchestrator_runtime, events=orchestrator_runtime.events))
+app.include_router(build_factory_router(project_repository, job_repository, orchestrator_runtime))
 app.include_router(pipeline_router)
 
 
@@ -84,7 +86,6 @@ def readiness(request: Request) -> JSONResponse | dict[str, object]:
         )
 
 
-# Backward-compatible alias during migration.
 @app.get("/api/v1/readiness", include_in_schema=False)
 def readiness_alias(request: Request):
     return readiness(request)
