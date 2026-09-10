@@ -24,6 +24,8 @@ class ContentPipelineOrchestrator:
             return self._create_best_take_job(job)
         if job.type is JobType.BEST_TAKE:
             return self._create_timeline_job(job)
+        if job.type is JobType.TIMELINE:
+            return self._create_render_job(job)
         return []
 
     def _create_scene_jobs(self, job: GenerationJob) -> list[GenerationJob]:
@@ -86,6 +88,16 @@ class ContentPipelineOrchestrator:
             return []
         selected_asset_id = job.output.asset_ids[0]
         return [self._enqueue(job, JobType.TIMELINE, "timeline", f"{job.id}:timeline", {"sourceBestTakeJobId": job.id}, 6, [selected_asset_id])]
+
+    def _create_render_job(self, job: GenerationJob) -> list[GenerationJob]:
+        if not job.output or not job.output.asset_ids:
+            return []
+        parameters = {
+            "resolution": job.input.parameters.get("resolution", "1080p"),
+            "aspectRatio": job.input.parameters.get("aspectRatio", "16:9"),
+            "fps": job.input.parameters.get("fps", 30),
+        }
+        return [self._enqueue(job, JobType.RENDER, "render", f"{job.id}:render", parameters, 7, [job.output.asset_ids[0]])]
 
     def _enqueue(self, parent: GenerationJob, job_type: JobType, target_type: str, target_id: str, parameters: dict[str, object], priority_offset: int, reference_asset_ids: list[str] | None = None) -> GenerationJob:
         child = self.job_service.create(
