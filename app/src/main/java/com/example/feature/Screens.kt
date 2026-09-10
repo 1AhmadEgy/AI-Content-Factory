@@ -92,7 +92,8 @@ fun ProjectDetailScreen(
     projectId: String,
     viewModel: FactoryViewModel,
     onBack: () -> Unit,
-    onSeriesClick: (String) -> Unit
+    onSeriesClick: (String) -> Unit,
+    onSeriesControlClick: () -> Unit,
 ) {
     val projects by viewModel.projects.collectAsState()
     val allSeries by viewModel.series.collectAsState()
@@ -109,6 +110,9 @@ fun ProjectDetailScreen(
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextLight)
                     }
+                },
+                actions = {
+                    TextButton(onClick = onSeriesControlClick) { Text("Series Control", color = PrimaryCyan) }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkBlue)
             )
@@ -146,7 +150,7 @@ fun ProjectDetailScreen(
         }
         
         if (showDialog) {
-            AddProjectDialog( // Reusing simplified dialog
+            AddProjectDialog(
                 onDismiss = { showDialog = false },
                 onAdd = { name, _ ->
                     viewModel.addSeries(projectId, name)
@@ -238,7 +242,7 @@ fun EpisodeDetailScreen(
     
     val episode = allEpisodes.find { it.id == episodeId }
     val scenes = allScenes.filter { it.episodeId == episodeId }.sortedBy { it.number }
-
+    
     Scaffold(
         topBar = {
             TopAppBar(
@@ -259,52 +263,31 @@ fun EpisodeDetailScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
-                Text("Scenes (Production Plan)", style = MaterialTheme.typography.titleMedium, color = PrimaryCyan)
-                Spacer(modifier = Modifier.height(8.dp))
+                Text("Scenes", style = MaterialTheme.typography.titleMedium, color = PrimaryCyan)
             }
             items(scenes) { scene ->
-                val sceneJobs = allJobs.filter { it.targetId == scene.id }
-                val latestJob = sceneJobs.maxByOrNull { it.id } // Simplification
-
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = SurfaceBlue)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
+                val job = allJobs.find { it.targetId == scene.id }
+                Card(colors = CardDefaults.cardColors(containerColor = SurfaceBlue), modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(14.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Badge(containerColor = SecondaryTeal) { Text("Scene ${scene.number}") }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(scene.location ?: "Unknown Location", style = MaterialTheme.typography.labelLarge, color = TextMuted)
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(scene.description, style = MaterialTheme.typography.bodyLarge, color = TextLight)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                            Text("Status: ${scene.status}", color = when(scene.status) {
-                                "APPROVED" -> SuccessGreen
-                                "VIDEO_PENDING" -> WarningOrange
-                                else -> TextMuted
+                            Text("Scene ${scene.number}", style = MaterialTheme.typography.titleMedium, color = TextLight)
+                            Spacer(Modifier.weight(1f))
+                            Text(scene.status, color = when (scene.status) {
+                                "DONE" -> SuccessGreen
+                                "FAILED" -> ErrorRed
+                                else -> WarningOrange
                             })
-                            
-                            Button(
-                                onClick = { viewModel.generateScene(scene.id) },
-                                colors = ButtonDefaults.buttonColors(containerColor = PrimaryCyan),
-                                enabled = scene.status != "VIDEO_PENDING"
-                            ) {
-                                Icon(Icons.Filled.PlayArrow, contentDescription = "Generate", tint = DarkBlue)
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Generate", color = DarkBlue)
-                            }
                         }
-                        
-                        if (latestJob != null && latestJob.status == JobStatus.RUNNING) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            LinearProgressIndicator(
-                                progress = { latestJob.progress / 100f },
-                                modifier = Modifier.fillMaxWidth(),
-                                color = PrimaryCyan
-                            )
+                        Spacer(Modifier.height(6.dp))
+                        Text(scene.description, color = TextMuted)
+                        Text("Location: ${scene.location}", color = TextMuted)
+                        Text("Emotion: ${scene.emotion}", color = TextMuted)
+                        job?.let { Text("Job: ${it.status} · ${it.progress}%", color = PrimaryCyan) }
+                        Spacer(Modifier.height(8.dp))
+                        Button(onClick = { viewModel.generateScene(scene.id) }) {
+                            Icon(Icons.Filled.PlayArrow, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Generate")
                         }
                     }
                 }
@@ -314,93 +297,21 @@ fun EpisodeDetailScreen(
 }
 
 @Composable
-fun QueueScreen(viewModel: FactoryViewModel) {
-    val jobs by viewModel.jobs.collectAsState()
-
-    Scaffold(
-        containerColor = DarkBlue
-    ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            item {
-                Text("Render & Generation Queue", style = MaterialTheme.typography.headlineSmall, color = PrimaryCyan, fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-            items(jobs.reversed()) { job ->
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = SurfaceBlue)
-                ) {
-                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        when (job.status) {
-                            JobStatus.COMPLETED -> Icon(Icons.Filled.CheckCircle, "Done", tint = SuccessGreen, modifier = Modifier.size(32.dp))
-                            JobStatus.RUNNING, JobStatus.RETRYING -> Icon(Icons.Filled.Autorenew, "Running", tint = PrimaryCyan, modifier = Modifier.size(32.dp))
-                            JobStatus.QUEUED, JobStatus.CREATED, JobStatus.PAUSED -> Icon(Icons.Filled.Autorenew, "Queued/Paused", tint = TextMuted, modifier = Modifier.size(32.dp))
-                            JobStatus.FAILED, JobStatus.CANCELLED -> Icon(Icons.Filled.Autorenew, "Failed/Cancelled", tint = WarningOrange, modifier = Modifier.size(32.dp))
-                        }
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(job.jobType, style = MaterialTheme.typography.titleMedium, color = TextLight)
-                            Text("Target: ${job.targetType}", style = MaterialTheme.typography.bodySmall, color = TextMuted)
-                            if (job.status == JobStatus.RUNNING) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                LinearProgressIndicator(
-                                    progress = { job.progress / 100f },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    color = PrimaryCyan
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun AddProjectDialog(
-    onDismiss: () -> Unit,
-    onAdd: (String, String) -> Unit
-) {
+fun AddProjectDialog(onDismiss: () -> Unit, onAdd: (String, String) -> Unit) {
     var name by remember { mutableStateOf("") }
-    var desc by remember { mutableStateOf("") }
-
+    var description by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = SurfaceBlue,
-        title = { Text("New Item", color = TextLight) },
+        title = { Text("Create") },
         text = {
-            Column {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Name") },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = TextLight, unfocusedTextColor = TextLight,
-                        focusedBorderColor = PrimaryCyan, unfocusedBorderColor = TextMuted
-                    )
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = desc,
-                    onValueChange = { desc = it },
-                    label = { Text("Description (Optional)") },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = TextLight, unfocusedTextColor = TextLight,
-                        focusedBorderColor = PrimaryCyan, unfocusedBorderColor = TextMuted
-                    )
-                )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") })
+                OutlinedTextField(value = description, onValueChange = { description = it }, label = { Text("Description") })
             }
         },
         confirmButton = {
-            TextButton(onClick = { onAdd(name, desc) }) { Text("Create", color = PrimaryCyan) }
+            Button(onClick = { if (name.isNotBlank()) onAdd(name.trim(), description.trim()) }) { Text("Create") }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel", color = TextMuted) }
-        }
+        dismissButton = { OutlinedButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
