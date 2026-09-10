@@ -57,13 +57,7 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
     event_repository = events or (SQLiteJobEventRepository(runtime.repositories.store) if runtime else None)
 
     @router.get("")
-    def list_jobs(
-        request: Request,
-        project_id: str | None = Query(default=None, alias="projectId"),
-        job_status: str | None = Query(default=None, alias="status"),
-        limit: int = Query(default=50, ge=1, le=200),
-    ) -> dict[str, Any]:
-        """Read-only Control Center feed. Never exposes raw database rows."""
+    def list_jobs(request: Request, project_id: str | None = Query(default=None, alias="projectId"), job_status: str | None = Query(default=None, alias="status"), limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
         clauses: list[str] = []
         params: list[Any] = []
         if project_id:
@@ -73,74 +67,92 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
             clauses.append("status = ?")
             params.append(job_status.upper())
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-        rows = repository.store.connection.execute(
-            f"SELECT * FROM jobs{where} ORDER BY created_at DESC LIMIT ?", (*params, limit)
-        ).fetchall()
-        jobs = [repository._job_from_row(row) if hasattr(repository, "_job_from_row") else None for row in rows]
-        # Keep reconstruction in the repository boundary when possible; this
-        # fallback uses the same canonical serializer source through get().
+        rows = repository.store.connection.execute(f"SELECT * FROM jobs{where} ORDER BY created_at DESC LIMIT ?", (*params, limit)).fetchall()
         data = [_serialize(repository.get(row["id"])) for row in rows]
         return {"data": data, "meta": {"count": len(data), "limit": limit}, "requestId": request.state.request_id}
 
     @router.post("", status_code=status.HTTP_202_ACCEPTED)
     def create_job(request: CreateJobRequest, http_request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
-        if not idempotency_key: raise HTTPException(status_code=400, detail="IDEMPOTENCY_KEY_REQUIRED")
+        if not idempotency_key:
+            raise HTTPException(status_code=400, detail="IDEMPOTENCY_KEY_REQUIRED")
         fingerprint = _fingerprint(request)
         store = repository.store
         existing = store.get_idempotency(idempotency_key, "POST:/api/v1/jobs")
         if existing:
-            if existing["request_fingerprint"] != fingerprint: raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
+            if existing["request_fingerprint"] != fingerprint:
+                raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
             existing_job = repository.get(existing["resource_id"])
-            if existing_job is None: raise HTTPException(status_code=409, detail="IDEMPOTENCY_RESOURCE_MISSING")
+            if existing_job is None:
+                raise HTTPException(status_code=409, detail="IDEMPOTENCY_RESOURCE_MISSING")
             return {"data": _serialize(existing_job), "requestId": http_request.state.request_id, "idempotentReplay": True}
         job = service.create(project_id=request.projectId, job_type=request.type, target_type=request.targetType, target_id=request.targetId, parent_job_id=request.parentJobId, priority=request.priority, max_attempts=request.maxAttempts, provider=request.provider, model=request.model, input=JobInput(parameters=request.input.parameters, reference_asset_ids=request.input.referenceAssetIds, constraints=request.input.constraints, seed=request.input.seed, deterministic=request.input.deterministic))
-        claimed = store.claim_idempotency(idempotency_key, "POST:/api/v1/jobs", fingerprint, job.id)
-        if not claimed:
-            existing = store.get_idempotency(idempotency_key, "POST:/api/v1/jobs")
-            if existing and existing["request_fingerprint"] == fingerprint:
-                existing_job = repository.get(existing["resource_id"])
-                if existing_job: return {"data": _serialize(existing_job), "requestId": http_request.state.request_id, "idempotentReplay": True}
+        if not store.claim_idempotency(idempotency_key, "POST:/api/v1/jobs", fingerprint, job.id):
             raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
-        if runtime: runtime.queue.enqueue(job)
+        if runtime:
+            runtime.queue.enqueue(job)
         return {"data": _serialize(job), "requestId": http_request.state.request_id}
 
     @router.get("/{job_id}")
     def get_job(job_id: str, request: Request) -> dict[str, Any]:
         job = repository.get(job_id)
-        if job is None: raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
+        if job is None:
+            raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
         return {"data": _serialize(job), "requestId": request.state.request_id}
 
     @router.post("/{job_id}/cancel")
     def cancel_job(job_id: str, request: Request) -> dict[str, Any]:
-        try: job = service.cancel(job_id)
-        except KeyError as exc: raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+        try:
+            job = service.cancel(job_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+        return {"data": _serialize(job), "requestId": request.state.request_id}
+
+    @router.post("/{job_id}/retry", status_code=status.HTTP_202_ACCEPTED)
+    def retry_job(job_id: str, request: Request) -> dict[str, Any]:
+        try:
+            job = service.retry(job_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if runtime:
+            runtime.queue.enqueue(job)
         return {"data": _serialize(job), "requestId": request.state.request_id}
 
     @router.post("/{job_id}/execute", status_code=status.HTTP_200_OK)
     def execute_job(job_id: str, request: Request) -> dict[str, Any]:
-        if runtime is None: raise HTTPException(status_code=503, detail="ORCHESTRATOR_NOT_CONFIGURED")
+        if runtime is None:
+            raise HTTPException(status_code=503, detail="ORCHESTRATOR_NOT_CONFIGURED")
         job = repository.get(job_id)
-        if job is None: raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
-        result = runtime.execute_next("mock")
-        if result is None or result.job.id != job_id: raise HTTPException(status_code=409, detail="JOB_NOT_NEXT_RUNNABLE")
+        if job is None:
+            raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
+        result = runtime.execute_next("auto")
+        if result is None or result.job.id != job_id:
+            raise HTTPException(status_code=409, detail="JOB_NOT_NEXT_RUNNABLE")
         return {"data": _serialize(result.job), "execution": {"status": result.status.value, "retried": result.retried}, "requestId": request.state.request_id}
 
     @router.post("/{job_id}/heartbeat")
     def heartbeat_job(job_id: str, request: Request, lease_id: str = Header(..., alias="X-Lease-Id"), worker_id: str = Header(..., alias="X-Worker-Id")) -> dict[str, Any]:
-        if runtime is None: raise HTTPException(status_code=503, detail="ORCHESTRATOR_NOT_CONFIGURED")
-        try: runtime.heartbeat(job_id, lease_id, worker_id)
-        except KeyError as exc: raise HTTPException(status_code=404 if str(exc.args[0]) == "JOB_NOT_FOUND" else 409, detail=str(exc.args[0])) from exc
+        if runtime is None:
+            raise HTTPException(status_code=503, detail="ORCHESTRATOR_NOT_CONFIGURED")
+        try:
+            runtime.heartbeat(job_id, lease_id, worker_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404 if str(exc.args[0]) == "JOB_NOT_FOUND" else 409, detail=str(exc.args[0])) from exc
         return {"data": {"jobId": job_id, "workerId": worker_id, "leaseId": lease_id, "status": "HEARTBEAT_ACCEPTED"}, "requestId": request.state.request_id}
 
     @router.post("/maintenance/recover-expired")
     def recover_expired(request: Request) -> dict[str, Any]:
-        if runtime is None: raise HTTPException(status_code=503, detail="ORCHESTRATOR_NOT_CONFIGURED")
+        if runtime is None:
+            raise HTTPException(status_code=503, detail="ORCHESTRATOR_NOT_CONFIGURED")
         return {"data": {"recovered": runtime.recover_expired()}, "requestId": request.state.request_id}
 
     @router.get("/{job_id}/events")
     def get_job_events(job_id: str, request: Request, limit: int = 200) -> dict[str, Any]:
-        if repository.get(job_id) is None: raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
-        if event_repository is None: return {"data": [], "requestId": request.state.request_id}
+        if repository.get(job_id) is None:
+            raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
+        if event_repository is None:
+            return {"data": [], "requestId": request.state.request_id}
         return {"data": [_serialize_event(event) for event in event_repository.list_for_job(job_id, max(1, min(limit, 500)))], "requestId": request.state.request_id}
 
     return router
