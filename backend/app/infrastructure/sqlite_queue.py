@@ -70,19 +70,29 @@ class SQLiteJobQueue(JobQueue):
                 if row is None:
                     self.store.connection.commit()
                     return None
-                lease = JobLease(job_id=row["id"], worker_id=worker_id, lease_id=str(uuid.uuid4()), expires_at=expires.isoformat())
+
+                lease = JobLease(
+                    job_id=row["id"],
+                    worker_id=worker_id,
+                    lease_id=str(uuid.uuid4()),
+                    expires_at=expires.isoformat(),
+                )
                 self.store.connection.execute(
                     "INSERT INTO job_leases(job_id,worker_id,lease_id,expires_at,created_at) VALUES(?,?,?,?,?)",
                     (lease.job_id, lease.worker_id, lease.lease_id, lease.expires_at, now.isoformat()),
                 )
-                self.store.connection.execute(
-                    "UPDATE jobs SET status='RUNNING', attempt=attempt+1, started_at=?, completed_at=NULL, updated_at=? WHERE id=? AND status IN ('QUEUED', 'RETRYING')",
+                cursor = self.store.connection.execute(
+                    """UPDATE jobs SET status='RUNNING', attempt=attempt+1, started_at=?, completed_at=NULL, updated_at=?
+                    WHERE id=? AND status IN ('QUEUED', 'RETRYING')""",
                     (now.isoformat(), now.isoformat(), lease.job_id),
                 )
+                if cursor.rowcount != 1:
+                    raise RuntimeError(f"Failed to transition claimed job: {lease.job_id}")
                 self.store.connection.commit()
             except Exception:
                 self.store.connection.rollback()
                 raise
+
         refreshed = self.jobs.get(lease.job_id)
         if refreshed is None:
             raise RuntimeError(f"Claimed job disappeared: {lease.job_id}")
@@ -92,8 +102,8 @@ class SQLiteJobQueue(JobQueue):
         expires = datetime.now(timezone.utc) + timedelta(seconds=self.lease_seconds)
         with self.store._lock, self.store.connection:
             cursor = self.store.connection.execute(
-                "UPDATE job_leases SET expires_at=? WHERE job_id=? AND lease_id=?",
-                (expires.isoformat(), lease.job_id, lease.lease_id),
+                "UPDATE job_leases SET expires_at=? WHERE job_id=? AND lease_id=? AND expires_at > ?",
+                (expires.isoformat(), lease.job_id, lease.lease_id, datetime.now(timezone.utc).isoformat()),
             )
             if cursor.rowcount != 1:
                 raise KeyError("JOB_LEASE_NOT_FOUND")
@@ -115,16 +125,26 @@ class SQLiteJobQueue(JobQueue):
             self.store.connection.execute("BEGIN IMMEDIATE")
             try:
                 lease_row = self.store.connection.execute(
-                    "SELECT job_id FROM job_leases WHERE job_id=? AND lease_id=?",
-                    (lease.job_id, lease.lease_id),
+                    """SELECT job_id FROM job_leases
+                    WHERE job_id=? AND lease_id=? AND expires_at > ?""",
+                    (lease.job_id, lease.lease_id, now.isoformat()),
                 ).fetchone()
                 if lease_row is None:
                     raise KeyError("JOB_LEASE_NOT_FOUND")
-                self.store.connection.execute(
+
+                cursor = self.store.connection.execute(
                     "UPDATE jobs SET status=?, completed_at=?, updated_at=? WHERE id=? AND status='RUNNING'",
-                    (status.value, now.isoformat() if status is not JobStatus.RETRYING else None, now.isoformat(), lease.job_id),
+                    (
+                        status.value,
+                        now.isoformat() if status is not JobStatus.RETRYING else None,
+                        now.isoformat(),
+                        lease.job_id,
+                    ),
                 )
-                self.store.connection.execute("DELETE FROM job_leases WHERE job_id=?", (lease.job_id,))
+                if cursor.rowcount != 1:
+                    raise RuntimeError(f"Job is no longer RUNNING: {lease.job_id}")
+
+                self.store.connection.execute("DELETE FROM job_leases WHERE job_id=? AND lease_id=?", (lease.job_id, lease.lease_id))
                 self.store.connection.commit()
             except Exception:
                 self.store.connection.rollback()
@@ -145,14 +165,20 @@ class SQLiteJobQueue(JobQueue):
                 ).fetchall()
                 for row in rows:
                     next_status = "RETRYING" if row["attempt"] < row["max_attempts"] else "FAILED"
-                    self.store.connection.execute(
+                    cursor = self.store.connection.execute(
                         """UPDATE jobs SET status=?, updated_at=?, completed_at=?,
                         error_code='LEASE_EXPIRED', error_message=? WHERE id=? AND status='RUNNING'""",
-                        (next_status, now.isoformat(), now.isoformat() if next_status == "FAILED" else None,
-                         "Worker lease expired; job scheduled for retry" if next_status == "RETRYING" else "Worker lease expired; retry budget exhausted", row["job_id"]),
+                        (
+                            next_status,
+                            now.isoformat(),
+                            now.isoformat() if next_status == "FAILED" else None,
+                            "Worker lease expired; job scheduled for retry" if next_status == "RETRYING" else "Worker lease expired; retry budget exhausted",
+                            row["job_id"],
+                        ),
                     )
-                    self.store.connection.execute("DELETE FROM job_leases WHERE job_id=?", (row["job_id"],))
-                    recovered += 1
+                    if cursor.rowcount == 1:
+                        self.store.connection.execute("DELETE FROM job_leases WHERE job_id=?", (row["job_id"],))
+                        recovered += 1
                 self.store.connection.commit()
                 return recovered
             except Exception:
