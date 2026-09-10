@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+from uuid import uuid4
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from .api.jobs import build_router as build_job_router
 from .api.projects import build_router as build_project_router
@@ -24,20 +26,65 @@ app = FastAPI(
     redoc_url="/api/v1/redoc",
     openapi_url="/api/v1/openapi.json",
 )
+
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    request_id = request.headers.get("X-Request-Id") or f"req_{uuid4().hex}"
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-Id"] = request_id
+    return response
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception(request: Request, exc: Exception):
+    request_id = getattr(request.state, "request_id", "unknown")
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": {
+                "code": "INTERNAL_ERROR",
+                "message": "Internal server error",
+                "details": {},
+                "requestId": request_id,
+            }
+        },
+        headers={"X-Request-Id": request_id},
+    )
+
+
 app.include_router(build_project_router(project_repository))
 app.include_router(build_job_router(job_repository, runtime=orchestrator_runtime, events=orchestrator_runtime.events))
 app.include_router(pipeline_router)
 
 
 @app.get("/api/v1/health", tags=["system"])
-def health() -> dict[str, str]:
-    return {"status": "ok", "service": "ai-content-factory-backend"}
+def health(request: Request) -> dict[str, object]:
+    return {"data": {"status": "OK", "service": "ai-content-factory-backend"}, "requestId": request.state.request_id}
 
 
-@app.get("/api/v1/readiness", tags=["system"])
-def readiness() -> dict[str, str]:
+@app.get("/api/v1/ready", tags=["system"])
+def readiness(request: Request) -> JSONResponse | dict[str, object]:
     try:
         repositories.store.connection.execute("SELECT 1").fetchone()
-        return {"status": "ready", "service": "ai-content-factory-backend"}
+        return {"data": {"status": "READY", "service": "ai-content-factory-backend"}, "requestId": request.state.request_id}
     except Exception:
-        return {"status": "not_ready", "service": "ai-content-factory-backend"}
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": {
+                    "code": "RESOURCE_UNAVAILABLE",
+                    "message": "Required dependencies are not ready",
+                    "details": {},
+                    "requestId": request.state.request_id,
+                }
+            },
+            headers={"X-Request-Id": request.state.request_id},
+        )
+
+
+# Backward-compatible alias during migration.
+@app.get("/api/v1/readiness", include_in_schema=False)
+def readiness_alias(request: Request):
+    return readiness(request)
