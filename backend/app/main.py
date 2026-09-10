@@ -16,6 +16,7 @@ from .api.v1.best_take import build_router as build_best_take_router
 from .api.v1.content import build_router as build_content_router
 from .api.v1.episode_translations import build_router as build_episode_translation_router
 from .api.v1.factory import build_router as build_factory_router
+from .api.v1.health import build_router as build_health_router
 from .api.v1.library import build_router as build_library_router
 from .api.v1.models import build_router as build_models_router
 from .api.v1.pipeline import router as pipeline_router
@@ -94,9 +95,9 @@ app = FastAPI(title="AI Content Factory API", version="0.8.0", docs_url="/api/v1
 async def request_id_middleware(request: Request, call_next):
     request_id = request.headers.get("X-Request-Id") or f"req_{uuid4().hex}"
     request.state.request_id = request_id
-    if _api_token() and request.url.path not in {"/api/v1/health", "/api/v1/ready"}:
+    if _api_token() and request.url.path not in {"/api/v1/health", "/api/v1/ready", "/api/v1/readiness"}:
         if request.headers.get("Authorization", "") != f"Bearer {_api_token()}":
-            return JSONResponse(status_code=401, content={"error": {"code": "UNAUTHORIZED", "message": "Authentication required", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
+            return JSONResponse(status_code=401, content={"error": {"code": "UNAUTHORIZED", "message": "Authentication required", "details": {}, "requestId": request_id}, "detail": "UNAUTHORIZED"}, headers={"X-Request-Id": request_id})
     response = await call_next(request)
     response.headers["X-Request-Id"] = request_id
     return response
@@ -106,15 +107,16 @@ async def request_id_middleware(request: Request, call_next):
 async def http_exception(request: Request, exc: StarletteHTTPException):
     request_id = getattr(request.state, "request_id", "unknown")
     code = str(exc.detail) if isinstance(exc.detail, str) else "HTTP_ERROR"
-    return JSONResponse(status_code=exc.status_code, content={"error": {"code": code, "message": code, "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
+    return JSONResponse(status_code=exc.status_code, content={"error": {"code": code, "message": code, "details": {}, "requestId": request_id}, "detail": code}, headers={"X-Request-Id": request_id})
 
 
 @app.exception_handler(Exception)
 async def unhandled_exception(request: Request, exc: Exception):
     request_id = getattr(request.state, "request_id", "unknown")
-    return JSONResponse(status_code=500, content={"error": {"code": "INTERNAL_ERROR", "message": "Internal server error", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
+    return JSONResponse(status_code=500, content={"error": {"code": "INTERNAL_ERROR", "message": "Internal server error", "details": {}, "requestId": request_id}, "detail": "INTERNAL_ERROR"}, headers={"X-Request-Id": request_id})
 
 
+app.include_router(build_health_router(repositories, app.version))
 app.include_router(build_project_router(project_repository))
 app.include_router(build_job_router(job_repository, runtime=orchestrator_runtime, events=orchestrator_runtime.events))
 app.include_router(build_batch_router(project_repository, job_repository, orchestrator_runtime))
@@ -135,21 +137,6 @@ app.include_router(build_system_router(orchestrator_runtime))
 app.include_router(pipeline_router)
 
 
-@app.get("/api/v1/health", tags=["system"])
-def health(request: Request):
-    return {"status": "ok", "data": {"status": "OK", "service": "ai-content-factory-backend", "version": app.version}, "requestId": request.state.request_id}
-
-
-@app.get("/api/v1/ready", tags=["system"])
-def readiness(request: Request):
-    try:
-        repositories.store.connection.execute("SELECT 1").fetchone()
-        return {"status": "ready", "data": {"status": "READY", "service": "ai-content-factory-backend", "version": app.version}, "requestId": request.state.request_id}
-    except Exception:
-        request_id = getattr(request.state, "request_id", "unknown")
-        return JSONResponse(status_code=503, content={"error": {"code": "RESOURCE_UNAVAILABLE", "message": "Required dependencies are not ready", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
-
-
 @app.get("/api/v1/worker/status", tags=["system"])
 def worker_status(request: Request):
     return {"data": {"workerId": worker_loop.worker_id, "running": worker_loop.running, "autostart": _worker_autostart_enabled(), "iterations": worker_loop.iterations, "lastError": worker_loop.last_error}, "requestId": request.state.request_id}
@@ -158,8 +145,3 @@ def worker_status(request: Request):
 @app.get("/api/v1/scheduler/status", tags=["scheduling"])
 def scheduler_status(request: Request):
     return {"data": {"running": scheduler_loop.running, "autostart": _scheduler_autostart_enabled(), "ticks": scheduler_loop.ticks, "lastError": scheduler_loop.last_error}, "requestId": request.state.request_id}
-
-
-@app.get("/api/v1/readiness", include_in_schema=False)
-def readiness_alias(request: Request):
-    return readiness(request)
