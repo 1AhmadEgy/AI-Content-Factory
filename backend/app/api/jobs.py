@@ -65,14 +65,16 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
     def create_job(request: CreateJobRequest, http_request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
         if not idempotency_key: raise HTTPException(status_code=400, detail="IDEMPOTENCY_KEY_REQUIRED")
         if repository.store._get("projects", request.projectId) is None: raise HTTPException(status_code=404, detail="PROJECT_NOT_FOUND")
-        fingerprint = _fingerprint(request); store = repository.store; operation = "POST:/api/v1/jobs"; existing = store.get_idempotency(idempotency_key, operation)
-        if existing:
-            if existing["request_fingerprint"] != fingerprint: raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
-            existing_job = repository.get(existing["resource_id"])
+        fingerprint = _fingerprint(request)
+        operation = "POST:/api/v1/jobs"
+        input_value = JobInput(parameters=request.input.parameters, reference_asset_ids=request.input.referenceAssetIds, constraints=request.input.constraints, seed=request.input.seed, deterministic=request.input.deterministic)
+        job, existing_resource_id = service.create_with_idempotency(key=idempotency_key, operation=operation, fingerprint=fingerprint, project_id=request.projectId, job_type=request.type, target_type=request.targetType, target_id=request.targetId, parent_job_id=request.parentJobId, priority=request.priority, max_attempts=request.maxAttempts, provider=request.provider, model=request.model, input=input_value)
+        if existing_resource_id == "__IDEMPOTENCY_CONFLICT__": raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
+        if existing_resource_id:
+            existing_job = repository.get(existing_resource_id)
             if existing_job is None: raise HTTPException(status_code=409, detail="IDEMPOTENCY_RESOURCE_MISSING")
             return {"data": _serialize(existing_job), "requestId": http_request.state.request_id, "idempotentReplay": True}
-        job = service.create(project_id=request.projectId, job_type=request.type, target_type=request.targetType, target_id=request.targetId, parent_job_id=request.parentJobId, priority=request.priority, max_attempts=request.maxAttempts, provider=request.provider, model=request.model, input=JobInput(parameters=request.input.parameters, reference_asset_ids=request.input.referenceAssetIds, constraints=request.input.constraints, seed=request.input.seed, deterministic=request.input.deterministic))
-        if not store.claim_idempotency(idempotency_key, operation, fingerprint, job.id): raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
+        if job is None: raise HTTPException(status_code=500, detail="JOB_CREATION_FAILED")
         if runtime: runtime.queue.enqueue(job)
         return {"data": _serialize(job), "requestId": http_request.state.request_id}
 
@@ -131,8 +133,8 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
     def execute_job(job_id: str, request: Request) -> dict[str, Any]:
         if runtime is None: raise HTTPException(status_code=503, detail="ORCHESTRATOR_NOT_CONFIGURED")
         if repository.get(job_id) is None: raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
-        result = runtime.execute_next("auto")
-        if result is None or result.job.id != job_id: raise HTTPException(status_code=409, detail="JOB_NOT_NEXT_RUNNABLE")
+        result = runtime.execute_job(job_id, "auto")
+        if result is None: raise HTTPException(status_code=409, detail="JOB_NOT_RUNNABLE")
         return {"data": _serialize(result.job), "execution": {"status": result.status.value, "retried": result.retried}, "requestId": request.state.request_id}
 
     @router.post("/{job_id}/heartbeat")

@@ -8,6 +8,7 @@ from ..domain.job_events import JobEvent
 from ..domain.jobs import GenerationJob, JobOutput, JobStatus
 from ..domain.repositories import JobRepository
 from ..workers.registry import WorkerRegistry
+from .completion_gate import CompletionGate
 from .heartbeat import LeaseHeartbeat
 from .job_state import transition
 from .queue import JobLease, JobQueue, Worker, WorkerContext
@@ -31,12 +32,14 @@ class JobExecutor:
         events: Callable[[JobEvent], None] | None = None,
         on_completed: Callable[[GenerationJob], None] | None = None,
         heartbeat_interval_seconds: float | None = None,
+        completion_gate: CompletionGate | None = None,
     ) -> None:
         self.jobs = jobs
         self.queue = queue
         self.workers = workers
         self.emit = events or (lambda _event: None)
         self.on_completed = on_completed or (lambda _job: None)
+        self.completion_gate = completion_gate
         configured_interval = heartbeat_interval_seconds
         if configured_interval is None:
             configured_interval = float(os.getenv("AICF_LEASE_HEARTBEAT_SECONDS", "5.0"))
@@ -72,20 +75,39 @@ class JobExecutor:
         finally:
             heartbeat.stop()
 
-        if result.success:
-            if not result.asset_ids:
-                return self._fail(job, lease, "MISSING_OUTPUT_ASSET", "Successful worker execution returned no assets", retryable=False)
-            job.output = JobOutput(asset_ids=list(result.asset_ids), metrics=dict(result.metrics), provider_run_id=result.provider_run_id)
-            job.error_code = None
-            job.error_message = None
-            self._set_progress(job, "completed", 1.0, persist=False)
-            transition(job, JobStatus.COMPLETED)
-            self.jobs.update(job)
-            self.queue.acknowledge(lease, JobStatus.COMPLETED)
-            self._event(job, "JOB_COMPLETED", {"assetIds": result.asset_ids, "providerRunId": result.provider_run_id, "progress": 1.0})
-            self.on_completed(job)
-            return ExecutionResult(job, JobStatus.COMPLETED)
-        return self._fail(job, lease, result.error_code or "WORKER_FAILED", result.error_message or "Worker execution failed", result.retryable)
+        # A lease can expire and be recovered while the provider is running.
+        # Never let a stale execution overwrite a newer attempt.
+        if not self.queue.is_lease_active(lease):
+            raise RuntimeError("JOB_LEASE_LOST")
+
+        if not result.success:
+            return self._fail(job, lease, result.error_code or "WORKER_FAILED", result.error_message or "Worker execution failed", result.retryable)
+        if not result.asset_ids:
+            return self._fail(job, lease, "MISSING_OUTPUT_ASSET", "Successful worker execution returned no assets", retryable=False)
+
+        job.output = JobOutput(asset_ids=list(result.asset_ids), metrics=dict(result.metrics), provider_run_id=result.provider_run_id)
+        job.error_code = None
+        job.error_message = None
+        if self.completion_gate is None:
+            raise RuntimeError("COMPLETION_GATE_NOT_CONFIGURED")
+
+        gate = self.completion_gate.check(job)
+        if not gate.allowed:
+            job.error_code = gate.code or "COMPLETION_GATE_BLOCKED"
+            job.error_message = gate.message or "Completion gate rejected the output"
+            transition(job, JobStatus.BLOCKED)
+            self._persist_claimed(job, lease)
+            self.queue.acknowledge(lease, JobStatus.BLOCKED)
+            self._event(job, "JOB_BLOCKED", {"errorCode": job.error_code, "qcCount": len(gate.qc_results)})
+            return ExecutionResult(job, JobStatus.BLOCKED)
+
+        self._set_progress(job, "completed", 1.0, persist=False)
+        transition(job, JobStatus.COMPLETED)
+        self._persist_claimed(job, lease)
+        self.queue.acknowledge(lease, JobStatus.COMPLETED)
+        self._event(job, "JOB_COMPLETED", {"assetIds": result.asset_ids, "providerRunId": result.provider_run_id, "qcCount": len(gate.qc_results), "progress": 1.0})
+        self.on_completed(job)
+        return ExecutionResult(job, JobStatus.COMPLETED)
 
     def cancel_claimed(self, job: GenerationJob, lease: JobLease, worker_id: str | None = None) -> ExecutionResult:
         worker = self.workers.get(worker_id or lease.worker_id)
@@ -93,7 +115,7 @@ class JobExecutor:
         transition(job, JobStatus.CANCELLED)
         job.error_code = "CANCELLED"
         job.error_message = "Cancellation requested"
-        self.jobs.update(job)
+        self._persist_claimed(job, lease)
         self.queue.acknowledge(lease, JobStatus.CANCELLED)
         self._event(job, "JOB_CANCELLED", {})
         return ExecutionResult(job, JobStatus.CANCELLED)
@@ -110,17 +132,24 @@ class JobExecutor:
         can_retry = retryable and job.attempt < job.max_attempts
         if can_retry:
             transition(job, JobStatus.RETRYING)
-            self.jobs.update(job)
+            self._persist_claimed(job, lease)
             self.queue.acknowledge(lease, JobStatus.RETRYING)
             transition(job, JobStatus.QUEUED)
             self.jobs.update(job)
             self._event(job, "JOB_RETRY_SCHEDULED", {"errorCode": code, "attempt": job.attempt, "maxAttempts": job.max_attempts})
             return ExecutionResult(job, JobStatus.QUEUED, retried=True)
         transition(job, JobStatus.FAILED)
-        self.jobs.update(job)
+        self._persist_claimed(job, lease)
         self.queue.acknowledge(lease, JobStatus.FAILED)
         self._event(job, "JOB_FAILED", {"errorCode": code, "retryable": retryable, "attempt": job.attempt})
         return ExecutionResult(job, JobStatus.FAILED)
+
+    def _persist_claimed(self, job: GenerationJob, lease: JobLease) -> None:
+        update_if_current = getattr(self.jobs, "update_if_current", None)
+        if update_if_current is not None:
+            update_if_current(job, JobStatus.RUNNING, job.attempt)
+            return
+        self.jobs.update(job)
 
     def _event(self, job: GenerationJob, event_type: str, payload: dict[str, object]) -> None:
         self.emit(JobEvent.create(job.id, job.project_id, event_type, job.status.value, job.progress, payload))

@@ -37,6 +37,14 @@ class SQLiteJobQueue(JobQueue):
         self.jobs.update(job)
 
     def claim_next(self, worker_id: str) -> tuple[GenerationJob, JobLease] | None:
+        return self._claim(worker_id, None)
+
+    def claim(self, job_id: str, worker_id: str) -> tuple[GenerationJob, JobLease] | None:
+        if not job_id.strip():
+            raise ValueError("job_id must not be empty")
+        return self._claim(worker_id, job_id)
+
+    def _claim(self, worker_id: str, job_id: str | None) -> tuple[GenerationJob, JobLease] | None:
         if not worker_id.strip():
             raise ValueError("worker_id must not be empty")
         now = datetime.now(timezone.utc)
@@ -44,22 +52,25 @@ class SQLiteJobQueue(JobQueue):
         with self.store._lock:
             self.store.connection.execute("BEGIN IMMEDIATE")
             try:
-                row = self.store.connection.execute(
-                    """SELECT j.* FROM jobs j
-                    LEFT JOIN job_leases l ON l.job_id = j.id
-                    WHERE j.status IN ('QUEUED', 'RETRYING') AND l.job_id IS NULL
-                    ORDER BY j.priority DESC, j.created_at ASC
-                    LIMIT 1"""
-                ).fetchone()
+                if job_id is None:
+                    row = self.store.connection.execute(
+                        """SELECT j.* FROM jobs j
+                        LEFT JOIN job_leases l ON l.job_id = j.id
+                        WHERE j.status IN ('QUEUED', 'RETRYING') AND l.job_id IS NULL
+                        ORDER BY j.priority DESC, j.created_at ASC
+                        LIMIT 1"""
+                    ).fetchone()
+                else:
+                    row = self.store.connection.execute(
+                        """SELECT j.* FROM jobs j
+                        LEFT JOIN job_leases l ON l.job_id = j.id
+                        WHERE j.id = ? AND j.status IN ('QUEUED', 'RETRYING') AND l.job_id IS NULL""",
+                        (job_id,),
+                    ).fetchone()
                 if row is None:
                     self.store.connection.commit()
                     return None
-                lease = JobLease(
-                    job_id=row["id"],
-                    worker_id=worker_id,
-                    lease_id=str(uuid.uuid4()),
-                    expires_at=expires.isoformat(),
-                )
+                lease = JobLease(job_id=row["id"], worker_id=worker_id, lease_id=str(uuid.uuid4()), expires_at=expires.isoformat())
                 self.store.connection.execute(
                     "INSERT INTO job_leases(job_id,worker_id,lease_id,expires_at,created_at) VALUES(?,?,?,?,?)",
                     (lease.job_id, lease.worker_id, lease.lease_id, lease.expires_at, now.isoformat()),
@@ -86,6 +97,15 @@ class SQLiteJobQueue(JobQueue):
             )
             if cursor.rowcount != 1:
                 raise KeyError("JOB_LEASE_NOT_FOUND")
+
+    def is_lease_active(self, lease: JobLease) -> bool:
+        now = datetime.now(timezone.utc).isoformat()
+        with self.store._lock:
+            row = self.store.connection.execute(
+                "SELECT 1 FROM job_leases WHERE job_id=? AND lease_id=? AND expires_at > ?",
+                (lease.job_id, lease.lease_id, now),
+            ).fetchone()
+        return row is not None
 
     def acknowledge(self, lease: JobLease, status: JobStatus) -> None:
         if status not in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.RETRYING}:
@@ -128,13 +148,8 @@ class SQLiteJobQueue(JobQueue):
                     self.store.connection.execute(
                         """UPDATE jobs SET status=?, updated_at=?, completed_at=?,
                         error_code='LEASE_EXPIRED', error_message=? WHERE id=? AND status='RUNNING'""",
-                        (
-                            next_status,
-                            now.isoformat(),
-                            now.isoformat() if next_status == "FAILED" else None,
-                            "Worker lease expired; job scheduled for retry" if next_status == "RETRYING" else "Worker lease expired; retry budget exhausted",
-                            row["job_id"],
-                        ),
+                        (next_status, now.isoformat(), now.isoformat() if next_status == "FAILED" else None,
+                         "Worker lease expired; job scheduled for retry" if next_status == "RETRYING" else "Worker lease expired; retry budget exhausted", row["job_id"]),
                     )
                     self.store.connection.execute("DELETE FROM job_leases WHERE job_id=?", (row["job_id"],))
                     recovered += 1

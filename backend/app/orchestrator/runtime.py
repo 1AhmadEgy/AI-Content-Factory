@@ -27,6 +27,7 @@ from ..workers.render_worker import RenderWorker
 from ..workers.repurpose_worker import RepurposeWorker
 from ..workers.timeline_worker import TimelineWorker
 from ..workers.registry import WorkerRegistry
+from .completion_gate import CompletionGate
 from .content_pipeline import ContentPipelineOrchestrator
 from .job_executor import ExecutionResult, JobExecutor
 from .job_service import JobService
@@ -35,6 +36,7 @@ from .queue import JobLease
 
 class OrchestratorRuntime:
     """Local-first composition root coordinating AI, durable assets, characters and reusable locations."""
+
     def __init__(self, repositories: SQLiteRepositories, storage_root: str | Path | None = None) -> None:
         self.repositories = repositories
         self.assets = SQLiteAssetRepository(repositories.store)
@@ -49,20 +51,37 @@ class OrchestratorRuntime:
         self.providers = default_provider_registry()
         provider_worker = ProviderGenerationWorker(self.providers, self.storage, self.assets, self.provider_runs)
         provider_worker.initialize()
-        self.workers.register(provider_worker, capabilities={"STORY","CHARACTER","WORLD","SCENE","SHOT","IMAGE","VIDEO","TTS","LIPSYNC","MUSIC","SFX","UPSCALE","INTERPOLATION"}, worker_id="provider-generation")
-        mock = DeterministicMockWorker(self.storage, self.assets); mock.initialize(); self.workers.register(mock, capabilities={"IMAGE","VIDEO","AUDIO","DOCUMENT","SUBTITLE"}, worker_id="mock")
-        qc = QualityControlWorker(self.storage, self.assets); qc.initialize(); self.workers.register(qc, capabilities={"DOCUMENT"}, worker_id="quality-control")
-        best_take = BestTakeWorker(self.storage, self.assets); best_take.initialize(); self.workers.register(best_take, capabilities={"DOCUMENT"}, worker_id="best-take")
-        timeline = TimelineWorker(self.storage, self.assets); timeline.initialize(); self.workers.register(timeline, capabilities={"DOCUMENT"}, worker_id="timeline")
-        render = RenderWorker(self.storage, self.assets); render.initialize(); self.workers.register(render, capabilities={"VIDEO"}, worker_id="render")
-        media = MediaDocumentWorker(self.storage, self.assets); media.initialize(); self.workers.register(media, capabilities={"SUBTITLE","THUMBNAIL","METADATA"}, worker_id="media-document")
-        publisher = PublishWorker(self.storage, self.assets); publisher.initialize(); self.workers.register(publisher, capabilities={"PUBLISH"}, worker_id="publish")
-        repurpose = RepurposeWorker(self.storage, self.assets); repurpose.initialize(); self.workers.register(repurpose, capabilities={"REPURPOSE"}, worker_id="repurpose")
+        self.workers.register(provider_worker, capabilities={"STORY", "CHARACTER", "WORLD", "SCENE", "SHOT", "IMAGE", "VIDEO", "TTS", "LIPSYNC", "MUSIC", "SFX", "UPSCALE", "INTERPOLATION"}, worker_id="provider-generation")
+        mock = DeterministicMockWorker(self.storage, self.assets)
+        mock.initialize()
+        self.workers.register(mock, capabilities={"IMAGE", "VIDEO", "AUDIO", "DOCUMENT", "SUBTITLE"}, worker_id="mock")
+        qc = QualityControlWorker(self.storage, self.assets)
+        qc.initialize()
+        self.workers.register(qc, capabilities={"DOCUMENT"}, worker_id="quality-control")
+        best_take = BestTakeWorker(self.storage, self.assets)
+        best_take.initialize()
+        self.workers.register(best_take, capabilities={"DOCUMENT"}, worker_id="best-take")
+        timeline = TimelineWorker(self.storage, self.assets)
+        timeline.initialize()
+        self.workers.register(timeline, capabilities={"DOCUMENT"}, worker_id="timeline")
+        render = RenderWorker(self.storage, self.assets)
+        render.initialize()
+        self.workers.register(render, capabilities={"VIDEO"}, worker_id="render")
+        media = MediaDocumentWorker(self.storage, self.assets)
+        media.initialize()
+        self.workers.register(media, capabilities={"SUBTITLE", "THUMBNAIL", "METADATA"}, worker_id="media-document")
+        publisher = PublishWorker(self.storage, self.assets)
+        publisher.initialize()
+        self.workers.register(publisher, capabilities={"PUBLISH"}, worker_id="publish")
+        repurpose = RepurposeWorker(self.storage, self.assets)
+        repurpose.initialize()
+        self.workers.register(repurpose, capabilities={"REPURPOSE"}, worker_id="repurpose")
         self.story_engine = AIStoryEngine(self.providers)
         self.script_engine = AIScriptEngine(self.providers)
         self.scene_planner = AIScenePlanner(self.providers)
         self.pipeline = ContentPipelineOrchestrator(JobService(repositories.jobs), self.queue.enqueue)
-        self.executor = JobExecutor(repositories.jobs, self.queue, self.workers, self.events.append, self.pipeline.on_completed)
+        self.completion_gate = CompletionGate(self.assets, self.storage)
+        self.executor = JobExecutor(repositories.jobs, self.queue, self.workers, self.events.append, self.pipeline.on_completed, completion_gate=self.completion_gate)
         # Seed only missing built-ins. Existing local records, including user edits, are never replaced.
         self.library_seed = ensure_egypt_library(repositories)
 
@@ -75,13 +94,23 @@ class OrchestratorRuntime:
 
     def execute_next(self, worker_id: str = "auto") -> ExecutionResult | None:
         claimed = self.queue.claim_next(worker_id)
-        if claimed is None: return None
+        if claimed is None:
+            return None
+        job, lease = claimed
+        selected_worker = worker_id if worker_id != "auto" else self.workers.resolve_for_job(job.type)
+        return self.executor.execute_claimed(job, lease, worker_id=selected_worker)
+
+    def execute_job(self, job_id: str, worker_id: str = "auto") -> ExecutionResult | None:
+        claimed = self.queue.claim(job_id, worker_id)
+        if claimed is None:
+            return None
         job, lease = claimed
         selected_worker = worker_id if worker_id != "auto" else self.workers.resolve_for_job(job.type)
         return self.executor.execute_claimed(job, lease, worker_id=selected_worker)
 
     def heartbeat(self, job_id: str, lease_id: str, worker_id: str) -> None:
-        if self.repositories.jobs.get(job_id) is None: raise KeyError("JOB_NOT_FOUND")
+        if self.repositories.jobs.get(job_id) is None:
+            raise KeyError("JOB_NOT_FOUND")
         self.queue.heartbeat(JobLease(job_id=job_id, worker_id=worker_id, lease_id=lease_id, expires_at=""))
 
     def recover_expired(self) -> int:
