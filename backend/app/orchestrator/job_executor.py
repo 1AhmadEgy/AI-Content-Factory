@@ -80,10 +80,11 @@ class JobExecutor:
                                    provider_run_id=result.provider_run_id)
             job.error_code = None
             job.error_message = None
+            job.progress = 1.0
             transition(job, JobStatus.COMPLETED)
             self.jobs.update(job)
             self.queue.acknowledge(lease, JobStatus.COMPLETED)
-            self._event(job, "JOB_COMPLETED", {"assetIds": result.asset_ids, "providerRunId": result.provider_run_id})
+            self._event(job, "JOB_COMPLETED", {"assetIds": result.asset_ids, "providerRunId": result.provider_run_id, "progress": 1.0})
             self.on_completed(job)
             return ExecutionResult(job, JobStatus.COMPLETED)
         return self._fail(job, lease, result.error_code or "WORKER_FAILED",
