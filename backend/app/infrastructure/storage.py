@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import shutil
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
@@ -44,7 +43,6 @@ class LocalAssetStorage:
         digest_state = hashlib.sha256()
         size = 0
         temporary: Path | None = None
-        directory: Path | None = None
         try:
             with source_path.open("rb") as source_handle:
                 with NamedTemporaryFile(dir=self.root, prefix=".asset-", delete=False) as handle:
