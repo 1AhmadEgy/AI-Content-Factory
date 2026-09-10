@@ -32,7 +32,7 @@ class WorkerRegistry:
 
     def resolve_for_job(self, job_type: JobType | str) -> str:
         name = job_type.value if isinstance(job_type, JobType) else str(job_type)
-        specialized = {"QC": "quality-control", "BEST_TAKE": "best-take", "TIMELINE": "timeline", "RENDER": "render", "SUBTITLE": "media-document", "THUMBNAIL": "media-document", "METADATA": "media-document", "PUBLISH": "publish"}
+        specialized = {"QC": "quality-control", "BEST_TAKE": "best-take", "TIMELINE": "timeline", "RENDER": "render", "SUBTITLE": "media-document", "THUMBNAIL": "media-document", "METADATA": "media-document", "PUBLISH": "publish", "REPURPOSE": "repurpose"}
         worker_id = specialized.get(name)
         if worker_id:
             if worker_id not in self._workers or not self._workers[worker_id].worker.health_check():
