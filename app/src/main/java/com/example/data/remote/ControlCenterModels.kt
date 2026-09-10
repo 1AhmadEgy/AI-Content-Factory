@@ -16,6 +16,13 @@ data class JobEventModel(val id:String,val jobId:String,val projectId:String,val
 data class JobEventsFeed(val data:List<JobEventModel>,val requestId:String?=null)
 
 @JsonClass(generateAdapter = true)
+data class ProviderRunModel(val id:String,val jobId:String,val provider:String,val model:String?,val status:String,val requestMetadata:Map<String,Any?>=emptyMap(),val responseMetadata:Map<String,Any?>=emptyMap(),val startedAt:String,val completedAt:String?,val durationMs:Long?,val errorCode:String?,val createdAt:String)
+@JsonClass(generateAdapter = true)
+data class ProviderRunsMeta(val count:Int,val limit:Int)
+@JsonClass(generateAdapter = true)
+data class ProviderRunsFeed(val data:List<ProviderRunModel>,val meta:ProviderRunsMeta,val requestId:String?=null)
+
+@JsonClass(generateAdapter = true)
 data class WorkerData(val workerId:String,val running:Boolean,val autostart:Boolean,val iterations:Int,val lastError:String?)
 @JsonClass(generateAdapter = true)
 data class WorkerResponse(val data:WorkerData,val requestId:String?=null)
