@@ -30,6 +30,7 @@ class JobType(str, Enum):
     UPSCALE = "UPSCALE"
     INTERPOLATION = "INTERPOLATION"
     QC = "QC"
+    BEST_TAKE = "BEST_TAKE"
     TIMELINE = "TIMELINE"
     RENDER = "RENDER"
     SUBTITLE = "SUBTITLE"
