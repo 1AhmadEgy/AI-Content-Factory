@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,6 +16,11 @@ class ContentBrief:
     character_ids: tuple[str, ...] = ()
     location_ids: tuple[str, ...] = ()
     continuity_rules: tuple[str, ...] = ()
+    country_id: str = "egypt"
+    library_id: str = "local-library-egypt"
+    dialect: str | None = None
+    glossary: dict[str, str] = field(default_factory=dict)
+    production_context: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
