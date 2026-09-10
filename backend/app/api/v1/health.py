@@ -21,8 +21,8 @@ def build_router(repositories: SQLiteRepositories, version: str) -> APIRouter:
             "requestId": request.state.request_id,
         }
 
-    @router.get("/ready")
-    @router.get("/readiness")
+    @router.get("/ready", response_model=None)
+    @router.get("/readiness", response_model=None)
     def readiness(request: Request) -> dict[str, object] | JSONResponse:
         try:
             repositories.store.connection.execute("SELECT 1").fetchone()
