@@ -33,5 +33,7 @@ jobs:
         run: python -m pip install -e ".[test]"
       - name: Verify imports
         run: python -c "import backend.app.main; import app.main"
+      - name: Verify API routes
+        run: python -c "from fastapi.testclient import TestClient; from backend.app.main import app; paths = [route.path for route in app.routes]; print('health route:', '/api/v1/health' in paths); print('readiness route:', '/api/v1/readiness' in paths); print('health status:', TestClient(app).get('/api/v1/health').status_code); print('readiness status:', TestClient(app).get('/api/v1/readiness').status_code); print('module:', app.__class__.__module__)"
       - name: Run tests
         run: python -m pytest -q
