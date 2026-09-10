@@ -21,7 +21,7 @@ def test_stale_worker_cannot_finalize_after_lease_recovery(tmp_path):
         max_attempts=3,
     )
     runtime.queue.enqueue(job)
-    claimed = runtime.queue.claim_next("worker-a")
+    claimed = runtime.queue.claim_next("mock")
     assert claimed is not None
     stale_job, stale_lease = claimed
 
@@ -39,7 +39,7 @@ def test_stale_worker_cannot_finalize_after_lease_recovery(tmp_path):
     assert recovered.attempt == 1
 
     with pytest.raises(RuntimeError, match="JOB_LEASE_LOST"):
-        runtime.executor.execute_claimed(stale_job, stale_lease, worker_id="worker-a")
+        runtime.executor.execute_claimed(stale_job, stale_lease, worker_id="mock")
 
     persisted = repositories.jobs.get(job.id)
     assert persisted is not None
