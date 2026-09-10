@@ -126,9 +126,9 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
         job = repository.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
-        result = runtime.execute_next("mock")
-        if result is None or result.job.id != job_id:
-            raise HTTPException(status_code=409, detail="JOB_NOT_NEXT_RUNNABLE")
+        result = runtime.execute_job(job_id, "mock")
+        if result is None:
+            raise HTTPException(status_code=409, detail="JOB_NOT_RUNNABLE")
         return {"data": _serialize(result.job), "execution": {"status": result.status.value, "retried": result.retried}, "requestId": request.state.request_id}
 
     @router.post("/{job_id}/heartbeat")
