@@ -17,7 +17,6 @@ from ..rendering.renderer import RenderProfile
 
 class RenderWorker(Worker):
     """Production render worker backed by the canonical FfmpegRenderer."""
-
     worker_type = "render"
 
     def __init__(self, storage: LocalAssetStorage, assets: AssetRepository, ffmpeg_binary: str = "ffmpeg", ffprobe_binary: str = "ffprobe") -> None:
@@ -47,11 +46,9 @@ class RenderWorker(Worker):
             return JobExecutionResult(False, error_code="FFMPEG_NOT_AVAILABLE", error_message="FFmpeg/ffprobe executable was not found")
         if not job.input.reference_asset_ids:
             return JobExecutionResult(False, error_code="RENDER_NO_TIMELINE", error_message="No timeline asset supplied")
-
         timeline_asset = self.assets.get(job.input.reference_asset_ids[0])
         if timeline_asset is None or timeline_asset.type is not AssetType.DOCUMENT:
             return JobExecutionResult(False, error_code="RENDER_TIMELINE_NOT_FOUND", error_message="Timeline document was not found")
-
         try:
             manifest = json.loads(self.storage.read_bytes(timeline_asset.sha256))
             timeline = self._timeline_from_manifest(manifest, job.project_id, job.id)
@@ -60,7 +57,6 @@ class RenderWorker(Worker):
         if not timeline.tracks:
             return JobExecutionResult(False, error_code="RENDER_EMPTY_TIMELINE", error_message="Timeline has no tracks")
         self._progress(context, 0.20, "assets_loaded")
-
         width, height = self._resolution(job.input.parameters)
         fps = max(1, int(job.input.parameters.get("fps", 30)))
         profile = RenderProfile(name=f"{width}x{height}@{fps}", width=width, height=height, fps=float(fps))
@@ -74,7 +70,6 @@ class RenderWorker(Worker):
                 if not path.is_file():
                     return JobExecutionResult(False, error_code="RENDER_ASSET_MISSING", error_message=clip.asset_id)
                 asset_paths[clip.asset_id] = str(path)
-
         renderer = FfmpegRenderer(asset_paths, FfmpegRenderOptions(ffmpeg_bin=self.ffmpeg_binary, ffprobe_bin=self.ffprobe_binary, overwrite=True, subtitles_path=str(job.input.parameters.get("subtitlePath", "")).strip() or None))
         self._renderers[job.id] = renderer
         output = self.storage.root / "staging" / f"render-{job.id}-{uuid.uuid4().hex}.mp4"
@@ -96,7 +91,6 @@ class RenderWorker(Worker):
         finally:
             self._renderers.pop(job.id, None)
             output.unlink(missing_ok=True)
-
         self._progress(context, 0.96, "provenance")
         digest, path, size = self.storage.put_bytes(payload)
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"render:{job.id}:{digest}"))
@@ -142,10 +136,10 @@ class RenderWorker(Worker):
         ratio = str(parameters.get("aspectRatio", "16:9"))
         height = {"720p": 720, "1080p": 1080, "4k": 2160}.get(preset, 1080)
         if ratio == "9:16":
-            return ((height * 9 // 16) // 2 * 2, height)
+            return (round(height * 9 / 16 / 2) * 2, height)
         if ratio == "1:1":
             return (height, height)
-        return ((height * 16 // 9) // 2 * 2, height)
+        return (round(height * 16 / 9 / 2) * 2, height)
 
     def cancel(self, job_id: str) -> None:
         renderer = self._renderers.get(job_id)
