@@ -5,6 +5,7 @@ import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
+import java.util.concurrent.TimeUnit
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 
@@ -24,7 +25,13 @@ object NetworkClient {
         chain.proceed(builder.build())
     }
 
-    private val client = OkHttpClient.Builder().addInterceptor(authInterceptor).build()
+    private val client = OkHttpClient.Builder()
+        .addInterceptor(authInterceptor)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(45, TimeUnit.SECONDS)
+        .build()
 
     val apiService: FactoryApiService by lazy {
         Retrofit.Builder().baseUrl(normalizedBaseUrl()).client(client)
