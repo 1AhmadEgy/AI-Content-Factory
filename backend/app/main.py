@@ -14,6 +14,7 @@ from .api.v1.assets import build_router as build_assets_router
 from .api.v1.batches import build_router as build_batch_router
 from .api.v1.best_take import build_router as build_best_take_router
 from .api.v1.content import build_router as build_content_router
+from .api.v1.episode_translations import build_router as build_episode_translation_router
 from .api.v1.factory import build_router as build_factory_router
 from .api.v1.library import build_router as build_library_router
 from .api.v1.models import build_router as build_models_router
@@ -111,7 +112,7 @@ async def http_exception(request: Request, exc: StarletteHTTPException):
 @app.exception_handler(Exception)
 async def unhandled_exception(request: Request, exc: Exception):
     request_id = getattr(request.state, "request_id", "unknown")
-    return JSONResponse(status_code=500, content={"error": {"code": "INTERNAL_ERROR", "message": "Internal server error", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request.state.request_id})
+    return JSONResponse(status_code=500, content={"error": {"code": "INTERNAL_ERROR", "message": "Internal server error", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
 
 
 app.include_router(build_project_router(project_repository))
@@ -122,6 +123,7 @@ app.include_router(build_factory_router(project_repository, job_repository, orch
 app.include_router(build_library_router())
 app.include_router(build_series_router(orchestrator_runtime))
 app.include_router(build_translation_router(repositories.store))
+app.include_router(build_episode_translation_router(repositories.store))
 app.include_router(build_content_router(orchestrator_runtime, job_repository))
 app.include_router(build_assets_router(asset_repository))
 app.include_router(build_models_router(orchestrator_runtime))
@@ -144,7 +146,7 @@ def readiness(request: Request):
         repositories.store.connection.execute("SELECT 1").fetchone()
         return {"status": "ready", "data": {"status": "READY", "service": "ai-content-factory-backend", "version": app.version}, "requestId": request.state.request_id}
     except Exception:
-        return JSONResponse(status_code=503, content={"error": {"code": "RESOURCE_UNAVAILABLE", "message": "Required dependencies are not ready", "details": {}, "requestId": request.state.request_id}}, headers={"X-Request-Id": request.state.request_id})
+        return JSONResponse(status_code=503, content={"error": {"code": "RESOURCE_UNAVAILABLE", "message": "Required dependencies are not ready", "details": {}, "requestId": request.state.request_id}}, headers={"X-Request-Id": request_id})
 
 
 @app.get("/api/v1/worker/status", tags=["system"])
