@@ -111,7 +111,7 @@ async def http_exception(request: Request, exc: StarletteHTTPException):
 @app.exception_handler(Exception)
 async def unhandled_exception(request: Request, exc: Exception):
     request_id = getattr(request.state, "request_id", "unknown")
-    return JSONResponse(status_code=500, content={"error": {"code": "INTERNAL_ERROR", "message": "Internal server error", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
+    return JSONResponse(status_code=500, content={"error": {"code": "INTERNAL_ERROR", "message": "Internal server error", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request.state.request_id})
 
 
 app.include_router(build_project_router(project_repository))
@@ -121,7 +121,7 @@ app.include_router(build_scheduling_router(project_repository, schedule_reposito
 app.include_router(build_factory_router(project_repository, job_repository, orchestrator_runtime))
 app.include_router(build_library_router())
 app.include_router(build_series_router(orchestrator_runtime))
-app.include_router(build_translation_router())
+app.include_router(build_translation_router(repositories.store))
 app.include_router(build_content_router(orchestrator_runtime, job_repository))
 app.include_router(build_assets_router(asset_repository))
 app.include_router(build_models_router(orchestrator_runtime))
