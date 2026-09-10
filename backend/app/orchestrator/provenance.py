@@ -7,7 +7,7 @@ from ..domain.jobs import GenerationJob
 def build_provenance(job: GenerationJob, *, source_asset_ids: list[str] | None = None, metadata: dict[str, object] | None = None) -> AssetProvenance:
     """Build a normalized provenance record for every produced asset."""
     return AssetProvenance(
-        provider=job.provider,
+        provider=job.provider or "mock",
         model=job.model,
         prompt=str(job.input.parameters.get("prompt", "")) or None,
         negative_prompt=str(job.input.parameters.get("negativePrompt", "")) or None,
