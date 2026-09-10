@@ -1,18 +1,23 @@
 package com.example.data.repository
 
 import com.example.core.model.*
-import com.example.data.remote.*
+import com.example.data.remote.ApiModels
+import com.example.data.remote.ApiEnvelope
+import com.example.data.remote.CreateJobRequest
+import com.example.data.remote.JobDto
+import com.example.data.remote.JobInputDto
+import com.example.data.remote.ProjectCreateRequest
+import com.example.data.remote.ProjectDto
 import com.example.data.local.FactoryDao
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 class Repository(private val dao: FactoryDao) {
     private val scope = CoroutineScope(Dispatchers.IO)
-    private val api = NetworkClient.apiService
+    private val api = com.example.data.remote.NetworkClient.apiService
     val projects: StateFlow<List<Project>> = dao.getAllProjects().stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
     val series: StateFlow<List<Series>> = dao.getAllSeries().stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
     val episodes: StateFlow<List<Episode>> = dao.getAllEpisodes().stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
