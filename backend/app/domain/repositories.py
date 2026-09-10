@@ -1,9 +1,19 @@
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
 from .assets import Asset, AssetStatus
 from .jobs import GenerationJob, JobStatus
 from .projects import Episode, Project, Scene, Shot
 from .provider_runs import ProviderRun
+
+
+@dataclass(frozen=True, slots=True)
+class IdempotencyResult:
+    """Outcome of an atomic idempotent resource creation attempt."""
+
+    job: GenerationJob | None
+    existing_resource_id: str | None = None
+    conflict: bool = False
 
 
 class ProjectRepository(ABC):
@@ -55,6 +65,21 @@ class JobRepository(ABC):
         expected_status: JobStatus,
         expected_attempt: int,
     ) -> bool: ...
+
+    def create_with_idempotency(
+        self,
+        job: GenerationJob,
+        *,
+        key: str,
+        operation: str,
+        fingerprint: str,
+    ) -> IdempotencyResult | None:
+        """Optionally atomically create a job and idempotency record.
+
+        Repositories without transactional idempotency support return None so
+        callers can use their normal creation path.
+        """
+        return None
 
     @abstractmethod
     def list_by_parent(self, parent_job_id: str) -> list[GenerationJob]: ...
