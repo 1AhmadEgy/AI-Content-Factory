@@ -21,6 +21,7 @@ class ContentBrief:
     dialect: str | None = None
     glossary: dict[str, str] = field(default_factory=dict)
     production_context: dict[str, Any] = field(default_factory=dict)
+    project_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
