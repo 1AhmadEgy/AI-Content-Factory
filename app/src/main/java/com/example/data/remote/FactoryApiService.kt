@@ -20,7 +20,7 @@ interface FactoryApiService {
     suspend fun generateScene(@Path("scene_id") sceneId: String): GenerationJob
 
     @GET("api/v1/jobs/{job_id}")
-    suspend fun getJob(@Path("job_id") jobId: String): Map<String, Any?>
+    suspend fun getJob(@Path("job_id") jobId: String): JobEnvelope
 
     @GET("api/v1/jobs")
     suspend fun listJobs(
@@ -30,7 +30,13 @@ interface FactoryApiService {
     ): JobsFeed
 
     @POST("api/v1/jobs/{job_id}/cancel")
-    suspend fun cancelJob(@Path("job_id") jobId: String): Map<String, Any?>
+    suspend fun cancelJob(@Path("job_id") jobId: String): JobEnvelope
+
+    @GET("api/v1/jobs/{job_id}/events")
+    suspend fun jobEvents(@Path("job_id") jobId: String, @Query("limit") limit: Int = 100): JobEventsFeed
+
+    @POST("api/v1/jobs/maintenance/recover-expired")
+    suspend fun recoverExpired(): RecoveryResponse
 
     @GET("api/v1/health")
     suspend fun health(): HealthResponse
