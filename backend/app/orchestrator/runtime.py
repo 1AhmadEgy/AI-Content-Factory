@@ -3,11 +3,16 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from ..application.ai_scene_planner import AIScenePlanner
+from ..application.ai_script_engine import AIScriptEngine
+from ..application.ai_story_engine import AIStoryEngine
+from ..domain.content import ContentBrief, StoryPlan
 from ..infrastructure.asset_repository import SQLiteAssetRepository
 from ..infrastructure.job_event_repository import SQLiteJobEventRepository
 from ..infrastructure.sqlite import SQLiteRepositories
 from ..infrastructure.sqlite_queue import SQLiteJobQueue
 from ..infrastructure.storage import LocalAssetStorage
+from ..providers.registry import default_provider_registry
 from ..workers.mock_worker import DeterministicMockWorker
 from ..workers.registry import WorkerRegistry
 from .content_pipeline import ContentPipelineOrchestrator
@@ -17,7 +22,7 @@ from .queue import JobLease
 
 
 class OrchestratorRuntime:
-    """Local-first composition root for the persisted job execution path."""
+    """Local-first composition root for persisted execution and AI planning."""
 
     def __init__(self, repositories: SQLiteRepositories, storage_root: str | Path | None = None) -> None:
         self.repositories = repositories
@@ -30,9 +35,26 @@ class OrchestratorRuntime:
         mock = DeterministicMockWorker(self.storage, self.assets)
         mock.initialize()
         self.workers.register(mock, capabilities={"IMAGE", "VIDEO", "AUDIO", "DOCUMENT", "SUBTITLE"}, worker_id="mock")
+
+        self.providers = default_provider_registry()
+        self.story_engine = AIStoryEngine(self.providers)
+        self.script_engine = AIScriptEngine(self.providers)
+        self.scene_planner = AIScenePlanner(self.providers)
+
         self.pipeline = ContentPipelineOrchestrator(JobService(repositories.jobs), self.queue.enqueue)
-        self.executor = JobExecutor(repositories.jobs, self.queue, self.workers,
-                                    self.events.append, self.pipeline.on_completed)
+        self.executor = JobExecutor(
+            repositories.jobs,
+            self.queue,
+            self.workers,
+            self.events.append,
+            self.pipeline.on_completed,
+        )
+
+    def plan_content(self, brief: ContentBrief, model_id: str | None = None) -> StoryPlan:
+        """Run the AI planning chain with safe deterministic fallback."""
+        story = self.story_engine.generate(brief, model_id)
+        script = self.script_engine.generate(brief, story, model_id)
+        return self.scene_planner.plan(brief, script, model_id)
 
     def execute_next(self, worker_id: str = "mock") -> ExecutionResult | None:
         claimed = self.queue.claim_next(worker_id)
@@ -42,12 +64,10 @@ class OrchestratorRuntime:
         return self.executor.execute_claimed(job, lease, worker_id=worker_id)
 
     def heartbeat(self, job_id: str, lease_id: str, worker_id: str) -> None:
-        """Extend a worker lease after validating its job identity."""
         if self.repositories.jobs.get(job_id) is None:
             raise KeyError("JOB_NOT_FOUND")
         lease = JobLease(job_id=job_id, worker_id=worker_id, lease_id=lease_id, expires_at="")
         self.queue.heartbeat(lease)
 
     def recover_expired(self) -> int:
-        """Recover abandoned worker leases and return the number of jobs handled."""
         return self.queue.release_expired()
