@@ -4,7 +4,7 @@ import os
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from .api.jobs import build_router as build_job_router
@@ -38,6 +38,11 @@ def _worker_autostart_enabled() -> bool:
     return os.getenv("AICF_WORKER_AUTOSTART", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _api_token() -> str | None:
+    token = os.getenv("AICF_API_TOKEN", "").strip()
+    return token or None
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     if _worker_autostart_enabled(): worker_loop.start()
@@ -45,16 +50,27 @@ async def lifespan(_: FastAPI):
     finally: worker_loop.stop()
 
 
-app = FastAPI(title="AI Content Factory API", version="0.6.0", docs_url="/api/v1/docs", redoc_url="/api/v1/redoc", openapi_url="/api/v1/openapi.json", lifespan=lifespan)
+app = FastAPI(title="AI Content Factory API", version="0.7.0", docs_url="/api/v1/docs", redoc_url="/api/v1/redoc", openapi_url="/api/v1/openapi.json", lifespan=lifespan)
 
 
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
     request_id = request.headers.get("X-Request-Id") or f"req_{uuid4().hex}"
     request.state.request_id = request_id
+    if _api_token() and request.url.path not in {"/api/v1/health", "/api/v1/ready"}:
+        authorization = request.headers.get("Authorization", "")
+        if authorization != f"Bearer {_api_token()}":
+            return JSONResponse(status_code=401, content={"error": {"code": "UNAUTHORIZED", "message": "Authentication required", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
     response = await call_next(request)
     response.headers["X-Request-Id"] = request_id
     return response
+
+
+@app.exception_handler(HTTPException)
+async def http_exception(request: Request, exc: HTTPException):
+    request_id = getattr(request.state, "request_id", "unknown")
+    code = str(exc.detail) if isinstance(exc.detail, str) else "HTTP_ERROR"
+    return JSONResponse(status_code=exc.status_code, content={"error": {"code": code, "message": code, "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
 
 
 @app.exception_handler(Exception)
@@ -79,14 +95,14 @@ app.include_router(pipeline_router)
 
 @app.get("/api/v1/health", tags=["system"])
 def health(request: Request) -> dict[str, object]:
-    return {"status": "ok", "data": {"status": "OK", "service": "ai-content-factory-backend"}, "requestId": request.state.request_id}
+    return {"status": "ok", "data": {"status": "OK", "service": "ai-content-factory-backend", "version": app.version}, "requestId": request.state.request_id}
 
 
 @app.get("/api/v1/ready", tags=["system"])
 def readiness(request: Request) -> dict[str, object]:
     try:
         repositories.store.connection.execute("SELECT 1").fetchone()
-        return {"status": "ready", "data": {"status": "READY", "service": "ai-content-factory-backend"}, "requestId": request.state.request_id}
+        return {"status": "ready", "data": {"status": "READY", "service": "ai-content-factory-backend", "version": app.version}, "requestId": request.state.request_id}
     except Exception:
         return JSONResponse(status_code=503, content={"error": {"code": "RESOURCE_UNAVAILABLE", "message": "Required dependencies are not ready", "details": {}, "requestId": request.state.request_id}}, headers={"X-Request-Id": request.state.request_id})
 
