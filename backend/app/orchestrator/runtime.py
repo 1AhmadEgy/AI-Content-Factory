@@ -64,7 +64,8 @@ class OrchestratorRuntime:
 
     def plan_content(self, brief: ContentBrief, model_id: str | None = None) -> StoryPlan:
         characters = tuple(c for cid in brief.character_ids if (c := self.characters.get(cid)) is not None)
-        story = self.story_engine.generate(brief, model_id, characters)
+        locations = tuple(l for lid in brief.location_ids if (l := self.locations.get(lid)) is not None)
+        story = self.story_engine.generate(brief, model_id, characters, locations)
         script = self.script_engine.generate(brief, story, model_id)
         return self.scene_planner.plan(brief, script, model_id)
 
