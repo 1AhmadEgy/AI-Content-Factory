@@ -15,6 +15,7 @@ from ..infrastructure.provider_run_repository import SQLiteProviderRunRepository
 from ..infrastructure.sqlite import SQLiteRepositories
 from ..infrastructure.sqlite_queue import SQLiteJobQueue
 from ..infrastructure.storage import LocalAssetStorage
+from ..library.default_library import seed_default_library
 from ..providers.registry import default_provider_registry
 from ..workers.best_take_worker import BestTakeWorker
 from ..workers.media_document_worker import MediaDocumentWorker
@@ -30,6 +31,7 @@ from .content_pipeline import ContentPipelineOrchestrator
 from .job_executor import ExecutionResult, JobExecutor
 from .job_service import JobService
 from .queue import JobLease
+
 
 class OrchestratorRuntime:
     """Local-first composition root coordinating AI, durable assets, characters and reusable locations."""
@@ -61,6 +63,10 @@ class OrchestratorRuntime:
         self.scene_planner = AIScenePlanner(self.providers)
         self.pipeline = ContentPipelineOrchestrator(JobService(repositories.jobs), self.queue.enqueue)
         self.executor = JobExecutor(repositories.jobs, self.queue, self.workers, self.events.append, self.pipeline.on_completed)
+        if os.getenv("AICF_SEED_DEFAULT_LIBRARY", "true").lower() in {"1", "true", "yes", "on"}:
+            self.library_seed = seed_default_library(self)
+        else:
+            self.library_seed = {"locationsAdded": 0, "charactersAdded": 0}
 
     def plan_content(self, brief: ContentBrief, model_id: str | None = None) -> StoryPlan:
         characters = tuple(c for cid in brief.character_ids if (c := self.characters.get(cid)) is not None)
