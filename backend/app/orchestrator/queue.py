@@ -50,16 +50,16 @@ class JobQueue(ABC):
     def claim_next(self, worker_id: str) -> tuple[GenerationJob, JobLease] | None:
         """Atomically claim the highest-priority runnable job."""
 
+    def claim(self, job_id: str, worker_id: str) -> tuple[GenerationJob, JobLease] | None:
+        """Atomically claim one specific runnable job when supported."""
+        raise NotImplementedError("TARGETED_CLAIM_NOT_SUPPORTED")
+
     @abstractmethod
     def heartbeat(self, lease: JobLease) -> None:
         """Extend an active lease."""
 
     def is_lease_active(self, lease: JobLease) -> bool:
-        """Return whether a lease is still owned by its worker.
-
-        Backends with durable leases should override this check. The default
-        keeps alternate queue implementations source-compatible.
-        """
+        """Return whether a lease is still owned by its worker."""
         return True
 
     @abstractmethod
