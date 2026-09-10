@@ -297,17 +297,8 @@ class SQLiteJobRepository(JobRepository):
         )
 
     def create(self, job: GenerationJob) -> GenerationJob:
-        self.store._insert(
-            "INSERT INTO jobs(id,parent_job_id,project_id,type,target_type,target_id,priority,status,progress,attempt,max_attempts,provider,model,input_json,output_json,error_code,error_message,created_at,started_at,completed_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (
-                job.id, job.parent_job_id, job.project_id, job.type.value, job.target_type, job.target_id,
-                job.priority, job.status.value, job.progress, job.attempt, job.max_attempts, job.provider,
-                job.model, _json(_job_input_to_dict(job.input)),
-                _json(_job_output_to_dict(job.output)) if job.output else None,
-                job.error_code, job.error_message, _dt(job.created_at), _dt(job.started_at),
-                _dt(job.completed_at), _dt(job.updated_at),
-            ),
-        )
+        with self.store._lock, self.store.connection:
+            self._insert_job(self.store.connection, job)
         return job
 
     def create_with_idempotency(
