@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -45,6 +46,7 @@ def build_router(runtime) -> APIRouter:
         template = get_series_template(body.templateId)
         if template is None:
             raise HTTPException(404, "SERIES_TEMPLATE_NOT_FOUND")
+        defaults = template.get("defaults", {})
         current = repo.get(project_id)
         if current is None:
             context = new_series_context(
@@ -52,18 +54,25 @@ def build_router(runtime) -> APIRouter:
                 title=body.title or template["name"],
                 template_id=body.templateId,
                 genre=template.get("genre", ""),
-                character_ids=list(template.get("defaultCharacterIds", [])),
-                location_ids=list(template.get("defaultLocationIds", [])),
+                character_ids=list(defaults.get("characterIds", [])),
+                location_ids=list(defaults.get("locationIds", [])),
             )
+            context = merge_series_defaults(
+                context,
+                character_ids=list(defaults.get("characterIds", [])),
+                location_ids=list(defaults.get("locationIds", [])),
+                rules=dict(template.get("continuity", {})),
+            )
+            context["template"] = deepcopy(template)
         else:
             context = current
             context["templateId"] = context.get("templateId") or body.templateId
             context["genre"] = context.get("genre") or template.get("genre", "")
             context = merge_series_defaults(
                 context,
-                character_ids=list(template.get("defaultCharacterIds", [])),
-                location_ids=list(template.get("defaultLocationIds", [])),
-                rules=dict(template.get("continuityRules", {})),
+                character_ids=list(defaults.get("characterIds", [])),
+                location_ids=list(defaults.get("locationIds", [])),
+                rules=dict(template.get("continuity", {})),
             )
         if body.title:
             context["title"] = body.title
@@ -84,9 +93,12 @@ def build_router(runtime) -> APIRouter:
         current = repo.get(project_id)
         if current is None:
             raise HTTPException(404, "SERIES_CONTEXT_NOT_FOUND")
-        # Explicit user edits win; historical snapshots are append-only and never rewritten.
-        context = dict(current)
-        context.update(body.context)
+        context = deepcopy(current)
+        # Explicit user edits win. Historical episode snapshots are never rewritten.
+        for key, value in body.context.items():
+            if key == "episodeSnapshots":
+                raise HTTPException(400, "EPISODE_SNAPSHOTS_APPEND_ONLY")
+            context[key] = deepcopy(value)
         repo.save(project_id, context)
         return {"data": context, "requestId": request.state.request_id}
 
@@ -102,6 +114,17 @@ def build_router(runtime) -> APIRouter:
         number = int(context.get("nextEpisodeNumber", 1))
         episode_context = build_episode_context(context, number)
         episode_context["episodeId"] = episode_id
+        # Capture exact library versions used by this episode so later edits do not alter history.
+        episode_context["characterVersions"] = {
+            cid: runtime.characters.get(cid).version
+            for cid in episode_context.get("characters", [])
+            if runtime.characters.get(cid) is not None
+        }
+        episode_context["locationVersions"] = {
+            lid: runtime.locations.get(lid).version
+            for lid in episode_context.get("locations", [])
+            if runtime.locations.get(lid) is not None
+        }
         snapshot = repo.snapshot(project_id, number, episode_context, episode_id)
         context["nextEpisodeNumber"] = number + 1
         context.setdefault("episodeSnapshots", []).append({"episodeNumber": number, "episodeId": episode_id, "context": snapshot})
