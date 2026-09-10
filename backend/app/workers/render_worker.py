@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from pathlib import Path
 
@@ -62,7 +63,15 @@ class RenderWorker(Worker):
         self._progress(context, 0.20, "assets_loaded")
 
         width, height = self._resolution(job.input.parameters)
-        fps = max(1, int(job.input.parameters.get("fps", 30)))
+        try:
+            fps_value = float(job.input.parameters.get("fps", 30))
+        except (TypeError, ValueError, OverflowError):
+            return JobExecutionResult(False, error_code="RENDER_FPS_INVALID", error_message="fps must be finite and positive")
+        if not math.isfinite(fps_value) or fps_value <= 0:
+            return JobExecutionResult(False, error_code="RENDER_FPS_INVALID", error_message="fps must be finite and positive")
+        fps = int(fps_value)
+        if fps <= 0:
+            return JobExecutionResult(False, error_code="RENDER_FPS_INVALID", error_message="fps must resolve to a positive integer")
         profile = RenderProfile(name=f"{width}x{height}@{fps}", width=width, height=height, fps=float(fps))
         asset_paths: dict[str, str] = {}
         for track in timeline.tracks:
@@ -70,6 +79,8 @@ class RenderWorker(Worker):
                 asset = self.assets.get(clip.asset_id)
                 if asset is None or asset.status is not AssetStatus.READY:
                     return JobExecutionResult(False, error_code="RENDER_ASSET_NOT_READY", error_message=clip.asset_id)
+                if asset.project_id != job.project_id:
+                    return JobExecutionResult(False, error_code="RENDER_ASSET_PROJECT_MISMATCH", error_message=clip.asset_id)
                 path = Path(asset.path)
                 if not path.is_file():
                     return JobExecutionResult(False, error_code="RENDER_ASSET_MISSING", error_message=clip.asset_id)
@@ -81,6 +92,8 @@ class RenderWorker(Worker):
             subtitle_asset = self.assets.get(str(subtitle_asset_id))
             if subtitle_asset is None or subtitle_asset.status is not AssetStatus.READY:
                 return JobExecutionResult(False, error_code="RENDER_SUBTITLE_NOT_READY", error_message=str(subtitle_asset_id))
+            if subtitle_asset.project_id != job.project_id or subtitle_asset.type is not AssetType.SUBTITLE:
+                return JobExecutionResult(False, error_code="RENDER_SUBTITLE_INVALID", error_message=str(subtitle_asset_id))
             subtitle_file = Path(subtitle_asset.path)
             if not subtitle_file.is_file():
                 return JobExecutionResult(False, error_code="RENDER_SUBTITLE_MISSING", error_message=str(subtitle_asset_id))
@@ -88,6 +101,10 @@ class RenderWorker(Worker):
 
         renderer = FfmpegRenderer(asset_paths, FfmpegRenderOptions(ffmpeg_bin=self.ffmpeg_binary, ffprobe_bin=self.ffprobe_binary, overwrite=True, subtitles_path=subtitle_path))
         self._renderers[job.id] = renderer
+        # FfmpegRenderer keys its active process by timeline.id. Normalize the
+        # in-memory timeline id to the owning render job so cancel(job.id) always
+        # reaches the actual FFmpeg process.
+        timeline.id = job.id
         output = self.storage.root / "staging" / f"render-{job.id}-{uuid.uuid4().hex}.mp4"
         try:
             output.parent.mkdir(parents=True, exist_ok=True)
@@ -101,7 +118,7 @@ class RenderWorker(Worker):
             if errors:
                 return JobExecutionResult(False, error_code="FINAL_QC_FAILED", error_message=";".join(errors), retryable=False)
             self._progress(context, 0.90, "ffprobe_qc_passed")
-            payload = Path(result.output_path).read_bytes()
+            digest, path, size = self.storage.put_file(result.output_path)
         except (OSError, RuntimeError, ValueError) as exc:
             return JobExecutionResult(False, error_code="RENDER_IO_ERROR", error_message=str(exc), retryable=True)
         finally:
@@ -109,7 +126,6 @@ class RenderWorker(Worker):
             output.unlink(missing_ok=True)
 
         self._progress(context, 0.96, "provenance")
-        digest, path, size = self.storage.put_bytes(payload)
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"render:{job.id}:{digest}"))
         asset = Asset(id=asset_id, project_id=job.project_id, type=AssetType.VIDEO, path=path, mime_type="video/mp4", size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, source_asset_ids=[timeline_asset.id, *asset_paths.keys()], metadata={"width": width, "height": height, "fps": fps, "durationUs": timeline.duration_us, "engine": "ffmpeg", "finalQc": "passed", "language": job.input.parameters.get("language"), "locale": job.input.parameters.get("locale"), "languagePackVersion": job.input.parameters.get("languagePackVersion"), "languageRender": bool(job.input.parameters.get("languageRender"))}, license_status=LicenseStatus.VERIFIED))
         self.assets.create(asset)
@@ -139,11 +155,19 @@ class RenderWorker(Worker):
         if not video:
             return ["NO_VIDEO_STREAM"]
         errors: list[str] = []
-        if int(video.get("width", 0)) != width or int(video.get("height", 0)) != height:
+        try:
+            actual_width = int(video.get("width", 0))
+            actual_height = int(video.get("height", 0))
+        except (TypeError, ValueError, OverflowError):
+            return ["VIDEO_DIMENSIONS_INVALID"]
+        if actual_width != width or actual_height != height:
             errors.append("VIDEO_RESOLUTION_MISMATCH")
         media_duration = probe.get("format", {})
-        duration = float(media_duration.get("duration", 0)) if isinstance(media_duration, dict) else 0.0
-        if duration <= 0:
+        try:
+            duration = float(media_duration.get("duration", 0)) if isinstance(media_duration, dict) else 0.0
+        except (TypeError, ValueError, OverflowError):
+            duration = 0.0
+        if not math.isfinite(duration) or duration <= 0:
             errors.append("VIDEO_DURATION_INVALID")
         return errors
 
