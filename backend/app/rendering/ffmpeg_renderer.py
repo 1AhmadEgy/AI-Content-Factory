@@ -5,6 +5,7 @@ import os
 import signal
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -24,6 +25,7 @@ class FfmpegRenderOptions:
     preset: str = "medium"
     audio_bitrate: str = "192k"
     timeout_seconds: int = 600
+    cancel_grace_seconds: float = 1.0
 
 
 class FfmpegRenderer(Renderer):
@@ -163,6 +165,15 @@ class FfmpegRenderer(Renderer):
             os.killpg(proc.pid, signal.SIGTERM)
         except ProcessLookupError:
             return False
+        grace = max(0.0, self.options.cancel_grace_seconds)
+        deadline = time.monotonic() + grace
+        while proc.poll() is None and time.monotonic() < deadline:
+            time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+        if proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                return True
         return True
 
     def cancel_all(self) -> int:
@@ -178,7 +189,13 @@ class FfmpegRenderer(Renderer):
         self.cancel_all()
 
     def probe(self, path: str) -> dict[str, object]:
-        completed = subprocess.run([self.options.ffprobe_bin, "-v", "error", "-show_streams", "-show_format", "-of", "json", path], capture_output=True, text=True, timeout=max(1, self.options.timeout_seconds))
+        try:
+            completed = subprocess.run([self.options.ffprobe_bin, "-v", "error", "-show_streams", "-show_format", "-of", "json", path], capture_output=True, text=True, timeout=max(1, self.options.timeout_seconds))
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("FFPROBE_TIMEOUT") from exc
         if completed.returncode:
             raise RuntimeError(completed.stderr.strip() or "FFPROBE_FAILED")
-        return json.loads(completed.stdout)
+        try:
+            return json.loads(completed.stdout)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("FFPROBE_INVALID_JSON") from exc
