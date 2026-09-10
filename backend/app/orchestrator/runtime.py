@@ -49,6 +49,13 @@ class OrchestratorRuntime:
         job, lease = claimed
         return self.executor.execute_claimed(job, lease, worker_id=worker_id)
 
+    def execute_job(self, job_id: str, worker_id: str = "mock") -> ExecutionResult | None:
+        claimed = self.queue.claim(job_id, worker_id)
+        if claimed is None:
+            return None
+        job, lease = claimed
+        return self.executor.execute_claimed(job, lease, worker_id=worker_id)
+
     def heartbeat(self, job_id: str, lease_id: str, worker_id: str) -> None:
         if self.repositories.jobs.get(job_id) is None:
             raise KeyError("JOB_NOT_FOUND")
