@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from .jobs import GenerationJob
+from .jobs import GenerationJob, JobStatus
 from .projects import Episode, Project, Scene, Shot
 
 
@@ -53,3 +53,16 @@ class JobRepository(ABC):
 
     @abstractmethod
     def update(self, job: GenerationJob) -> GenerationJob: ...
+
+    def update_if_current(self, job: GenerationJob, expected_status: JobStatus, expected_attempt: int) -> GenerationJob:
+        """Persist only if this execution still owns the expected job attempt.
+
+        Concrete stores should override this with an atomic compare-and-update.
+        The fallback keeps lightweight in-memory test repositories compatible.
+        """
+        current = self.get(job.id)
+        if current is None:
+            raise RuntimeError("JOB_NOT_FOUND")
+        if current.status is not expected_status or current.attempt != expected_attempt:
+            raise RuntimeError("JOB_STATE_CONFLICT")
+        return self.update(job)
