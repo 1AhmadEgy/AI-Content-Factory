@@ -54,6 +54,14 @@ class JobQueue(ABC):
     def heartbeat(self, lease: JobLease) -> None:
         """Extend an active lease."""
 
+    def is_lease_active(self, lease: JobLease) -> bool:
+        """Return whether a lease is still owned by its worker.
+
+        Backends with durable leases should override this check. The default
+        keeps alternate queue implementations source-compatible.
+        """
+        return True
+
     @abstractmethod
     def acknowledge(self, lease: JobLease, status: JobStatus) -> None:
         """Finalize a leased queue item after durable job state is written."""
