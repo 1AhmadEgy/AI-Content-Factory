@@ -54,21 +54,11 @@ class ContentPipelineOrchestrator:
         brief_data = job.input.parameters.get("brief", {})
         if not isinstance(scene_data, dict) or not isinstance(brief_data, dict):
             return []
-        brief = ContentBrief(
-            topic=str(brief_data.get("topic", "")), language=str(brief_data.get("language", "en")),
-            duration_seconds=int(brief_data.get("durationSeconds", 60)), style=str(brief_data.get("style", "cinematic")),
-            audience=str(brief_data.get("audience", "general")), platform=str(brief_data.get("platform", "youtube")),
-            aspect_ratio=str(brief_data.get("aspectRatio", "16:9")),
-        )
-        scene = ScenePlan(
-            number=int(scene_data.get("number", 1)), title=str(scene_data.get("title", "Scene")),
-            duration_seconds=float(scene_data.get("durationSeconds", scene_data.get("duration_seconds", 5))),
-            visual=str(scene_data.get("visual", "")), narration=str(scene_data.get("narration", "")), shots=[],
-        )
+        brief = ContentBrief(topic=str(brief_data.get("topic", "")), language=str(brief_data.get("language", "en")), duration_seconds=int(brief_data.get("durationSeconds", 60)), style=str(brief_data.get("style", "cinematic")), audience=str(brief_data.get("audience", "general")), platform=str(brief_data.get("platform", "youtube")), aspect_ratio=str(brief_data.get("aspectRatio", "16:9")))
+        scene = ScenePlan(number=int(scene_data.get("number", 1)), title=str(scene_data.get("title", "Scene")), duration_seconds=float(scene_data.get("durationSeconds", scene_data.get("duration_seconds", 5))), visual=str(scene_data.get("visual", "")), narration=str(scene_data.get("narration", "")), shots=[])
         created = []
         for spec in (self.generation_planner.tts(brief, scene), self.generation_planner.audio(brief, scene, "music"), self.generation_planner.audio(brief, scene, "sfx")):
-            params = {"scene": scene_data, "brief": brief_data, "sceneJobId": job.id, "auxiliary": True,
-                      "generationSpec": {"prompt": spec.prompt, "negative_prompt": spec.negative_prompt, "duration_seconds": spec.duration_seconds, "parameters": spec.parameters or {}}}
+            params = {"scene": scene_data, "brief": brief_data, "sceneJobId": job.id, "auxiliary": True, "generationSpec": {"prompt": spec.prompt, "negative_prompt": spec.negative_prompt, "duration_seconds": spec.duration_seconds, "parameters": spec.parameters or {}}}
             created.append(self._enqueue(job, spec.job_type, spec.job_type.value.lower(), f"{job.id}:{spec.job_type.value.lower()}", params, 2))
         return created
 
@@ -77,11 +67,7 @@ class ContentPipelineOrchestrator:
         if not isinstance(shot_data, dict) or not isinstance(scene_data, dict): return []
         brief_data = job.input.parameters.get("brief", {})
         if not isinstance(brief_data, dict): brief_data = {}
-        brief = ContentBrief(
-            topic=str(brief_data.get("topic", "")), language=str(brief_data.get("language", "en")),
-            duration_seconds=int(brief_data.get("durationSeconds", 60)), style=str(brief_data.get("style", "cinematic")),
-            audience=str(brief_data.get("audience", "general")), platform=str(brief_data.get("platform", "youtube")), aspect_ratio=str(brief_data.get("aspectRatio", "16:9")),
-        )
+        brief = ContentBrief(topic=str(brief_data.get("topic", "")), language=str(brief_data.get("language", "en")), duration_seconds=int(brief_data.get("durationSeconds", 60)), style=str(brief_data.get("style", "cinematic")), audience=str(brief_data.get("audience", "general")), platform=str(brief_data.get("platform", "youtube")), aspect_ratio=str(brief_data.get("aspectRatio", "16:9")))
         scene = ScenePlan(number=int(scene_data.get("number", 1)), title=str(scene_data.get("title", "Scene")), duration_seconds=float(scene_data.get("durationSeconds", 5)), visual=str(scene_data.get("visual", "")), narration=str(scene_data.get("narration", "")), shots=[])
         shot = ShotPlan(number=int(shot_data.get("number", 1)), prompt=str(shot_data.get("prompt", "")), duration_seconds=float(shot_data.get("durationSeconds", 5)), camera=str(shot_data.get("camera", "medium")), lighting=str(shot_data.get("lighting", "natural")), style=str(shot_data.get("style", brief.style)))
         count = max(1, min(int(job.input.parameters.get("takeCount", 4)), 8))
@@ -108,7 +94,6 @@ class ContentPipelineOrchestrator:
         generations = [j for j in self.job_service.repository.list_by_parent(shot.id) if j.type in {JobType.IMAGE, JobType.VIDEO}]
         expected = int(shot.input.parameters.get("takeCount", 1)) * 2
         if len(generations) < expected or any(j.status is not JobStatus.COMPLETED for j in generations): return []
-        qcs = [j for g in generations for j in self.job_service.repository.list_by_parent(g.id) if j.type is JobType.QC and j.status is JobStatus.COMPLETED]
         videos = [(g, q) for g in generations if g.type is JobType.VIDEO for q in self.job_service.repository.list_by_parent(g.id) if q.type is JobType.QC and q.status is JobStatus.COMPLETED and q.output and q.output.asset_ids]
         if len(videos) < int(shot.input.parameters.get("takeCount", 1)): return []
         existing = [j for j in self.job_service.repository.list_by_parent(shot.id) if j.type is JobType.BEST_TAKE]
@@ -133,7 +118,7 @@ class ContentPipelineOrchestrator:
         audio_qcs = [j for a in self.job_service.repository.list_by_parent(scene.id) if a.type in {JobType.TTS, JobType.MUSIC, JobType.SFX} for j in self.job_service.repository.list_by_parent(a.id) if j.type is JobType.QC and j.status is JobStatus.COMPLETED and j.output and j.output.asset_ids]
         existing = [j for j in self.job_service.repository.list_by_parent(scene.id) if j.type is JobType.TIMELINE]
         if existing: return []
-        refs = [j.output.asset_ids[0] for j in sorted(best, key=lambda x: int(x.input.parameters.get("shotJobId", "0").split(":")[-1]) if str(x.input.parameters.get("shotJobId", "0")).split(":")[-1].isdigit() else 0)]
+        refs = [j.output.asset_ids[0] for j in best]
         refs.extend(j.output.asset_ids[0] for j in audio_qcs)
         duration_us = int(float(scene.input.parameters.get("scene", {}).get("durationSeconds", 5)) * 1_000_000)
         return [self._enqueue(scene, JobType.TIMELINE, "timeline", f"{scene.id}:timeline", {"durationUs": duration_us, "sceneJobId": scene.id}, 6, refs)]
@@ -150,7 +135,7 @@ class ContentPipelineOrchestrator:
         if not job.input.reference_asset_ids: return []
         common = {"title": job.input.parameters.get("title", "AI Content"), "description": job.input.parameters.get("description", ""), "language": job.input.parameters.get("language", "en"), "platforms": job.input.parameters.get("platforms", ["youtube", "tiktok", "instagram", "facebook"]), "tags": job.input.parameters.get("tags", [])}
         ids = job.input.reference_asset_ids
-        return [self._enqueue(job, t, target, f"{job.id}:{target}", common, 1, ids) for t, target in ((JobType.SUBTITLE, "subtitle"), (JobType.THUMBNAIL, "thumbnail"), (JobType.METADATA, "metadata"), (JobType.PUBLISH, "publish"))]
+        return [self._enqueue(job, t, target, f"{job.id}:{target}", common, 1, ids) for t, target in ((JobType.SUBTITLE, "subtitle"), (JobType.THUMBNAIL, "thumbnail"), (JobType.METADATA, "metadata"), (JobType.PUBLISH, "publish"), (JobType.REPURPOSE, "repurpose"))]
 
     def _enqueue(self, parent: GenerationJob, job_type: JobType, target_type: str, target_id: str, parameters: dict[str, object], priority_offset: int, reference_asset_ids: list[str] | None = None) -> GenerationJob:
         child = self.job_service.create(project_id=parent.project_id, job_type=job_type, target_type=target_type, target_id=target_id, parent_job_id=parent.id, priority=max(parent.priority - priority_offset, 0), provider=parent.provider, model=parent.model, input=JobInput(parameters=parameters, reference_asset_ids=list(reference_asset_ids or []), deterministic=parent.input.deterministic))
