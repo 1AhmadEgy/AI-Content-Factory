@@ -83,14 +83,22 @@ app.include_router(pipeline_router)
 
 @app.get("/api/v1/health", tags=["system"])
 def health(request: Request) -> dict[str, object]:
-    return {"data": {"status": "OK", "service": "ai-content-factory-backend"}, "requestId": request.state.request_id}
+    return {
+        "status": "ok",
+        "data": {"status": "OK", "service": "ai-content-factory-backend"},
+        "requestId": request.state.request_id,
+    }
 
 
 @app.get("/api/v1/ready", tags=["system"])
 def readiness(request: Request) -> dict[str, object]:
     try:
         repositories.store.connection.execute("SELECT 1").fetchone()
-        return {"data": {"status": "READY", "service": "ai-content-factory-backend"}, "requestId": request.state.request_id}
+        return {
+            "status": "ready",
+            "data": {"status": "READY", "service": "ai-content-factory-backend"},
+            "requestId": request.state.request_id,
+        }
     except Exception:
         return JSONResponse(
             status_code=503,
