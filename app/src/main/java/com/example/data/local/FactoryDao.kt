@@ -41,6 +41,9 @@ interface FactoryDao {
     @Query("SELECT series.projectId FROM scenes JOIN episodes ON episodes.id = scenes.episode_id JOIN series ON series.id = episodes.series_id WHERE scenes.id = :sceneId LIMIT 1")
     suspend fun findProjectIdForScene(sceneId: String): String?
 
+    @Query("SELECT projectId FROM series WHERE id = :seriesId LIMIT 1")
+    suspend fun findProjectIdForSeries(seriesId: String): String?
+
     @Query("SELECT * FROM characters")
     fun getAllCharacters(): Flow<List<Character>>
 
