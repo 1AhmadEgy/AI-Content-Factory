@@ -22,6 +22,8 @@ class ContentPipelineOrchestrator:
             return self._create_qc_job(job)
         if job.type is JobType.QC:
             return self._create_best_take_job(job)
+        if job.type is JobType.BEST_TAKE:
+            return self._create_timeline_job(job)
         return []
 
     def _create_scene_jobs(self, job: GenerationJob) -> list[GenerationJob]:
@@ -78,6 +80,12 @@ class ContentPipelineOrchestrator:
         score = float(job.output.metrics.get("score", 0)) if job.output else 0.0
         candidates = [{"assetId": asset_id, "score": score} for asset_id in job.input.reference_asset_ids]
         return [self._enqueue(job, JobType.BEST_TAKE, "best_take", f"{job.id}:best-take", {"candidates": candidates, "qcJobId": job.id}, 5)]
+
+    def _create_timeline_job(self, job: GenerationJob) -> list[GenerationJob]:
+        if not job.output or not job.output.asset_ids:
+            return []
+        selected_asset_id = job.output.asset_ids[0]
+        return [self._enqueue(job, JobType.TIMELINE, "timeline", f"{job.id}:timeline", {"sourceBestTakeJobId": job.id}, 6, [selected_asset_id])]
 
     def _enqueue(self, parent: GenerationJob, job_type: JobType, target_type: str, target_id: str, parameters: dict[str, object], priority_offset: int, reference_asset_ids: list[str] | None = None) -> GenerationJob:
         child = self.job_service.create(
