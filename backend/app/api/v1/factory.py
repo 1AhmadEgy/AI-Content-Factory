@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
@@ -22,7 +24,7 @@ class BriefRequest(BaseModel):
     style: str = Field(default="documentary", min_length=1, max_length=100)
     audience: str = Field(default="general", min_length=1, max_length=200)
     platform: str = Field(default="youtube", min_length=1, max_length=50)
-    aspectRatio: str = Field(default="16:9", pattern=r"^\\d+:\\d+$")
+    aspectRatio: str = Field(default="16:9", pattern=r"^\d+:\d+$")
 
 
 class StartFactoryRequest(BriefRequest):
@@ -71,6 +73,11 @@ def _serialize_plan(plan: Any) -> dict[str, Any]:
     }
 
 
+def _fingerprint(request: StartFactoryRequest) -> str:
+    canonical = json.dumps(request.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def build_router(
     projects: SQLiteProjectRepository,
     jobs: SQLiteJobRepository,
@@ -99,6 +106,22 @@ def build_router(
         if not idempotency_key:
             raise HTTPException(status_code=400, detail="IDEMPOTENCY_KEY_REQUIRED")
 
+        operation = f"POST:/api/v1/factory/projects/{project_id}/start"
+        fingerprint = _fingerprint(request)
+        store = jobs.store
+        existing = store.get_idempotency(idempotency_key, operation)
+        if existing:
+            if existing["request_fingerprint"] != fingerprint:
+                raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
+            existing_job = jobs.get(existing["resource_id"])
+            if existing_job is None:
+                raise HTTPException(status_code=409, detail="IDEMPOTENCY_RESOURCE_MISSING")
+            return {
+                "data": {"projectId": project_id, "jobId": existing_job.id, "stage": existing_job.type.value, "status": existing_job.status.value},
+                "requestId": http_request.state.request_id,
+                "idempotentReplay": True,
+            }
+
         plan = planner.plan(_brief(request))
         job = job_service.create(
             project_id=project_id,
@@ -108,20 +131,10 @@ def build_router(
             priority=100,
             provider=request.provider or "mock",
             model=request.model or "deterministic-content-planner-v1",
-            input=JobInput(
-                parameters={
-                    "topic": request.topic,
-                    "language": request.language,
-                    "durationSeconds": request.durationSeconds,
-                    "style": request.style,
-                    "audience": request.audience,
-                    "platform": request.platform,
-                    "aspectRatio": request.aspectRatio,
-                    "plan": _serialize_plan(plan),
-                },
-                deterministic=True,
-            ),
+            input=JobInput(parameters={**request.model_dump(), "plan": _serialize_plan(plan)}, deterministic=True),
         )
+        if not store.claim_idempotency(idempotency_key, operation, fingerprint, job.id):
+            raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
         runtime.queue.enqueue(job)
         return {
             "data": {
