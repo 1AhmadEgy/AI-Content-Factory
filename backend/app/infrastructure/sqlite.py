@@ -1,5 +1,3 @@
-"""SQLite persistence adapters for the backend domain repositories."""
-
 from __future__ import annotations
 
 import json
@@ -37,7 +35,10 @@ class SQLiteStore:
     def initialize(self) -> None:
         with self._lock, self._connection:
             self._connection.executescript("""
-                CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS projects (
+                    id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+                    settings_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS episodes (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, title TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS idx_episodes_project ON episodes(project_id);
                 CREATE TABLE IF NOT EXISTS scenes (id TEXT PRIMARY KEY, episode_id TEXT NOT NULL REFERENCES episodes(id) ON DELETE CASCADE, title TEXT NOT NULL, order_index INTEGER NOT NULL, created_at TEXT NOT NULL);
@@ -50,6 +51,11 @@ class SQLiteStore:
                 CREATE INDEX IF NOT EXISTS idx_jobs_status_priority ON jobs(status, priority, created_at);
                 CREATE TABLE IF NOT EXISTS idempotency_keys (key TEXT PRIMARY KEY, operation TEXT NOT NULL, request_fingerprint TEXT NOT NULL, resource_id TEXT NOT NULL, created_at TEXT NOT NULL);
             """)
+            columns = {r["name"] for r in self._connection.execute("PRAGMA table_info(projects)").fetchall()}
+            if "description" not in columns:
+                self._connection.execute("ALTER TABLE projects ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+            if "settings_json" not in columns:
+                self._connection.execute("ALTER TABLE projects ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}'")
 
     def close(self) -> None:
         with self._lock: self._connection.close()
@@ -70,9 +76,10 @@ class SQLiteStore:
 class SQLiteProjectRepository(ProjectRepository):
     def __init__(self, store: SQLiteStore) -> None: self.store = store
     def create(self, project: Project) -> Project:
-        self.store._insert("INSERT INTO projects(id,name,created_at,updated_at) VALUES(?,?,?,?)", (project.id, project.name, _dt(project.created_at), _dt(project.updated_at))); return project
+        self.store._insert("INSERT INTO projects(id,name,description,settings_json,created_at,updated_at) VALUES(?,?,?,?,?,?)", (project.id, project.name, project.description, _json(project.settings), _dt(project.created_at), _dt(project.updated_at))); return project
     def get(self, project_id: str) -> Project | None:
-        row = self.store._get("projects", project_id); return Project(row["id"], row["name"], _parse_dt(row["created_at"]), _parse_dt(row["updated_at"])) if row else None
+        row = self.store._get("projects", project_id)
+        return Project(row["id"], row["name"], row["description"] or "", json.loads(row["settings_json"] or "{}"), _parse_dt(row["created_at"]), _parse_dt(row["updated_at"])) if row else None
 
 class SQLiteEpisodeRepository(EpisodeRepository):
     def __init__(self, store: SQLiteStore) -> None: self.store = store
