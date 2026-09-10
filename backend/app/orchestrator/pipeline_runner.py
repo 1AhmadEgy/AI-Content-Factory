@@ -53,6 +53,8 @@ class PipelineRunner:
         if selected_errors or selected_qc.blocked:
             return PipelineRunResult(False, best.asset_id, None, selected_errors or ["SELECTED_TAKE_BLOCKED"])
 
+        renderer: Renderer | None = None
+        staging_path: Path | None = None
         try:
             renderer = self._renderer()
             result = self.service.render(renderer, timeline, RenderProfile(), str(Path(output_path).with_suffix(".staging.mp4")))
@@ -72,6 +74,7 @@ class PipelineRunner:
                     return PipelineRunResult(False, best.asset_id, None, ["QC_NO_AUDIO_STREAM"])
 
             staging_path.replace(final_path)
+            staging_path = None
             thumb = extract_thumbnail(str(final_path), str(final_path.with_suffix(".jpg")))
             meta = write_metadata_sidecar(str(final_path.with_suffix(".metadata.json")), metadata or {})
             digest = sha256_file(str(final_path))
@@ -81,3 +84,8 @@ class PipelineRunner:
             return PipelineRunResult(True, best.asset_id, str(final_path), [], thumb, meta, provenance, digest)
         except Exception as exc:
             return PipelineRunResult(False, best.asset_id, None, [str(exc)])
+        finally:
+            if staging_path is not None:
+                staging_path.unlink(missing_ok=True)
+            if isinstance(renderer, FfmpegRenderer):
+                renderer.shutdown()
