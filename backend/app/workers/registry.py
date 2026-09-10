@@ -39,7 +39,7 @@ class WorkerRegistry:
         ]
 
     def resolve_for_job(self, job_type: JobType | str) -> str:
-        """Select the healthy specialized worker for a job, with provider fallback."""
+        """Select the specialized worker; never silently replace it with a mock."""
         name = job_type.value if isinstance(job_type, JobType) else str(job_type)
         specialized = {
             "QC": "quality-control",
@@ -47,7 +47,7 @@ class WorkerRegistry:
             "TIMELINE": "timeline",
             "RENDER": "render",
         }.get(name)
-        if specialized and specialized in self._workers and self._workers[specialized].worker.health_check():
+        if specialized and specialized in self._workers:
             return specialized
         if "provider-generation" in self._workers and self._workers["provider-generation"].worker.health_check():
             descriptor = self._workers["provider-generation"]
