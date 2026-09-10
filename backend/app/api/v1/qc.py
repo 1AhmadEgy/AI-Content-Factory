@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import json
-import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from ...domain.jobs import JobInput, JobType
-from ...infrastructure.sqlite import SQLiteAssetRepository, SQLiteJobRepository
+from ...infrastructure.sqlite import SQLiteJobRepository
 from ...orchestrator.job_service import JobService
 from ...orchestrator.runtime import OrchestratorRuntime
 
