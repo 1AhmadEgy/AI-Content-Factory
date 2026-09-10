@@ -1,13 +1,13 @@
 package com.example.data.repository
 
 import com.example.core.model.*
+import com.example.data.local.FactoryDao
 import com.example.data.remote.CreateJobRequest
 import com.example.data.remote.JobDto
 import com.example.data.remote.JobInputDto
 import com.example.data.remote.NetworkClient
 import com.example.data.remote.ProjectCreateRequest
 import com.example.data.remote.ProjectDto
-import com.example.data.local.FactoryDao
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
@@ -17,11 +17,17 @@ import kotlinx.coroutines.flow.stateIn
 class Repository(private val dao: FactoryDao) {
     private val scope = CoroutineScope(Dispatchers.IO)
     private val api = NetworkClient.apiService
-    val projects: StateFlow<List<Project>> = dao.getAllProjects().stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
-    val series: StateFlow<List<Series>> = dao.getAllSeries().stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
-    val episodes: StateFlow<List<Episode>> = dao.getAllEpisodes().stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
-    val scenes: StateFlow<List<Scene>> = dao.getAllScenes().stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
-    val jobs: StateFlow<List<GenerationJob>> = dao.getAllJobs().stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val projects: StateFlow<List<Project>> = dao.getAllProjects()
+        .stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val series: StateFlow<List<Series>> = dao.getAllSeries()
+        .stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val episodes: StateFlow<List<Episode>> = dao.getAllEpisodes()
+        .stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val scenes: StateFlow<List<Scene>> = dao.getAllScenes()
+        .stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val jobs: StateFlow<List<GenerationJob>> = dao.getAllJobs()
+        .stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     suspend fun addProject(name: String, description: String) {
         dao.insertProject(api.createProject(ProjectCreateRequest(name)).data.toDomain())
@@ -47,11 +53,14 @@ class Repository(private val dao: FactoryDao) {
                 targetType = "SCENE",
                 targetId = sceneId,
                 provider = "mock",
-                input = JobInputDto(parameters = mapOf("sceneId" to sceneId, "description" to scene.description), deterministic = true),
+                input = JobInputDto(
+                    parameters = mapOf("sceneId" to sceneId, "description" to scene.description),
+                    deterministic = true,
+                ),
             ),
         )
+        // The create response is authoritative; avoid an immediate duplicate GET.
         dao.insertJob(response.data.toDomain())
-        refreshJob(response.data.id)
     }
 
     suspend fun refreshJob(jobId: String) {
@@ -80,6 +89,7 @@ private fun JobDto.toDomain() = GenerationJob(
 
 object Graph {
     lateinit var repository: Repository
+
     fun provide(context: android.content.Context) {
         val database = com.example.data.local.FactoryDatabase.getDatabase(context)
         repository = Repository(database.factoryDao())
