@@ -16,6 +16,8 @@ interface FactoryApiService {
     @POST("api/v1/jobs/{job_id}/resume") suspend fun resumeJob(@Path("job_id") jobId: String): Map<String, Any?>
     @POST("api/v1/jobs/{job_id}/retry") suspend fun retryJob(@Path("job_id") jobId: String): Map<String, Any?>
     @GET("api/v1/jobs/{job_id}/events") suspend fun getJobEvents(@Path("job_id") jobId: String,@Query("limit") limit: Int = 200): JobEventsFeed
+    @GET("api/v1/jobs/{job_id}/provider-runs") suspend fun getProviderRuns(@Path("job_id") jobId: String,@Query("limit") limit: Int = 50): ProviderRunsFeed
+    @GET("api/v1/jobs/{job_id}/provider-runs/{run_id}") suspend fun getProviderRun(@Path("job_id") jobId: String,@Path("run_id") runId: String): Map<String, Any?>
     @POST("api/v1/batches/{batch_id}/cancel") suspend fun cancelBatch(@Path("batch_id") batchId: String): Map<String, Any?>
     @POST("api/v1/batches/{batch_id}/retry") suspend fun retryBatch(@Path("batch_id") batchId: String): Map<String, Any?>
     @GET("api/v1/batches/{batch_id}") suspend fun getBatch(@Path("batch_id") batchId: String): Map<String, Any?>
