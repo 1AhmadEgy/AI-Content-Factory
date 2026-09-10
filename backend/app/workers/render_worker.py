@@ -154,7 +154,6 @@ class RenderWorker(Worker):
 
     def shutdown(self) -> None:
         for renderer in list(self._renderers.values()):
-            for render_id in list(renderer._processes):
-                renderer.cancel(render_id)
+            renderer.shutdown()
         self._renderers.clear()
         self._initialized = False
