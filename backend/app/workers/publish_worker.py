@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 import uuid
 from pathlib import Path
 
@@ -35,21 +34,40 @@ class PublishWorker(Worker):
             return JobExecutionResult(False, error_code="WORKER_NOT_INITIALIZED", error_message="Worker is not initialized")
         if not job.input.reference_asset_ids:
             return JobExecutionResult(False, error_code="PUBLISH_ASSET_REQUIRED", error_message="At least one source asset is required")
-        asset = next((self.assets.get(a) for a in job.input.reference_asset_ids if self.assets.get(a) is not None), None)
-        if asset is None or asset.status is not AssetStatus.READY:
-            return JobExecutionResult(False, error_code="PUBLISH_ASSET_NOT_READY", error_message="No ready asset to publish")
+
+        asset = next((self.assets.get(asset_id) for asset_id in job.input.reference_asset_ids), None)
+        if asset is None:
+            return JobExecutionResult(False, error_code="PUBLISH_ASSET_NOT_FOUND", error_message="No source asset was found")
+        if asset.project_id != job.project_id:
+            return JobExecutionResult(False, error_code="PUBLISH_ASSET_PROJECT_MISMATCH", error_message=asset.id)
+        if asset.type is not AssetType.VIDEO:
+            return JobExecutionResult(False, error_code="PUBLISH_ASSET_NOT_VIDEO", error_message="Publication requires a video source")
+        if asset.status is not AssetStatus.READY:
+            return JobExecutionResult(False, error_code="PUBLISH_ASSET_NOT_READY", error_message="Source asset is not ready")
+        if asset.provenance.license_status is not LicenseStatus.VERIFIED:
+            return JobExecutionResult(False, error_code="PUBLISH_LICENSE_NOT_VERIFIED", error_message=asset.id)
+        if not self.storage.verify(asset):
+            return JobExecutionResult(False, error_code="PUBLISH_ASSET_INTEGRITY_FAILED", error_message=asset.id, retryable=True)
         if not Path(asset.path).is_file():
             return JobExecutionResult(False, error_code="PUBLISH_ASSET_MISSING", error_message=asset.path, retryable=True)
-        platforms = [str(p).lower().strip() for p in job.input.parameters.get("platforms", ["youtube", "tiktok", "instagram", "facebook"])]
-        platforms = list(dict.fromkeys(p for p in platforms if p))
+
+        raw_platforms = job.input.parameters.get("platforms", ["youtube", "tiktok", "instagram", "facebook"])
+        if not isinstance(raw_platforms, (list, tuple)):
+            return JobExecutionResult(False, error_code="PUBLISH_PLATFORMS_INVALID", error_message="platforms must be a list")
+        platforms = list(dict.fromkeys(str(platform).lower().strip() for platform in raw_platforms if str(platform).strip()))
         if not platforms:
             return JobExecutionResult(False, error_code="PUBLISH_PLATFORMS_REQUIRED", error_message="At least one platform is required")
+
         title = str(job.input.parameters.get("title", "AI Content"))
         description = str(job.input.parameters.get("description", ""))
-        tags = [str(t) for t in job.input.parameters.get("tags", [])]
+        raw_tags = job.input.parameters.get("tags", [])
+        if not isinstance(raw_tags, (list, tuple)):
+            return JobExecutionResult(False, error_code="PUBLISH_TAGS_INVALID", error_message="tags must be a list")
+        tags = [str(tag) for tag in raw_tags]
         scheduled_at = job.input.parameters.get("scheduledAt")
-        packages = []
-        failures = []
+        packages: list[dict[str, object]] = []
+        failures: list[str] = []
+
         for index, platform in enumerate(platforms):
             context.report_progress(index / len(platforms), f"publish:{platform}:validate")
             try:
@@ -82,6 +100,7 @@ class PublishWorker(Worker):
             "jobId": job.id,
             "projectId": job.project_id,
             "assetIds": list(job.input.reference_asset_ids),
+            "sourceAssetId": asset.id,
             "platforms": packages,
             "title": title,
             "description": description,
@@ -94,7 +113,7 @@ class PublishWorker(Worker):
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"publish:{job.id}:{digest}"))
         self.assets.create(Asset(
             asset_id, job.project_id, AssetType.DOCUMENT, path, "application/json; charset=utf-8", size, digest, AssetStatus.READY,
-            build_provenance(job, source_asset_ids=list(job.input.reference_asset_ids), metadata={"publicationPackage": True, "adapterCount": len(platforms), "status": package_status, "failureCount": len(failures)}, license_status=LicenseStatus.VERIFIED),
+            build_provenance(job, source_asset_ids=[asset.id], metadata={"publicationPackage": True, "adapterCount": len(platforms), "status": package_status, "failureCount": len(failures)}, license_status=LicenseStatus.VERIFIED),
         ))
         context.report_progress(1.0, "publish:complete")
         if failures:
