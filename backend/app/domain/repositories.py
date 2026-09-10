@@ -10,6 +10,15 @@ class ProjectRepository(ABC):
     @abstractmethod
     def get(self, project_id: str) -> Project | None: ...
 
+    @abstractmethod
+    def list(self, limit: int, offset: int) -> tuple[list[Project], int]: ...
+
+    @abstractmethod
+    def update(self, project: Project) -> Project: ...
+
+    @abstractmethod
+    def delete(self, project_id: str) -> None: ...
+
 
 class EpisodeRepository(ABC):
     @abstractmethod
