@@ -43,12 +43,30 @@ jobs:
             -dname "CN=Android Debug,O=Android,C=US"
       - name: Assemble debug APK
         run: gradle --no-daemon assembleDebug
+      - name: Generate CI release keystore
+        run: |
+          keytool -genkeypair -v \
+            -keystore ci-release.keystore \
+            -storepass ci-release-password \
+            -alias upload \
+            -keypass ci-release-password \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=AI Content Factory CI,O=AI Content Factory,C=US"
+      - name: Assemble optimized release APK
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/ci-release.keystore
+          STORE_PASSWORD: ci-release-password
+          KEY_PASSWORD: ci-release-password
+        run: gradle --no-daemon assembleRelease
       - name: Unit tests
         run: gradle --no-daemon testDebugUnitTest
-      - name: Upload APK artifact
+      - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: AI-Content-Factory-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: AI-Content-Factory-apks
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/release/*.apk
           if-no-files-found: error
-      # Validation-only workflow: merge only after this job is green.
