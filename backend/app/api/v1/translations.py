@@ -4,6 +4,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from ...application.translation_pipeline import ContentSegment, TranslationPipeline
 from ...application.translation_service import TranslationProviderUnavailable, TranslationService
 from ...domain.translation import TranslationRequest
 from ...infrastructure.translation_repository import SQLiteTranslationRepository
@@ -42,6 +43,26 @@ class TranslationBatchBody(BaseModel):
     manualTexts: dict[str, str] = Field(default_factory=dict)
 
 
+class TranslationSegmentBody(BaseModel):
+    id: str = Field(min_length=1, max_length=200)
+    text: str = Field(min_length=1)
+    contentType: str = Field(default="dialogue", min_length=1, max_length=50)
+    version: int = Field(default=1, ge=1)
+    context: dict[str, Any] = Field(default_factory=dict)
+    preserveTerms: list[str] = Field(default_factory=list)
+
+
+class TranslationSegmentsBody(BaseModel):
+    sourceLanguage: str = Field(min_length=2, max_length=20)
+    targetLanguages: list[str] = Field(min_length=1, max_length=20)
+    segments: list[TranslationSegmentBody] = Field(min_length=1, max_length=500)
+    glossary: dict[str, str] = Field(default_factory=dict)
+    provider: str | None = None
+    model: str | None = None
+    translationVersion: int = Field(default=1, ge=1)
+    manualTexts: dict[str, dict[str, str]] = Field(default_factory=dict)
+
+
 def _serialize(result):
     return {
         "id": result.id,
@@ -78,15 +99,6 @@ def build_router(store=None) -> APIRouter:
             "data": [_serialize(item) for item in repository.list(source_id=sourceId, target_language=targetLanguage, limit=limit)],
             "requestId": request.state.request_id,
         }
-
-    @router.get("/{translation_id}")
-    def get_translation(translation_id: str, request: Request):
-        if repository is None:
-            raise HTTPException(404, "TRANSLATION_NOT_FOUND")
-        result = repository.get(translation_id)
-        if result is None:
-            raise HTTPException(404, "TRANSLATION_NOT_FOUND")
-        return {"data": _serialize(result), "requestId": request.state.request_id}
 
     def _request(body: TranslationBody, target: str) -> TranslationRequest:
         return TranslationRequest(
@@ -172,5 +184,55 @@ def build_router(store=None) -> APIRouter:
                 {"results": results, "errors": errors},
             )
         return {"data": results, "errors": errors, "requestId": request.state.request_id}
+
+    @router.post("/segments")
+    def translate_segments(body: TranslationSegmentsBody, request: Request):
+        """Translate a whole story/script/dialogue/subtitle document as immutable segments."""
+        pipeline = TranslationPipeline(repository=repository)
+        segments = [
+            ContentSegment(
+                id=item.id,
+                text=item.text,
+                content_type=item.contentType,
+                version=item.version,
+                context=item.context,
+                preserve_terms=tuple(item.preserveTerms),
+            )
+            for item in body.segments
+        ]
+        try:
+            output = pipeline.translate_segments(
+                segments,
+                source_language=body.sourceLanguage,
+                target_languages=body.targetLanguages,
+                glossary=body.glossary,
+                provider=body.provider,
+                model=body.model,
+                manual_texts=body.manualTexts,
+                translation_version=body.translationVersion,
+            )
+        except TranslationProviderUnavailable:
+            raise HTTPException(503, "TRANSLATION_PROVIDER_NOT_CONFIGURED")
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+
+        return {
+            "data": [_serialize(result) for result in output["results"]],
+            "errors": output["errors"],
+            "sourceLanguage": output["sourceLanguage"],
+            "targetLanguages": output["targetLanguages"],
+            "translationVersion": output["translationVersion"],
+            "sourcePreserved": output["sourcePreserved"],
+            "requestId": request.state.request_id,
+        }
+
+    @router.get("/{translation_id}")
+    def get_translation(translation_id: str, request: Request):
+        if repository is None:
+            raise HTTPException(404, "TRANSLATION_NOT_FOUND")
+        result = repository.get(translation_id)
+        if result is None:
+            raise HTTPException(404, "TRANSLATION_NOT_FOUND")
+        return {"data": _serialize(result), "requestId": request.state.request_id}
 
     return router
