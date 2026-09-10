@@ -32,6 +32,9 @@ interface FactoryApiService {
     @POST("api/v1/jobs/{job_id}/cancel")
     suspend fun cancelJob(@Path("job_id") jobId: String): JobEnvelope
 
+    @POST("api/v1/jobs/{job_id}/retry")
+    suspend fun retryJob(@Path("job_id") jobId: String): JobEnvelope
+
     @GET("api/v1/jobs/{job_id}/events")
     suspend fun jobEvents(@Path("job_id") jobId: String, @Query("limit") limit: Int = 100): JobEventsFeed
 
