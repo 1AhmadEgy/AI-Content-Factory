@@ -7,6 +7,7 @@ from ..application.ai_scene_planner import AIScenePlanner
 from ..application.ai_script_engine import AIScriptEngine
 from ..application.ai_story_engine import AIStoryEngine
 from ..domain.content import ContentBrief, StoryPlan
+from ..domain.jobs import JobStatus
 from ..infrastructure.asset_repository import SQLiteAssetRepository
 from ..infrastructure.character_repository import SQLiteCharacterRepository
 from ..infrastructure.location_repository import SQLiteLocationRepository
@@ -84,7 +85,8 @@ class OrchestratorRuntime:
         self.story_engine = AIStoryEngine(self.providers)
         self.script_engine = AIScriptEngine(self.providers)
         self.scene_planner = AIScenePlanner(self.providers)
-        self.pipeline = ProductionPipelineOrchestrator(JobService(repositories.jobs), self.queue.enqueue)
+        self.job_service = JobService(repositories.jobs)
+        self.pipeline = ProductionPipelineOrchestrator(self.job_service, self.queue.enqueue)
         self.completion_gate = CompletionGate(self.assets, self.storage)
         self.executor = JobExecutor(repositories.jobs, self.queue, self.workers, self.events.append, self.pipeline.on_completed, completion_gate=self.completion_gate)
         self.country_library_seed = ensure_country_library_projects(repositories)
@@ -134,6 +136,15 @@ class OrchestratorRuntime:
         job, lease = claimed
         selected_worker = worker_id if worker_id != "auto" else self.workers.resolve_for_job(job.type)
         return self.executor.execute_claimed(job, lease, worker_id=selected_worker)
+
+    def cancel_job(self, job_id: str) -> object:
+        job = self.repositories.jobs.get(job_id)
+        if job is None:
+            raise KeyError("JOB_NOT_FOUND")
+        if job.status is JobStatus.RUNNING:
+            worker_id = self.workers.resolve_for_job(job.type)
+            self.workers.get(worker_id).cancel(job.id)
+        return self.job_service.cancel(job_id)
 
     def heartbeat(self, job_id: str, lease_id: str, worker_id: str) -> None:
         if self.repositories.jobs.get(job_id) is None:
