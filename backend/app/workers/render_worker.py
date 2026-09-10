@@ -1,22 +1,22 @@
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
-import tempfile
 import uuid
 from pathlib import Path
 
 from ..domain.asset_repositories import AssetRepository
 from ..domain.assets import Asset, AssetStatus, AssetType, LicenseStatus
 from ..domain.jobs import GenerationJob
+from ..domain.timeline import Timeline, TimelineClip, TimelineTrack, TrackType
 from ..infrastructure.storage import LocalAssetStorage
 from ..orchestrator.provenance import build_provenance
 from ..orchestrator.queue import JobExecutionResult, Worker, WorkerContext
+from ..rendering.ffmpeg_renderer import FfmpegRenderOptions, FfmpegRenderer
+from ..rendering.renderer import RenderProfile
 
 
 class RenderWorker(Worker):
-    """Render real timeline media with FFmpeg and validate the result with ffprobe."""
+    """Production render worker backed by the canonical FfmpegRenderer."""
 
     worker_type = "render"
 
@@ -32,9 +32,11 @@ class RenderWorker(Worker):
         self.ffmpeg_binary = ffmpeg_binary
         self.ffprobe_binary = ffprobe_binary
         self._initialized = False
+        self._renderers: dict[str, FfmpegRenderer] = {}
 
     def initialize(self) -> None:
-        self._initialized = shutil.which(self.ffmpeg_binary) is not None and shutil.which(self.ffprobe_binary) is not None
+        renderer = FfmpegRenderer({}, FfmpegRenderOptions(ffmpeg_bin=self.ffmpeg_binary, ffprobe_bin=self.ffprobe_binary))
+        self._initialized = bool(renderer.health_check().get("available"))
 
     def health_check(self) -> bool:
         return self._initialized
@@ -48,141 +50,131 @@ class RenderWorker(Worker):
         timeline_asset = self.assets.get(job.input.reference_asset_ids[0])
         if timeline_asset is None or timeline_asset.type is not AssetType.DOCUMENT:
             return JobExecutionResult(False, error_code="RENDER_TIMELINE_NOT_FOUND", error_message="Timeline document was not found")
+
         try:
             manifest = json.loads(self.storage.read_bytes(timeline_asset.sha256))
-            duration_us = int(manifest["durationUs"])
-            tracks = manifest.get("tracks", [])
+            timeline = self._timeline_from_manifest(manifest, job.project_id)
         except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
             return JobExecutionResult(False, error_code="RENDER_INVALID_TIMELINE", error_message=str(exc))
-        if duration_us <= 0 or not tracks:
+        if not timeline.tracks:
             return JobExecutionResult(False, error_code="RENDER_EMPTY_TIMELINE", error_message="Timeline has no tracks")
 
         width, height = self._resolution(job.input.parameters)
         fps = max(1, int(job.input.parameters.get("fps", 30)))
-        duration = duration_us / 1_000_000
         timeout = int(job.input.parameters.get("timeoutSeconds", 600))
-        subtitles = str(job.input.parameters.get("subtitlePath", "")).strip() or None
+        profile = RenderProfile(name=f"{width}x{height}@{fps}", width=width, height=height, fps=float(fps))
 
-        with tempfile.TemporaryDirectory(prefix="aicf-render-") as temp_dir:
-            root = Path(temp_dir)
-            video_parts: list[Path] = []
-            audio_parts: list[Path] = []
-            try:
-                for track in tracks:
-                    track_type = str(track.get("type", "VIDEO")).upper()
-                    for clip in track.get("clips", []):
-                        asset = self.assets.get(str(clip.get("assetId", "")))
-                        if asset is None or asset.status is not AssetStatus.READY:
-                            return JobExecutionResult(False, error_code="RENDER_ASSET_NOT_READY", error_message=str(clip.get("assetId")))
-                        payload = self.storage.read_bytes(asset.sha256)
-                        source = root / f"source-{len(video_parts) + len(audio_parts)}{self._extension(asset.mime_type)}"
-                        source.write_bytes(payload)
-                        start = max(0.0, int(clip.get("sourceStartUs", 0)) / 1_000_000)
-                        clip_duration = max(0.001, int(clip.get("durationUs", 0)) / 1_000_000)
-                        if track_type in {"VIDEO", "IMAGE"} or asset.type in {AssetType.VIDEO, AssetType.IMAGE}:
-                            part = root / f"video-{len(video_parts):04d}.mp4"
-                            if asset.type is AssetType.IMAGE:
-                                command = [self.ffmpeg_binary, "-hide_banner", "-loglevel", "error", "-y", "-loop", "1", "-i", str(source), "-t", f"{clip_duration:.6f}", "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2", "-r", str(fps), "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(part)]
-                            else:
-                                command = [self.ffmpeg_binary, "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{start:.6f}", "-i", str(source), "-t", f"{clip_duration:.6f}", "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2", "-r", str(fps), "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(part)]
-                            result = self._run(command, timeout)
-                            if result is not None:
-                                return result
-                            video_parts.append(part)
-                        elif asset.type is AssetType.AUDIO or track_type in {"AUDIO", "DIALOGUE", "MUSIC", "SFX"}:
-                            part = root / f"audio-{len(audio_parts):04d}.m4a"
-                            command = [self.ffmpeg_binary, "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{start:.6f}", "-i", str(source), "-t", f"{clip_duration:.6f}", "-vn", "-c:a", "aac", "-ar", "48000", "-ac", "2", str(part)]
-                            result = self._run(command, timeout)
-                            if result is not None:
-                                return result
-                            audio_parts.append(part)
+        asset_paths: dict[str, str] = {}
+        for track in timeline.tracks:
+            for clip in track.clips:
+                asset = self.assets.get(clip.asset_id)
+                if asset is None or asset.status is not AssetStatus.READY:
+                    return JobExecutionResult(False, error_code="RENDER_ASSET_NOT_READY", error_message=clip.asset_id)
+                path = Path(asset.path)
+                if not path.is_file():
+                    return JobExecutionResult(False, error_code="RENDER_ASSET_MISSING", error_message=clip.asset_id)
+                asset_paths[clip.asset_id] = str(path)
 
-                if not video_parts:
-                    return JobExecutionResult(False, error_code="RENDER_NO_VIDEO", error_message="Timeline contains no video or image clips")
-
-                concat = root / "concat.txt"
-                concat.write_text("".join(f"file '{p.as_posix().replace(chr(39), chr(39)+chr(92)+chr(39)+chr(39))}'\n" for p in video_parts), encoding="utf-8")
-                silent_video = root / "video.mp4"
-                result = self._run([self.ffmpeg_binary, "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(concat), "-c", "copy", str(silent_video)], timeout)
-                if result is not None:
-                    return result
-
-                final = root / f"render-{uuid.uuid4().hex}.mp4"
-                command = [self.ffmpeg_binary, "-hide_banner", "-loglevel", "error", "-y", "-i", str(silent_video)]
-                if audio_parts:
-                    for part in audio_parts:
-                        command += ["-i", str(part)]
-                    inputs = ";".join(f"[{i}:a]" for i in range(1, len(audio_parts) + 1))
-                    command += ["-filter_complex", f"{inputs}amix=inputs={len(audio_parts)}:duration=longest:dropout_transition=2[aout]", "-map", "0:v:0", "-map", "[aout]", "-shortest"]
-                else:
-                    command += ["-an"]
-                if subtitles:
-                    command += ["-vf", f"subtitles={subtitles.replace(chr(39), chr(39)+chr(92)+chr(39)+chr(39))}"]
-                command += ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", str(final)]
-                result = self._run(command, timeout)
-                if result is not None:
-                    return result
-
-                probe = self._probe(final, timeout)
-                if isinstance(probe, JobExecutionResult):
-                    return probe
-                validation = self._validate_probe(probe, width, height, fps)
-                if validation:
-                    return JobExecutionResult(False, error_code="FINAL_QC_FAILED", error_message=";".join(validation), retryable=False)
-                payload = final.read_bytes()
-            except OSError as exc:
-                return JobExecutionResult(False, error_code="RENDER_IO_ERROR", error_message=str(exc), retryable=True)
+        renderer = FfmpegRenderer(
+            asset_paths,
+            FfmpegRenderOptions(
+                ffmpeg_bin=self.ffmpeg_binary,
+                ffprobe_bin=self.ffprobe_binary,
+                overwrite=True,
+                subtitles_path=str(job.input.parameters.get("subtitlePath", "")).strip() or None,
+            ),
+        )
+        self._renderers[job.id] = renderer
+        output = self.storage.root / "staging" / f"render-{job.id}-{uuid.uuid4().hex}.mp4"
+        try:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            result = renderer.render(timeline, profile, str(output))
+            if not result.success or not result.output_path:
+                message = result.error or "FFmpeg render failed"
+                return JobExecutionResult(False, error_code="FFMPEG_RENDER_FAILED", error_message=message, retryable=True)
+            probe = renderer.probe(result.output_path)
+            errors = self._validate_probe(probe, width, height)
+            if errors:
+                return JobExecutionResult(False, error_code="FINAL_QC_FAILED", error_message=";".join(errors), retryable=False)
+            payload = Path(result.output_path).read_bytes()
+        except (OSError, RuntimeError, ValueError) as exc:
+            return JobExecutionResult(False, error_code="RENDER_IO_ERROR", error_message=str(exc), retryable=True)
+        finally:
+            self._renderers.pop(job.id, None)
+            output.unlink(missing_ok=True)
 
         digest, path, size = self.storage.put_bytes(payload)
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"render:{job.id}:{digest}"))
-        asset = Asset(id=asset_id, project_id=job.project_id, type=AssetType.VIDEO, path=path, mime_type="video/mp4", size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, source_asset_ids=[timeline_asset.id], metadata={"width": width, "height": height, "fps": fps, "durationUs": duration_us, "engine": "ffmpeg", "finalQc": "passed"}, license_status=LicenseStatus.VERIFIED))
+        asset = Asset(
+            id=asset_id,
+            project_id=job.project_id,
+            type=AssetType.VIDEO,
+            path=path,
+            mime_type="video/mp4",
+            size_bytes=size,
+            sha256=digest,
+            status=AssetStatus.READY,
+            provenance=build_provenance(
+                job,
+                source_asset_ids=[timeline_asset.id, *asset_paths.keys()],
+                metadata={"width": width, "height": height, "fps": fps, "durationUs": timeline.duration_us, "engine": "ffmpeg", "finalQc": "passed"},
+                license_status=LicenseStatus.VERIFIED,
+            ),
+        )
         self.assets.create(asset)
-        return JobExecutionResult(True, [asset_id], {"width": width, "height": height, "fps": fps, "durationUs": duration_us, "finalQc": "passed"}, f"ffmpeg-{job.id}")
-
-    def _run(self, command: list[str], timeout: int) -> JobExecutionResult | None:
-        try:
-            completed = subprocess.run(command, check=False, capture_output=True, timeout=timeout)
-        except subprocess.TimeoutExpired as exc:
-            return JobExecutionResult(False, error_code="RENDER_TIMEOUT", error_message=str(exc), retryable=True)
-        except OSError as exc:
-            return JobExecutionResult(False, error_code="RENDER_PROCESS_ERROR", error_message=str(exc), retryable=True)
-        if completed.returncode != 0:
-            detail = completed.stderr.decode("utf-8", errors="replace")[-3000:]
-            return JobExecutionResult(False, error_code="FFMPEG_RENDER_FAILED", error_message=detail or "FFmpeg failed", retryable=True)
-        return None
-
-    def _probe(self, path: Path, timeout: int) -> dict[str, object] | JobExecutionResult:
-        try:
-            completed = subprocess.run([self.ffprobe_binary, "-v", "error", "-print_format", "json", "-show_streams", "-show_format", str(path)], check=False, capture_output=True, timeout=timeout)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            return JobExecutionResult(False, error_code="FFPROBE_FAILED", error_message=str(exc), retryable=True)
-        if completed.returncode != 0:
-            return JobExecutionResult(False, error_code="FFPROBE_FAILED", error_message=completed.stderr.decode("utf-8", errors="replace")[-2000:], retryable=False)
-        try:
-            return json.loads(completed.stdout.decode("utf-8"))
-        except json.JSONDecodeError as exc:
-            return JobExecutionResult(False, error_code="FFPROBE_INVALID_JSON", error_message=str(exc), retryable=False)
+        return JobExecutionResult(
+            True,
+            [asset_id],
+            {"width": width, "height": height, "fps": fps, "durationUs": timeline.duration_us, "finalQc": "passed", "engine": "ffmpeg"},
+            f"ffmpeg-{job.id}",
+        )
 
     @staticmethod
-    def _validate_probe(probe: dict[str, object], width: int, height: int, fps: int) -> list[str]:
-        errors: list[str] = []
+    def _timeline_from_manifest(manifest: dict[str, object], project_id: str) -> Timeline:
+        tracks: list[TimelineTrack] = []
+        for raw_track in manifest.get("tracks", []):
+            if not isinstance(raw_track, dict):
+                continue
+            track_type = TrackType(str(raw_track.get("type", "VIDEO")).upper())
+            clips: list[TimelineClip] = []
+            for raw_clip in raw_track.get("clips", []):
+                if not isinstance(raw_clip, dict):
+                    continue
+                clips.append(
+                    TimelineClip(
+                        id=str(raw_clip.get("id", uuid.uuid4().hex)),
+                        asset_id=str(raw_clip["assetId"]),
+                        start_us=int(raw_clip.get("startUs", 0)),
+                        duration_us=int(raw_clip.get("durationUs", 0)),
+                        source_start_us=int(raw_clip.get("sourceStartUs", 0)),
+                        z_index=int(raw_clip.get("zIndex", 0)),
+                    )
+                )
+            tracks.append(TimelineTrack(id=str(raw_track.get("id", uuid.uuid4().hex)), type=track_type, clips=clips))
+        return Timeline(
+            id=str(manifest.get("id", uuid.uuid4().hex)),
+            project_id=project_id,
+            duration_us=int(manifest["durationUs"]),
+            timebase=int(manifest.get("timebase", 1_000_000)),
+            tracks=tracks,
+        )
+
+    @staticmethod
+    def _validate_probe(probe: dict[str, object], width: int, height: int) -> list[str]:
         streams = probe.get("streams", [])
         if not isinstance(streams, list) or not streams:
             return ["NO_MEDIA_STREAMS"]
         video = next((s for s in streams if isinstance(s, dict) and s.get("codec_type") == "video"), None)
         if not video:
-            errors.append("NO_VIDEO_STREAM")
-        else:
-            if int(video.get("width", 0)) != width or int(video.get("height", 0)) != height:
-                errors.append("VIDEO_RESOLUTION_MISMATCH")
-        duration = float((probe.get("format") or {}).get("duration", 0)) if isinstance(probe.get("format"), dict) else 0.0
+            return ["NO_VIDEO_STREAM"]
+        errors: list[str] = []
+        if int(video.get("width", 0)) != width or int(video.get("height", 0)) != height:
+            errors.append("VIDEO_RESOLUTION_MISMATCH")
+        media_duration = probe.get("format", {})
+        duration = float(media_duration.get("duration", 0)) if isinstance(media_duration, dict) else 0.0
         if duration <= 0:
             errors.append("VIDEO_DURATION_INVALID")
         return errors
-
-    @staticmethod
-    def _extension(mime_type: str) -> str:
-        return {"image/png": ".png", "image/jpeg": ".jpg", "video/mp4": ".mp4", "audio/mpeg": ".mp3", "audio/wav": ".wav", "audio/x-wav": ".wav", "audio/mp4": ".m4a"}.get(mime_type.split(";")[0].lower(), ".bin")
 
     @staticmethod
     def _resolution(parameters: dict[str, object]) -> tuple[int, int]:
@@ -197,7 +189,17 @@ class RenderWorker(Worker):
         return (height * 16 // 9, height)
 
     def cancel(self, job_id: str) -> None:
-        return None
+        renderer = self._renderers.get(job_id)
+        if renderer is not None:
+            renderer.cancel(renderer_id=self._renderer_id(job_id))
+
+    @staticmethod
+    def _renderer_id(job_id: str) -> str:
+        return job_id
 
     def shutdown(self) -> None:
+        for renderer in list(self._renderers.values()):
+            for render_id in list(renderer._processes):
+                renderer.cancel(render_id)
+        self._renderers.clear()
         self._initialized = False
