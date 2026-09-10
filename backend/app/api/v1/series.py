@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -48,10 +47,24 @@ def build_router(runtime) -> APIRouter:
             raise HTTPException(404, "SERIES_TEMPLATE_NOT_FOUND")
         current = repo.get(project_id)
         if current is None:
-            context = new_series_context(project_id, body.title or template["name"], body.templateId)
+            context = new_series_context(
+                series_id=project_id,
+                title=body.title or template["name"],
+                template_id=body.templateId,
+                genre=template.get("genre", ""),
+                character_ids=list(template.get("defaultCharacterIds", [])),
+                location_ids=list(template.get("defaultLocationIds", [])),
+            )
         else:
             context = current
-        context = merge_series_defaults(context, template)
+            context["templateId"] = context.get("templateId") or body.templateId
+            context["genre"] = context.get("genre") or template.get("genre", "")
+            context = merge_series_defaults(
+                context,
+                character_ids=list(template.get("defaultCharacterIds", [])),
+                location_ids=list(template.get("defaultLocationIds", [])),
+                rules=dict(template.get("continuityRules", {})),
+            )
         if body.title:
             context["title"] = body.title
         repo.save(project_id, context)
@@ -71,10 +84,9 @@ def build_router(runtime) -> APIRouter:
         current = repo.get(project_id)
         if current is None:
             raise HTTPException(404, "SERIES_CONTEXT_NOT_FOUND")
-        # Explicit user edits win; no defaults or historical snapshots are rewritten.
+        # Explicit user edits win; historical snapshots are append-only and never rewritten.
         context = dict(current)
         context.update(body.context)
-        context["updatedAt"] = context.get("updatedAt")
         repo.save(project_id, context)
         return {"data": context, "requestId": request.state.request_id}
 
@@ -92,7 +104,6 @@ def build_router(runtime) -> APIRouter:
         episode_context["episodeId"] = episode_id
         snapshot = repo.snapshot(project_id, number, episode_context, episode_id)
         context["nextEpisodeNumber"] = number + 1
-        context["updatedAt"] = snapshot.get("updatedAt", context.get("updatedAt"))
         context.setdefault("episodeSnapshots", []).append({"episodeNumber": number, "episodeId": episode_id, "context": snapshot})
         repo.save(project_id, context)
         return {"data": snapshot, "requestId": request.state.request_id}
