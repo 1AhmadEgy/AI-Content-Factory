@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
 
 from ...infrastructure.sqlite import SQLiteProjectRepository
-from ...scheduling.persistent import PersistentScheduler, Schedule, SQLiteScheduleRepository, cron_matches
+from ...scheduling.persistent import PersistentScheduler, Schedule, SQLiteScheduleRepository, cron_matches, next_cron_time
 
 router=APIRouter(prefix="/api/v1/schedules",tags=["scheduling"])
 
@@ -36,8 +36,9 @@ def build_router(projects:SQLiteProjectRepository,schedules:SQLiteScheduleReposi
     @router.post("",status_code=202)
     def create_schedule(body:ScheduleRequest,request:Request):
         if projects.get(body.projectId) is None:raise HTTPException(404,"PROJECT_NOT_FOUND")
-        run_at=(body.runAt or datetime.now(timezone.utc));run_at=run_at.replace(tzinfo=timezone.utc) if run_at.tzinfo is None else run_at.astimezone(timezone.utc)
-        s=Schedule(id="sch_"+uuid4().hex,project_id=body.projectId,operation=body.operation,payload=body.payload,run_at=run_at,cron=body.cron,interval_seconds=body.intervalSeconds,timezone_name=body.timezone,next_run_at=run_at)
+        now=datetime.now(timezone.utc);run_at=body.runAt or now;run_at=run_at.replace(tzinfo=timezone.utc) if run_at.tzinfo is None else run_at.astimezone(timezone.utc)
+        next_run=next_cron_time(run_at,body.cron,body.timezone) if body.cron else run_at
+        s=Schedule(id="sch_"+uuid4().hex,project_id=body.projectId,operation=body.operation,payload=body.payload,run_at=run_at,cron=body.cron,interval_seconds=body.intervalSeconds,timezone_name=body.timezone,next_run_at=next_run)
         schedules.create(s);return {"data":_serialize(s),"requestId":request.state.request_id}
     @router.get("/{schedule_id}")
     def get_schedule(schedule_id:str,request:Request):
