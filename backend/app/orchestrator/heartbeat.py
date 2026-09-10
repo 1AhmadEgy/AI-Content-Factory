@@ -22,8 +22,11 @@ class LeaseHeartbeat:
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
-        if self._thread and self._thread.is_alive():
+        thread = self._thread
+        if thread is not None and thread.is_alive():
             return
+        if thread is not None and not thread.is_alive():
+            self._thread = None
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._run,
@@ -44,6 +47,17 @@ class LeaseHeartbeat:
 
     def stop(self) -> None:
         self._stop.set()
-        if self._thread:
-            self._thread.join(timeout=max(1.0, self.interval_seconds * 2))
+        thread = self._thread
+        if thread is None:
+            return
+        if thread.is_alive():
+            thread.join(timeout=max(1.0, self.interval_seconds * 2))
+        if thread.is_alive():
+            # Do not clear the live reference: callers must not accidentally
+            # start a second heartbeat for the same lease.
+            logger.warning(
+                "Lease heartbeat did not stop within timeout",
+                extra={"job_id": self.lease.job_id, "worker_id": self.lease.worker_id},
+            )
+            return
         self._thread = None
