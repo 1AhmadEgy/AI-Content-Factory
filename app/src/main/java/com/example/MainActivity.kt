@@ -60,11 +60,21 @@ fun MainScreen() {
             composable("projects") { DashboardScreen(viewModel, onProjectClick = { id -> navController.navigate("project/$id") }) }
             composable("project/{projectId}", arguments = listOf(navArgument("projectId") { type = NavType.StringType })) { backStackEntry ->
                 val projectId = backStackEntry.arguments?.getString("projectId") ?: return@composable
-                ProjectDetailScreen(projectId, viewModel, onBack = { navController.popBackStack() }, onSeriesClick = { id -> navController.navigate("series/$id") })
+                ProjectDetailScreen(
+                    projectId,
+                    viewModel,
+                    onBack = { navController.popBackStack() },
+                    onSeriesClick = { id -> navController.navigate("series/$id") },
+                    onSeriesControlClick = { navController.navigate("series-control/$projectId") },
+                )
             }
             composable("series/{seriesId}", arguments = listOf(navArgument("seriesId") { type = NavType.StringType })) { backStackEntry ->
                 val seriesId = backStackEntry.arguments?.getString("seriesId") ?: return@composable
                 SeriesDetailScreen(seriesId, viewModel, onBack = { navController.popBackStack() }, onEpisodeClick = { id -> navController.navigate("episode/$id") })
+            }
+            composable("series-control/{projectId}", arguments = listOf(navArgument("projectId") { type = NavType.StringType })) { backStackEntry ->
+                val projectId = backStackEntry.arguments?.getString("projectId") ?: return@composable
+                SeriesControlScreen(projectId, onBack = { navController.popBackStack() })
             }
             composable("episode/{episodeId}", arguments = listOf(navArgument("episodeId") { type = NavType.StringType })) { backStackEntry ->
                 val episodeId = backStackEntry.arguments?.getString("episodeId") ?: return@composable
