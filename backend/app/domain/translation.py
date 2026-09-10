@@ -51,6 +51,7 @@ class TranslationResult:
     translated_text: str
     content_type: str
     source_id: str | None = None
+    source_version: int = 1
     provider: str = "local"
     model: str | None = None
     glossary_version: int = 1
@@ -63,4 +64,18 @@ class TranslationResult:
     def create(cls, request: TranslationRequest, translated_text: str, *, provider: str = "local", model: str | None = None, version: int = 1, manual: bool = False, metadata: dict[str, Any] | None = None) -> "TranslationResult":
         if version < 1:
             raise ValueError("TRANSLATION_VERSION_INVALID")
-        return cls(id=f"tr_{uuid4().hex}", source_language=request.source_language, target_language=request.target_language, source_text=request.text, translated_text=translated_text, content_type=request.content_type, source_id=request.source_id, provider=provider, model=model, version=version, manual=manual, metadata=dict(metadata or {}))
+        return cls(
+            id=f"tr_{uuid4().hex}",
+            source_language=request.source_language,
+            target_language=request.target_language,
+            source_text=request.text,
+            translated_text=translated_text,
+            content_type=request.content_type,
+            source_id=request.source_id,
+            source_version=request.source_version,
+            provider=provider,
+            model=model,
+            version=version,
+            manual=manual,
+            metadata=dict(metadata or {}),
+        )
