@@ -20,6 +20,7 @@ from ..workers.provider_worker import ProviderGenerationWorker
 from ..workers.publish_worker import PublishWorker
 from ..workers.qc_worker import QualityControlWorker
 from ..workers.render_worker import RenderWorker
+from ..workers.repurpose_worker import RepurposeWorker
 from ..workers.timeline_worker import TimelineWorker
 from ..workers.registry import WorkerRegistry
 from .content_pipeline import ContentPipelineOrchestrator
@@ -65,6 +66,9 @@ class OrchestratorRuntime:
         publisher = PublishWorker(self.storage, self.assets)
         publisher.initialize()
         self.workers.register(publisher, capabilities={"PUBLISH"}, worker_id="publish")
+        repurpose = RepurposeWorker(self.storage, self.assets)
+        repurpose.initialize()
+        self.workers.register(repurpose, capabilities={"REPURPOSE"}, worker_id="repurpose")
 
         self.story_engine = AIStoryEngine(self.providers)
         self.script_engine = AIScriptEngine(self.providers)
