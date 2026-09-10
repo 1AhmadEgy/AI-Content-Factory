@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
+import threading
 import uuid
 from pathlib import Path
 from typing import Any
@@ -30,6 +33,8 @@ class MediaDocumentWorker(Worker):
         self.ffmpeg_binary, self.ffprobe_binary = ffmpeg_binary, ffprobe_binary
         self.subprocess_timeout_seconds = max(1, int(subprocess_timeout_seconds))
         self._initialized = False
+        self._processes: dict[str, subprocess.Popen[str]] = {}
+        self._process_lock = threading.RLock()
 
     def initialize(self) -> None:
         self._initialized = True
@@ -135,6 +140,43 @@ class MediaDocumentWorker(Worker):
         data = {"projectId": job.project_id, "jobId": job.id, "title": job.input.parameters.get("title", "AI Content"), "description": job.input.parameters.get("description", ""), "tags": job.input.parameters.get("tags", []), "language": job.input.parameters.get("language", "en"), "platforms": job.input.parameters.get("platforms", []), "scheduledAt": job.input.parameters.get("scheduledAt")}
         return (json.dumps(data, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
 
+    def _run_process(self, job_id: str, args: list[str]) -> tuple[subprocess.CompletedProcess[str] | None, bool]:
+        proc: subprocess.Popen[str] | None = None
+        try:
+            proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+            with self._process_lock:
+                self._processes[job_id] = proc
+            try:
+                stdout, stderr = proc.communicate(timeout=self.subprocess_timeout_seconds)
+            except subprocess.TimeoutExpired:
+                self._terminate_process(job_id, proc)
+                stdout, stderr = proc.communicate()
+                return subprocess.CompletedProcess(args, proc.returncode, stdout, stderr), True
+            return subprocess.CompletedProcess(args, proc.returncode, stdout, stderr), False
+        except OSError as exc:
+            return subprocess.CompletedProcess(args, 127, "", str(exc)), False
+        finally:
+            with self._process_lock:
+                if proc is not None and self._processes.get(job_id) is proc:
+                    self._processes.pop(job_id, None)
+
+    @staticmethod
+    def _terminate_process(job_id: str, proc: subprocess.Popen[str]) -> None:
+        if proc.poll() is not None:
+            return
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        deadline = __import__("time").monotonic() + 1.0
+        while proc.poll() is None and __import__("time").monotonic() < deadline:
+            __import__("time").sleep(0.05)
+        if proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
     def _thumbnail_asset(self, job: GenerationJob) -> JobExecutionResult:
         source = self.assets.get(job.input.reference_asset_ids[0]) if job.input.reference_asset_ids else None
         if source is None: return JobExecutionResult(False, error_code="THUMBNAIL_SOURCE_NOT_FOUND", error_message="No source asset")
@@ -150,12 +192,12 @@ class MediaDocumentWorker(Worker):
             return JobExecutionResult(False, error_code="THUMBNAIL_TIMESTAMP_INVALID", error_message="Invalid thumbnail timestamp")
         with tempfile.TemporaryDirectory(prefix="aicf-media-") as temp:
             output_path = Path(temp) / "thumbnail.jpg"
-            try:
-                completed = subprocess.run([self.ffmpeg_binary, "-hide_banner", "-loglevel", "error", "-y", "-ss", timestamp, "-i", str(source_path), "-frames:v", "1", "-q:v", "2", str(output_path)], check=False, capture_output=True, timeout=self.subprocess_timeout_seconds)
-            except subprocess.TimeoutExpired:
+            completed, timed_out = self._run_process(job.id, [self.ffmpeg_binary, "-hide_banner", "-loglevel", "error", "-y", "-ss", timestamp, "-i", str(source_path), "-frames:v", "1", "-q:v", "2", str(output_path)])
+            if timed_out:
                 return JobExecutionResult(False, error_code="THUMBNAIL_TIMEOUT", error_message="FFmpeg thumbnail extraction timed out", retryable=True)
-            if completed.returncode != 0 or not output_path.is_file():
-                return JobExecutionResult(False, error_code="THUMBNAIL_GENERATION_FAILED", error_message=completed.stderr.decode("utf-8", errors="replace")[-2000:], retryable=True)
+            if completed is None or completed.returncode != 0 or not output_path.is_file():
+                error = completed.stderr[-2000:] if completed else "FFmpeg process failed"
+                return JobExecutionResult(False, error_code="THUMBNAIL_GENERATION_FAILED", error_message=error, retryable=True)
             digest, path, size = self.storage.put_file(output_path)
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"thumbnail:{job.id}:{digest}"))
         self.assets.create(Asset(asset_id, job.project_id, AssetType.THUMBNAIL, path, "image/jpeg", size, digest, AssetStatus.READY, build_provenance(job, source_asset_ids=[source.id], metadata={"engine": "ffmpeg", "timestamp": timestamp}, license_status=LicenseStatus.VERIFIED)))
@@ -170,13 +212,12 @@ class MediaDocumentWorker(Worker):
             if asset and asset.type is AssetType.VIDEO:
                 check["ffprobe"] = False
                 if ffprobe_available and Path(asset.path).is_file():
-                    try:
-                        probe = subprocess.run([self.ffprobe_binary, "-v", "error", "-print_format", "json", "-show_streams", "-show_format", asset.path], check=False, capture_output=True, timeout=self.subprocess_timeout_seconds)
-                    except subprocess.TimeoutExpired:
+                    probe, timed_out = self._run_process(job.id, [self.ffprobe_binary, "-v", "error", "-print_format", "json", "-show_streams", "-show_format", asset.path])
+                    if timed_out:
                         check["error"] = "FFprobe timed out"
                     else:
-                        check["ffprobe"] = probe.returncode == 0
-                        if probe.returncode != 0: check["error"] = probe.stderr.decode("utf-8", errors="replace")[-1000:]
+                        check["ffprobe"] = bool(probe and probe.returncode == 0)
+                        if probe and probe.returncode != 0: check["error"] = probe.stderr[-1000:]
                 elif not ffprobe_available: check["error"] = "FFprobe executable was not found"
                 else: check["error"] = "Media file is missing"
             checks.append(check)
@@ -188,7 +229,16 @@ class MediaDocumentWorker(Worker):
         return self._document(job, AssetType.DOCUMENT, "application/json; charset=utf-8", (json.dumps(report, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8"))
 
     def cancel(self, job_id: str) -> None:
-        return None
+        with self._process_lock:
+            proc = self._processes.get(job_id)
+        if proc is not None:
+            self._terminate_process(job_id, proc)
 
     def shutdown(self) -> None:
+        with self._process_lock:
+            processes = list(self._processes.items())
+        for job_id, proc in processes:
+            self._terminate_process(job_id, proc)
+        with self._process_lock:
+            self._processes.clear()
         self._initialized = False
