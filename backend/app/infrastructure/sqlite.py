@@ -14,16 +14,9 @@ from ..domain.projects import Episode, Project, Scene, Shot
 from ..domain.repositories import EpisodeRepository, JobRepository, ProjectRepository, SceneRepository, ShotRepository
 
 
-def _dt(value: datetime | None) -> str | None:
-    return value.isoformat() if value is not None else None
-
-
-def _parse_dt(value: str | None) -> datetime | None:
-    return datetime.fromisoformat(value) if value is not None else None
-
-
-def _json(value: Any) -> str:
-    return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+def _dt(value: datetime | None) -> str | None: return value.isoformat() if value is not None else None
+def _parse_dt(value: str | None) -> datetime | None: return datetime.fromisoformat(value) if value is not None else None
+def _json(value: Any) -> str: return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
 
 
 class SQLiteStore:
@@ -44,7 +37,7 @@ class SQLiteStore:
     def initialize(self) -> None:
         with self._lock, self._connection:
             self._connection.executescript("""
-                CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', settings_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS episodes (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, title TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS idx_episodes_project ON episodes(project_id);
                 CREATE TABLE IF NOT EXISTS scenes (id TEXT PRIMARY KEY, episode_id TEXT NOT NULL REFERENCES episodes(id) ON DELETE CASCADE, title TEXT NOT NULL, order_index INTEGER NOT NULL, created_at TEXT NOT NULL);
@@ -57,22 +50,15 @@ class SQLiteStore:
                 CREATE INDEX IF NOT EXISTS idx_jobs_status_priority ON jobs(status, priority, created_at);
                 CREATE TABLE IF NOT EXISTS idempotency_keys (key TEXT PRIMARY KEY, operation TEXT NOT NULL, request_fingerprint TEXT NOT NULL, resource_id TEXT NOT NULL, created_at TEXT NOT NULL);
             """)
-            columns = {row["name"] for row in self._connection.execute("PRAGMA table_info(projects)").fetchall()}
-            if "description" not in columns: self._connection.execute("ALTER TABLE projects ADD COLUMN description TEXT NOT NULL DEFAULT ''")
-            if "settings_json" not in columns: self._connection.execute("ALTER TABLE projects ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}'")
 
     def close(self) -> None:
         with self._lock: self._connection.close()
-
     def _get(self, table: str, entity_id: str) -> sqlite3.Row | None:
         with self._lock: return self._connection.execute(f"SELECT * FROM {table} WHERE id = ?", (entity_id,)).fetchone()
-
     def _insert(self, sql: str, values: tuple[Any, ...]) -> None:
         with self._lock, self._connection: self._connection.execute(sql, values)
-
     def get_idempotency(self, key: str, operation: str) -> sqlite3.Row | None:
         with self._lock: return self._connection.execute("SELECT * FROM idempotency_keys WHERE key = ? AND operation = ?", (key, operation)).fetchone()
-
     def claim_idempotency(self, key: str, operation: str, fingerprint: str, resource_id: str) -> bool:
         with self._lock, self._connection:
             try:
@@ -84,17 +70,9 @@ class SQLiteStore:
 class SQLiteProjectRepository(ProjectRepository):
     def __init__(self, store: SQLiteStore) -> None: self.store = store
     def create(self, project: Project) -> Project:
-        self.store._insert("INSERT INTO projects(id,name,description,settings_json,created_at,updated_at) VALUES(?,?,?,?,?,?)", (project.id, project.name, project.description, _json(project.settings), _dt(project.created_at), _dt(project.updated_at))); return project
+        self.store._insert("INSERT INTO projects(id,name,created_at,updated_at) VALUES(?,?,?,?)", (project.id, project.name, _dt(project.created_at), _dt(project.updated_at))); return project
     def get(self, project_id: str) -> Project | None:
-        row = self.store._get("projects", project_id)
-        return Project(row["id"], row["name"], row["description"], json.loads(row["settings_json"]), _parse_dt(row["created_at"]), _parse_dt(row["updated_at"])) if row else None
-    def update(self, project: Project) -> Project:
-        self.store._insert("UPDATE projects SET name=?,description=?,settings_json=?,updated_at=? WHERE id=?", (project.name, project.description, _json(project.settings), _dt(project.updated_at), project.id)); return project
-    def delete(self, project_id: str) -> None:
-        self.store._insert("DELETE FROM projects WHERE id=?", (project_id,))
-    def list(self) -> list[Project]:
-        with self.store._lock: rows = self.store.connection.execute("SELECT * FROM projects ORDER BY created_at DESC,id DESC").fetchall()
-        return [Project(r["id"], r["name"], r["description"], json.loads(r["settings_json"]), _parse_dt(r["created_at"]), _parse_dt(r["updated_at"])) for r in rows]
+        row = self.store._get("projects", project_id); return Project(row["id"], row["name"], _parse_dt(row["created_at"]), _parse_dt(row["updated_at"])) if row else None
 
 class SQLiteEpisodeRepository(EpisodeRepository):
     def __init__(self, store: SQLiteStore) -> None: self.store = store
@@ -139,8 +117,15 @@ class SQLiteJobRepository(JobRepository):
     def list_by_parent(self, parent_job_id: str) -> list[GenerationJob]:
         with self.store._lock: rows = self.store.connection.execute("SELECT * FROM jobs WHERE parent_job_id = ? ORDER BY created_at, id", (parent_job_id,)).fetchall()
         return [_job_from_row(row) for row in rows]
+    def list(self, *, project_id: str | None = None, status: JobStatus | None = None, limit: int = 50) -> list[GenerationJob]:
+        limit = max(1, min(limit, 200)); clauses=[]; params=[]
+        if project_id: clauses.append("project_id = ?"); params.append(project_id)
+        if status: clauses.append("status = ?"); params.append(status.value)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        with self.store._lock: rows=self.store.connection.execute(f"SELECT * FROM jobs{where} ORDER BY created_at DESC, id DESC LIMIT ?", (*params, limit)).fetchall()
+        return [_job_from_row(row) for row in rows]
 
 class SQLiteRepositories:
     def __init__(self, path: str | Path = ":memory:") -> None:
-        self.store = SQLiteStore(path); self.projects = SQLiteProjectRepository(self.store); self.episodes = SQLiteEpisodeRepository(self.store); self.scenes = SQLiteSceneRepository(self.store); self.shots = SQLiteShotRepository(self.store); self.jobs = SQLiteJobRepository(self.store)
+        self.store=SQLiteStore(path); self.projects=SQLiteProjectRepository(self.store); self.episodes=SQLiteEpisodeRepository(self.store); self.scenes=SQLiteSceneRepository(self.store); self.shots=SQLiteShotRepository(self.store); self.jobs=SQLiteJobRepository(self.store)
     def close(self) -> None: self.store.close()
