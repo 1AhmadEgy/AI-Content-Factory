@@ -62,8 +62,10 @@ class JobService:
 
     def resume(self,job_id:str)->GenerationJob:
         job=self._get(job_id)
-        if job.status not in {JobStatus.PAUSED,JobStatus.RETRYING}:raise ValueError("JOB_NOT_RESUMABLE")
-        transition(job,JobStatus.QUEUED);return self.repository.update(job)
+        if job.status not in {JobStatus.PAUSED,JobStatus.RETRYING,JobStatus.BLOCKED}:raise ValueError("JOB_NOT_RESUMABLE")
+        transition(job,JobStatus.QUEUED);job.error_code=None;job.error_message=None;job.completed_at=None
+        job.updated_at=datetime.now(timezone.utc)
+        return self.repository.update(job)
 
     def retry(self,job_id:str)->GenerationJob:
         job=self._get(job_id)
