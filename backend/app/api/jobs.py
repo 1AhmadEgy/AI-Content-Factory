@@ -102,8 +102,13 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
 
     @router.post("/{job_id}/cancel")
     def cancel_job(job_id: str, request: Request) -> dict[str, Any]:
-        try: job = service.cancel(job_id)
+        try:
+            job = runtime.cancel_job(job_id) if runtime else service.cancel(job_id)
         except KeyError as exc: raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+        except RuntimeError as exc:
+            if str(exc) == "JOB_STATE_CONFLICT":
+                raise HTTPException(status_code=409, detail="JOB_STATE_CONFLICT") from exc
+            raise
         return {"data": _serialize(job), "requestId": request.state.request_id}
 
     @router.post("/{job_id}/pause")
@@ -111,6 +116,7 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
         try: job=service.pause(job_id)
         except KeyError as exc: raise HTTPException(404,str(exc.args[0])) from exc
         except ValueError as exc: raise HTTPException(409,str(exc)) from exc
+        except RuntimeError as exc: raise HTTPException(409,str(exc)) from exc
         return {"data":_serialize(job),"requestId":request.state.request_id}
 
     @router.post("/{job_id}/resume")
@@ -118,6 +124,7 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
         try: job=service.resume(job_id)
         except KeyError as exc: raise HTTPException(404,str(exc.args[0])) from exc
         except ValueError as exc: raise HTTPException(409,str(exc)) from exc
+        except RuntimeError as exc: raise HTTPException(409,str(exc)) from exc
         if runtime: runtime.queue.enqueue(job)
         return {"data":_serialize(job),"requestId":request.state.request_id}
 
@@ -126,6 +133,7 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
         try: job=service.retry(job_id)
         except KeyError as exc: raise HTTPException(404,str(exc.args[0])) from exc
         except ValueError as exc: raise HTTPException(409,str(exc)) from exc
+        except RuntimeError as exc: raise HTTPException(409,str(exc)) from exc
         if runtime: runtime.queue.enqueue(job)
         return {"data":_serialize(job),"requestId":request.state.request_id}
 
