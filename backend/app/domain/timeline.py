@@ -52,6 +52,8 @@ class Timeline:
             for clip in track.clips:
                 if clip.start_us < 0:
                     errors.append(f"CLIP_START_NEGATIVE:{clip.id}")
+                if clip.source_start_us < 0:
+                    errors.append(f"CLIP_SOURCE_START_NEGATIVE:{clip.id}")
                 if clip.duration_us <= 0:
                     errors.append(f"CLIP_DURATION_INVALID:{clip.id}")
                 if clip.end_us > self.duration_us:
