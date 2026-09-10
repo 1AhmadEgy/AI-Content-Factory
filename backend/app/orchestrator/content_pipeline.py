@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from ..domain.jobs import GenerationJob, JobInput, JobType
 from ..application.ai_generation import AIGenerationPlanner
+from ..domain.content import ContentBrief, ScenePlan, ShotPlan
+from ..domain.jobs import GenerationJob, JobInput, JobType
 from .job_service import JobService
 
 
@@ -41,19 +42,54 @@ class ContentPipelineOrchestrator:
         scene = job.input.parameters.get("scene")
         shots = scene.get("shots", []) if isinstance(scene, dict) else []
         scene_id = job.target_id or f"{job.id}:scene"
-        return [self._enqueue(job, JobType.SHOT, "shot", f"{scene_id}:shot:{int(shot.get('number', i))}", {"shot": shot, "sceneJobId": job.id, "sceneNumber": job.input.parameters.get("sceneNumber"), "shotNumber": int(shot.get("number", i))}, 2) for i, shot in enumerate(shots, 1) if isinstance(shot, dict)]
+        return [self._enqueue(job, JobType.SHOT, "shot", f"{scene_id}:shot:{int(shot.get('number', i))}", {"shot": shot, "scene": scene, "sceneJobId": job.id, "sceneNumber": job.input.parameters.get("sceneNumber"), "shotNumber": int(shot.get("number", i))}, 2) for i, shot in enumerate(shots, 1) if isinstance(shot, dict)]
 
     def _create_generation_jobs(self, job: GenerationJob) -> list[GenerationJob]:
-        shot = job.input.parameters.get("shot")
-        if not isinstance(shot, dict):
+        shot_data = job.input.parameters.get("shot")
+        scene_data = job.input.parameters.get("scene")
+        if not isinstance(shot_data, dict) or not isinstance(scene_data, dict):
             return []
+        brief_data = job.input.parameters.get("brief", {})
+        if not isinstance(brief_data, dict):
+            brief_data = {}
+        brief = ContentBrief(
+            topic=str(brief_data.get("topic", "")),
+            language=str(brief_data.get("language", "en")),
+            duration_seconds=int(brief_data.get("durationSeconds", brief_data.get("duration_seconds", 60))),
+            style=str(brief_data.get("style", "cinematic")),
+            audience=str(brief_data.get("audience", "general")),
+            platform=str(brief_data.get("platform", "youtube")),
+            aspect_ratio=str(brief_data.get("aspectRatio", brief_data.get("aspect_ratio", "16:9"))),
+        )
+        scene = ScenePlan(
+            number=int(scene_data.get("number", job.input.parameters.get("sceneNumber", 1))),
+            title=str(scene_data.get("title", "Scene")),
+            duration_seconds=float(scene_data.get("duration_seconds", scene_data.get("durationSeconds", 5))),
+            visual=str(scene_data.get("visual", "")),
+            narration=str(scene_data.get("narration", "")),
+            shots=[],
+        )
+        shot = ShotPlan(
+            number=int(shot_data.get("number", job.input.parameters.get("shotNumber", 1))),
+            prompt=str(shot_data.get("prompt", "")),
+            duration_seconds=float(shot_data.get("duration_seconds", shot_data.get("durationSeconds", 5))),
+            camera=str(shot_data.get("camera", "medium")),
+            lighting=str(shot_data.get("lighting", "natural")),
+            style=str(shot_data.get("style", brief.style)),
+        )
         count = max(1, min(int(job.input.parameters.get("takeCount", 1)), 8))
-        common = {"shot": shot, "shotJobId": job.id, "shotNumber": job.input.parameters.get("shotNumber"), "takeCount": count}
         created: list[GenerationJob] = []
-        for job_type, target in ((JobType.IMAGE, "image"), (JobType.VIDEO, "video"), (JobType.TTS, "voice")):
-            for take in range(1, count + 1):
-                params = {**common, "takeNumber": take}
-                created.append(self._enqueue(job, job_type, target, f"{job.id}:{target}:take:{take}", params, 3))
+        for take in range(1, count + 1):
+            for spec in (
+                self.generation_planner.image(brief, scene, shot, take),
+                self.generation_planner.video(brief, scene, shot, take),
+                self.generation_planner.tts(brief, scene),
+            ):
+                target = {JobType.IMAGE: "image", JobType.VIDEO: "video", JobType.TTS: "voice"}[spec.job_type]
+                params = {"shot": shot_data, "scene": scene_data, "shotJobId": job.id, "shotNumber": shot.number, "takeCount": count, "takeNumber": take}
+                params.update({"generationSpec": {"prompt": spec.prompt, "negative_prompt": spec.negative_prompt, "duration_seconds": spec.duration_seconds, "parameters": spec.parameters or {}}})
+                child = self._enqueue(job, spec.job_type, target, f"{job.id}:{target}:take:{take}", params, 3)
+                created.append(child)
         return created
 
     def _create_qc_job(self, job: GenerationJob) -> list[GenerationJob]:
@@ -76,7 +112,7 @@ class ContentPipelineOrchestrator:
     def _create_render_job(self, job: GenerationJob) -> list[GenerationJob]:
         if not job.output or not job.output.asset_ids:
             return []
-        return [self._enqueue(job, JobType.RENDER, "render", f"{job.id}:render", {"resolution": job.input.parameters.get("resolution", "1080p"), "aspectRatio": job.input.parameters.get("aspectRatio", "16:9"), "fps": job.input.parameters.get("fps", 30)}, 7, [job.output.asset_ids[0]])]
+        return [self._enqueue(job, JobType.RENDER, "render", {"resolution": job.input.parameters.get("resolution", "1080p"), "aspectRatio": job.input.parameters.get("aspectRatio", "16:9"), "fps": job.input.parameters.get("fps", 30)}, 7, [job.output.asset_ids[0]])]
 
     def _create_final_qc_job(self, job: GenerationJob) -> list[GenerationJob]:
         if not job.output or not job.output.asset_ids:
