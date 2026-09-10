@@ -18,22 +18,28 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "9.3.1"
-      - name: Generate CI debug keystore
+      - name: Generate CI release keystore
         run: |
           keytool -genkeypair -v \
-            -keystore debug.keystore \
-            -storepass android \
-            -alias androiddebugkey \
-            -keypass android \
+            -keystore ci-release.keystore \
+            -storepass ci-release-password \
+            -alias upload \
+            -keypass ci-release-password \
             -keyalg RSA \
             -keysize 2048 \
             -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
+            -dname "CN=AI Content Factory CI,O=AI Content Factory,C=US"
       - name: Build optimized APK
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/ci-release.keystore
+          STORE_PASSWORD: ci-release-password
+          KEY_PASSWORD: ci-release-password
         run: gradle --no-daemon assembleRelease
+      - name: Rename APK
+        run: cp app/build/outputs/apk/release/app-release.apk AI-Content-Factory.apk
       - name: Publish APK to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/release/app-release.apk
+          files: AI-Content-Factory.apk
           name: AI Content Factory ${{ github.ref_name }}
           generate_release_notes: true
