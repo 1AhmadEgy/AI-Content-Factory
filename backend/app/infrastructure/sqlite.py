@@ -4,22 +4,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import asdict
 from datetime import datetime
-from enum import Enum
 from pathlib import Path
 from threading import RLock
-from typing import Any, Callable, Generic, TypeVar
+from typing import Any, TypeVar
 
 from ..domain.jobs import GenerationJob, JobInput, JobOutput, JobStatus, JobType
 from ..domain.projects import Episode, Project, Scene, Shot
-from ..domain.repositories import (
-    EpisodeRepository,
-    JobRepository,
-    ProjectRepository,
-    SceneRepository,
-    ShotRepository,
-)
+from ..domain.repositories import EpisodeRepository, JobRepository, ProjectRepository, SceneRepository, ShotRepository
 
 T = TypeVar("T")
 
@@ -91,10 +83,7 @@ class SQLiteStore:
     def claim_idempotency(self, key: str, operation: str, fingerprint: str, resource_id: str) -> bool:
         with self._lock, self._connection:
             try:
-                self._connection.execute(
-                    "INSERT INTO idempotency_keys(key,operation,request_fingerprint,resource_id,created_at) VALUES(?,?,?,?,?)",
-                    (key, operation, fingerprint, resource_id, datetime.now().astimezone().isoformat()),
-                )
+                self._connection.execute("INSERT INTO idempotency_keys(key,operation,request_fingerprint,resource_id,created_at) VALUES(?,?,?,?,?)", (key, operation, fingerprint, resource_id, datetime.now().astimezone().isoformat()))
                 return True
             except sqlite3.IntegrityError:
                 return False
@@ -111,6 +100,28 @@ class SQLiteProjectRepository(ProjectRepository):
     def get(self, project_id: str) -> Project | None:
         row = self.store._get("projects", project_id)
         return Project(row["id"], row["name"], _parse_dt(row["created_at"]), _parse_dt(row["updated_at"])) if row else None
+
+    def list(self, page: int = 1, page_size: int = 50) -> tuple[list[Project], int]:
+        page = max(1, page)
+        page_size = max(1, min(page_size, 100))
+        offset = (page - 1) * page_size
+        with self.store._lock:
+            total = self.store.connection.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
+            rows = self.store.connection.execute("SELECT * FROM projects ORDER BY created_at DESC LIMIT ? OFFSET ?", (page_size, offset)).fetchall()
+        return [Project(r["id"], r["name"], _parse_dt(r["created_at"]), _parse_dt(r["updated_at"])) for r in rows], total
+
+    def update_name(self, project_id: str, name: str) -> Project | None:
+        now = datetime.now().astimezone()
+        with self.store._lock, self.store.connection:
+            cursor = self.store.connection.execute("UPDATE projects SET name=?, updated_at=? WHERE id=?", (name, _dt(now), project_id))
+            if cursor.rowcount != 1:
+                return None
+        return self.get(project_id)
+
+    def delete(self, project_id: str) -> bool:
+        with self.store._lock, self.store.connection:
+            cursor = self.store.connection.execute("DELETE FROM projects WHERE id=?", (project_id,))
+            return cursor.rowcount == 1
 
 
 class SQLiteEpisodeRepository(EpisodeRepository):
@@ -139,11 +150,8 @@ class SQLiteShotRepository(ShotRepository):
 
 def _job_input_to_dict(value: JobInput) -> dict[str, Any]: return {"parameters": value.parameters, "referenceAssetIds": value.reference_asset_ids, "constraints": value.constraints, "seed": value.seed, "deterministic": value.deterministic}
 def _job_input_from_dict(value: dict[str, Any]) -> JobInput: return JobInput(parameters=value.get("parameters", {}), reference_asset_ids=value.get("referenceAssetIds", []), constraints=value.get("constraints", {}), seed=value.get("seed"), deterministic=value.get("deterministic", False))
-def _job_output_to_dict(value: JobOutput | None) -> dict[str, Any] | None:
-    return None if value is None else {"assetIds": value.asset_ids, "metrics": value.metrics, "providerRunId": value.provider_run_id}
-def _job_output_from_dict(value: dict[str, Any] | None) -> JobOutput | None:
-    return None if value is None else JobOutput(asset_ids=value.get("assetIds", []), metrics=value.get("metrics", {}), provider_run_id=value.get("providerRunId"))
-
+def _job_output_to_dict(value: JobOutput | None) -> dict[str, Any] | None: return None if value is None else {"assetIds": value.asset_ids, "metrics": value.metrics, "providerRunId": value.provider_run_id}
+def _job_output_from_dict(value: dict[str, Any] | None) -> JobOutput | None: return None if value is None else JobOutput(asset_ids=value.get("assetIds", []), metrics=value.get("metrics", {}), provider_run_id=value.get("providerRunId"))
 def _job_from_row(row: sqlite3.Row) -> GenerationJob:
     return GenerationJob(id=row["id"], parent_job_id=row["parent_job_id"], project_id=row["project_id"], type=JobType(row["type"]), target_type=row["target_type"], target_id=row["target_id"], priority=row["priority"], status=JobStatus(row["status"]), progress=row["progress"], attempt=row["attempt"], max_attempts=row["max_attempts"], provider=row["provider"], model=row["model"], input=_job_input_from_dict(json.loads(row["input_json"])), output=_job_output_from_dict(json.loads(row["output_json"]) if row["output_json"] else None), error_code=row["error_code"], error_message=row["error_message"], created_at=_parse_dt(row["created_at"]), started_at=_parse_dt(row["started_at"]), completed_at=_parse_dt(row["completed_at"]), updated_at=_parse_dt(row["updated_at"]))
 
