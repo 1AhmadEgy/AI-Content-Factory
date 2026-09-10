@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -34,6 +35,22 @@ class RepurposeWorker(Worker):
     def health_check(self) -> bool:
         return self._initialized and shutil.which(os.getenv("AICF_FFMPEG_BIN", "ffmpeg")) is not None and shutil.which(os.getenv("AICF_FFPROBE_BIN", "ffprobe")) is not None
 
+    @staticmethod
+    def _finite_float(value: object, default: float) -> float | None:
+        try:
+            parsed = float(default if value is None else value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if math.isfinite(parsed) else None
+
+    @staticmethod
+    def _non_negative_int(value: object, default: int) -> int | None:
+        try:
+            parsed = int(default if value is None else value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed >= 0 else None
+
     def execute(self, job: GenerationJob, context: WorkerContext) -> JobExecutionResult:
         if not self._initialized:
             return JobExecutionResult(False, error_code="WORKER_NOT_INITIALIZED", error_message="Worker is not initialized")
@@ -56,17 +73,25 @@ class RepurposeWorker(Worker):
         platforms = list(dict.fromkeys(str(p).lower().strip() for p in job.input.parameters.get("platforms", ["youtube_shorts", "tiktok", "instagram_reels", "facebook_reels"]) if str(p).strip()))
         if not platforms:
             return JobExecutionResult(False, error_code="REPURPOSE_NO_PLATFORMS", error_message="At least one platform is required")
-        duration_seconds = float(job.input.parameters.get("clipDurationSeconds", 60))
-        if duration_seconds <= 0:
-            return JobExecutionResult(False, error_code="REPURPOSE_DURATION_INVALID", error_message="clipDurationSeconds must be positive")
+        duration_seconds = self._finite_float(job.input.parameters.get("clipDurationSeconds", 60), 60)
+        if duration_seconds is None or duration_seconds <= 0:
+            return JobExecutionResult(False, error_code="REPURPOSE_DURATION_INVALID", error_message="clipDurationSeconds must be a finite positive number")
         duration_us = max(1, int(duration_seconds * 1_000_000))
-        source_start_us = max(0, int(job.input.parameters.get("sourceStartUs", 0)))
-        profile = RenderProfile(name="vertical_1080p", width=608, height=1080, fps=float(job.input.parameters.get("fps", 30)))
+        source_start_us = self._non_negative_int(job.input.parameters.get("sourceStartUs", 0), 0)
+        if source_start_us is None:
+            return JobExecutionResult(False, error_code="REPURPOSE_SOURCE_OFFSET_INVALID", error_message="sourceStartUs must be a non-negative integer")
+        fps = self._finite_float(job.input.parameters.get("fps", 30), 30)
+        if fps is None or fps <= 0:
+            return JobExecutionResult(False, error_code="REPURPOSE_FPS_INVALID", error_message="fps must be a finite positive number")
+        timeout_seconds = self._non_negative_int(job.input.parameters.get("timeoutSeconds", 600), 600)
+        if timeout_seconds is None or timeout_seconds <= 0:
+            return JobExecutionResult(False, error_code="REPURPOSE_TIMEOUT_INVALID", error_message="timeoutSeconds must be a positive integer")
+        profile = RenderProfile(name="vertical_1080p", width=608, height=1080, fps=fps)
         options = FfmpegRenderOptions(
             ffmpeg_bin=os.getenv("AICF_FFMPEG_BIN", "ffmpeg"),
             ffprobe_bin=os.getenv("AICF_FFPROBE_BIN", "ffprobe"),
             overwrite=True,
-            timeout_seconds=max(1, int(job.input.parameters.get("timeoutSeconds", 600))),
+            timeout_seconds=timeout_seconds,
         )
         outputs: list[dict[str, object]] = []
 
@@ -77,10 +102,11 @@ class RepurposeWorker(Worker):
             if not health.get("available"):
                 return JobExecutionResult(False, error_code="FFMPEG_NOT_AVAILABLE", error_message="FFmpeg/FFprobe executable was not found")
             source_probe = renderer.probe(source.path)
-            source_duration = float((source_probe.get("format") or {}).get("duration", 0) or 0)
-            if source_duration <= source_start_us / 1_000_000:
+            source_duration = self._finite_float((source_probe.get("format") or {}).get("duration", 0), 0)
+            if source_duration is None or source_duration <= source_start_us / 1_000_000:
                 return JobExecutionResult(False, error_code="REPURPOSE_SOURCE_OFFSET_INVALID", error_message="sourceStartUs is beyond the source duration")
-            effective_duration_us = min(duration_us, max(1, int((source_duration - source_start_us / 1_000_000) * 1_000_000)))
+            remaining_us = max(1, int((source_duration - source_start_us / 1_000_000) * 1_000_000))
+            effective_duration_us = min(duration_us, remaining_us)
 
             for index, platform in enumerate(platforms):
                 if context:
@@ -106,7 +132,9 @@ class RepurposeWorker(Worker):
                         return JobExecutionResult(False, error_code="REPURPOSE_QC_FAILED", error_message=f"No video stream: {platform}", retryable=True)
                     actual_width = int(video_streams[0].get("width", 0))
                     actual_height = int(video_streams[0].get("height", 0))
-                    actual_duration = float((probe.get("format") or {}).get("duration", 0) or 0)
+                    actual_duration = self._finite_float((probe.get("format") or {}).get("duration", 0), 0)
+                    if actual_duration is None:
+                        return JobExecutionResult(False, error_code="REPURPOSE_QC_FAILED", error_message=f"Invalid media duration: {platform}", retryable=True)
                     expected_duration = effective_duration_us / 1_000_000
                     if (actual_width, actual_height) != (profile.width, profile.height) or abs(actual_duration - expected_duration) > max(0.25, 1.0 / profile.fps * 3):
                         return JobExecutionResult(False, error_code="REPURPOSE_QC_FAILED", error_message=f"Unexpected media output for {platform}: {actual_width}x{actual_height}, {actual_duration:.3f}s", retryable=True)
