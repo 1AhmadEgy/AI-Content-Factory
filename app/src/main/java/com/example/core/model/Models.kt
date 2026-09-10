@@ -7,7 +7,7 @@ import com.squareup.moshi.JsonClass
 import java.util.UUID
 
 enum class JobStatus {
-    CREATED, QUEUED, RUNNING, PAUSED, RETRYING, COMPLETED, FAILED, CANCELLED
+    CREATED, QUEUED, RUNNING, PAUSED, RETRYING, COMPLETED, FAILED, BLOCKED, CANCELLED
 }
 
 @Entity(tableName = "projects")
@@ -63,10 +63,10 @@ data class Character(
     val description: String? = null,
     val age: String? = null,
     val gender: String? = null,
-    val appearance: String? = null, // physical description
+    val appearance: String? = null,
     val personality: String? = null,
     @Json(name = "voice_profile") val voiceProfile: String? = null,
-    @Json(name = "reference_images") val referenceImages: String? = null, // JSON string list
+    @Json(name = "reference_images") val referenceImages: String? = null,
     @Json(name = "negative_constraints") val negativeConstraints: String? = null
 )
 
@@ -79,7 +79,7 @@ data class Location(
     val description: String? = null,
     val lighting: String? = null,
     @Json(name = "color_palette") val colorPalette: String? = null,
-    @Json(name = "reference_images") val referenceImages: String? = null // JSON string list
+    @Json(name = "reference_images") val referenceImages: String? = null
 )
 
 @Entity(tableName = "shots")
@@ -88,12 +88,12 @@ data class Shot(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
     @Json(name = "scene_id") val sceneId: String,
     val number: Int,
-    val camera: String? = null, // e.g., Wide, Close-up, Pan
+    val camera: String? = null,
     val framing: String? = null,
     val movement: String? = null,
     val action: String? = null,
     val dialogue: String? = null,
-    val duration: Int? = null, // in seconds or frames
+    val duration: Int? = null,
     var status: String = "PLANNED"
 )
 
@@ -103,7 +103,7 @@ data class GenerationJob(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
     @Json(name = "job_type") val jobType: String,
     @Json(name = "target_type") val targetType: String,
-    @Json(name = "target_id") val targetId: String,
+    @Json(name = "target_id") val targetId: String? = null,
     var status: JobStatus = JobStatus.QUEUED,
     var priority: Int = 50,
     var attempt: Int = 0,
@@ -114,6 +114,8 @@ data class GenerationJob(
     val output: String? = null,
     var progress: Int = 0,
     val error: String? = null,
+    @Json(name = "errorCode") val errorCode: String? = null,
+    @Json(name = "errorMessage") val errorMessage: String? = null,
     @Json(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
     @Json(name = "started_at") var startedAt: Long? = null,
     @Json(name = "completed_at") var completedAt: Long? = null,
@@ -121,35 +123,14 @@ data class GenerationJob(
     @Json(name = "fallback_provider") val fallbackProvider: String? = null
 )
 
-// API Request Models
 @JsonClass(generateAdapter = true)
-data class ProjectCreateRequest(
-    val name: String,
-    val description: String? = null,
-    val mode: String = "MOCK"
-)
+data class ProjectCreateRequest(val name: String, val description: String? = null, val mode: String = "MOCK")
 
 @JsonClass(generateAdapter = true)
-data class SeriesCreateRequest(
-    @Json(name = "project_id") val projectId: String,
-    val title: String,
-    val genre: String? = null,
-    val language: String = "ar"
-)
+data class SeriesCreateRequest(@Json(name = "project_id") val projectId: String, val title: String, val genre: String? = null, val language: String = "ar")
 
 @JsonClass(generateAdapter = true)
-data class EpisodeCreateRequest(
-    @Json(name = "series_id") val seriesId: String,
-    val number: Int,
-    val title: String,
-    val synopsis: String? = null
-)
+data class EpisodeCreateRequest(@Json(name = "series_id") val seriesId: String, val number: Int, val title: String, val synopsis: String? = null)
 
 @JsonClass(generateAdapter = true)
-data class SceneCreateRequest(
-    @Json(name = "episode_id") val episodeId: String,
-    val number: Int,
-    val description: String,
-    val location: String? = null,
-    val emotion: String? = null
-)
+data class SceneCreateRequest(@Json(name = "episode_id") val episodeId: String, val number: Int, val description: String, val location: String? = null, val emotion: String? = null)
