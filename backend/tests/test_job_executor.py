@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from backend.app.domain.job_events import JobEvent
 from backend.app.domain.jobs import GenerationJob, JobOutput, JobStatus, JobType
 from backend.app.orchestrator.job_executor import JobExecutor
@@ -17,6 +19,7 @@ class FakeQueue(JobQueue):
     def enqueue(self, job): pass
     def claim_next(self, worker_id): return None
     def heartbeat(self, lease): pass
+    def is_lease_active(self, lease): return True
     def acknowledge(self, lease, status): self.acknowledged.append(status)
     def release_expired(self): return 0
 
@@ -29,6 +32,11 @@ class FakeWorker(Worker):
     def execute(self, job, context): return self.result
     def cancel(self, job_id): self.cancelled = True
     def shutdown(self): self.initialized = False
+
+
+class AllowCompletionGate:
+    def check(self, job):
+        return SimpleNamespace(allowed=True, code=None, message=None, qc_results=())
 
 
 def make_job(max_attempts=3):
@@ -48,7 +56,7 @@ def test_executor_persists_success_and_emits_events():
     worker = FakeWorker(JobExecutionResult(True, ["asset-1"], {"score": 1.0}, "run-1"))
     registry = WorkerRegistry(); registry.register(worker, {"IMAGE"}, worker_id="worker-1")
     events: list[JobEvent] = []
-    result = JobExecutor(jobs, queue, registry, events.append).execute_claimed(job, make_lease())
+    result = JobExecutor(jobs, queue, registry, events.append, completion_gate=AllowCompletionGate()).execute_claimed(job, make_lease())
     assert result.status is JobStatus.COMPLETED
     assert jobs.job.output == JobOutput(["asset-1"], {"score": 1.0}, "run-1")
     assert queue.acknowledged == [JobStatus.COMPLETED]
