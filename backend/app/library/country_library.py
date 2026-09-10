@@ -5,6 +5,10 @@ from typing import Any
 from .country_catalog import get_country_library, list_country_libraries
 from .default_library import default_characters, default_locations
 from .egypt_expanded import expanded_characters, expanded_locations
+from .egypt_common import common_characters, common_locations
+from .countries.libya import characters as libya_characters
+from .countries.libya import library_metadata as libya_metadata
+from .countries.libya import locations as libya_locations
 from .series_templates import list_series_templates
 
 LIBRARY_SCHEMA_VERSION = 1
@@ -16,7 +20,7 @@ LIBRARY_CATEGORIES = (
 
 
 def build_country_library_spec(country_id: str) -> dict[str, Any] | None:
-    """Return a stable empty content contract for an independent country library."""
+    """Return a stable content contract for an independent country library."""
     country = get_country_library(country_id)
     if country is None:
         return None
@@ -68,28 +72,53 @@ def _serialize_location(value: Any) -> dict[str, Any]:
     }
 
 
+def _apply_counts(spec: dict[str, Any], *, characters: int, locations: int) -> None:
+    spec["contentCounts"] = {
+        "characters": characters,
+        "locations": locations,
+        "seriesTemplates": len(spec["seriesTemplates"]),
+    }
+
+
 def get_country_library_content(country_id: str) -> dict[str, Any] | None:
-    """Return content plus status without inventing data for catalog-only countries."""
+    """Return country content without inventing data or copying another country."""
     spec = build_country_library_spec(country_id)
     if spec is None:
         return None
 
-    if country_id != "egypt":
-        spec["contentCounts"] = {"characters": 0, "locations": 0, "seriesTemplates": len(spec["seriesTemplates"])}
-        spec["seedSource"] = []
+    if country_id == "egypt":
+        characters = [*default_characters(), *expanded_characters(), *common_characters()]
+        locations = [*default_locations(), *expanded_locations(), *common_locations()]
+        spec["status"] = "ready"
+        spec["characters"] = [_serialize_character(item) for item in characters]
+        spec["locations"] = [_serialize_location(item) for item in locations]
+        _apply_counts(spec, characters=len(characters), locations=len(locations))
+        spec["seedSource"] = ["default_library", "egypt_expanded", "egypt_common"]
         return spec
 
-    characters = [*default_characters(), *expanded_characters()]
-    locations = [*default_locations(), *expanded_locations()]
-    spec["status"] = "ready"
-    spec["characters"] = [_serialize_character(item) for item in characters]
-    spec["locations"] = [_serialize_location(item) for item in locations]
-    spec["contentCounts"] = {
-        "characters": len(characters),
-        "locations": len(locations),
-        "seriesTemplates": len(spec["seriesTemplates"]),
-    }
-    spec["seedSource"] = ["default_library", "egypt_expanded"]
+    if country_id == "libya":
+        metadata = libya_metadata()
+        characters = libya_characters()
+        locations = libya_locations()
+        spec.update({
+            "status": metadata["status"],
+            "dialectRules": metadata["dialectRules"],
+            "customs": metadata["customs"],
+            "vehicles": metadata["vehicles"],
+            "workplaces": metadata["workplaces"],
+            "archetypes": metadata["archetypes"],
+            "continuity": metadata["continuity"],
+            "visualRules": metadata["visualRules"],
+            "audioRules": metadata["audioRules"],
+            "seedSource": metadata["seedSource"],
+            "characters": [_serialize_character(item) for item in characters],
+            "locations": [_serialize_location(item) for item in locations],
+        })
+        _apply_counts(spec, characters=len(characters), locations=len(locations))
+        return spec
+
+    spec["contentCounts"] = {"characters": 0, "locations": 0, "seriesTemplates": len(spec["seriesTemplates"])}
+    spec["seedSource"] = []
     return spec
 
 
