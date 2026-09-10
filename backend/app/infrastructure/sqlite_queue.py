@@ -124,7 +124,7 @@ class SQLiteJobQueue(JobQueue):
                     (now.isoformat(),),
                 ).fetchall()
                 for row in rows:
-                    next_status = "QUEUED" if row["attempt"] < row["max_attempts"] else "FAILED"
+                    next_status = "RETRYING" if row["attempt"] < row["max_attempts"] else "FAILED"
                     self.store.connection.execute(
                         """UPDATE jobs SET status=?, updated_at=?, completed_at=?,
                         error_code='LEASE_EXPIRED', error_message=? WHERE id=? AND status='RUNNING'""",
@@ -132,7 +132,7 @@ class SQLiteJobQueue(JobQueue):
                             next_status,
                             now.isoformat(),
                             now.isoformat() if next_status == "FAILED" else None,
-                            "Worker lease expired; job requeued" if next_status == "QUEUED" else "Worker lease expired; retry budget exhausted",
+                            "Worker lease expired; job scheduled for retry" if next_status == "RETRYING" else "Worker lease expired; retry budget exhausted",
                             row["job_id"],
                         ),
                     )
