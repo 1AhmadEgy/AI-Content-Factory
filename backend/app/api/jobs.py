@@ -58,8 +58,7 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
 
     @router.post("", status_code=status.HTTP_202_ACCEPTED)
     def create_job(request: CreateJobRequest, http_request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
-        if not idempotency_key:
-            raise HTTPException(status_code=400, detail="IDEMPOTENCY_KEY_REQUIRED")
+        if not idempotency_key: raise HTTPException(status_code=400, detail="IDEMPOTENCY_KEY_REQUIRED")
         fingerprint = _fingerprint(request)
         store = repository.store
         existing = store.get_idempotency(idempotency_key, "POST:/api/v1/jobs")
@@ -70,7 +69,12 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
             return {"data": _serialize(existing_job), "requestId": http_request.state.request_id, "idempotentReplay": True}
         job = service.create(project_id=request.projectId, job_type=request.type, target_type=request.targetType, target_id=request.targetId, parent_job_id=request.parentJobId, priority=request.priority, max_attempts=request.maxAttempts, provider=request.provider, model=request.model, input=JobInput(parameters=request.input.parameters, reference_asset_ids=request.input.referenceAssetIds, constraints=request.input.constraints, seed=request.input.seed, deterministic=request.input.deterministic))
         claimed = store.claim_idempotency(idempotency_key, "POST:/api/v1/jobs", fingerprint, job.id)
-        if not claimed: raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
+        if not claimed:
+            existing = store.get_idempotency(idempotency_key, "POST:/api/v1/jobs")
+            if existing and existing["request_fingerprint"] == fingerprint:
+                existing_job = repository.get(existing["resource_id"])
+                if existing_job: return {"data": _serialize(existing_job), "requestId": http_request.state.request_id, "idempotentReplay": True}
+            raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
         if runtime: runtime.queue.enqueue(job)
         return {"data": _serialize(job), "requestId": http_request.state.request_id}
 
@@ -82,10 +86,8 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
 
     @router.post("/{job_id}/cancel")
     def cancel_job(job_id: str, request: Request) -> dict[str, Any]:
-        try:
-            job = service.cancel(job_id)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+        try: job = service.cancel(job_id)
+        except KeyError as exc: raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
         return {"data": _serialize(job), "requestId": request.state.request_id}
 
     @router.post("/{job_id}/execute", status_code=status.HTTP_200_OK)
@@ -112,7 +114,7 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
     @router.get("/{job_id}/events")
     def get_job_events(job_id: str, request: Request, limit: int = 200) -> dict[str, Any]:
         if repository.get(job_id) is None: raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
-        if event_repository is None: return {"data": [], "requestId": request.state.requestId}
+        if event_repository is None: return {"data": [], "requestId": request.state.request_id}
         return {"data": [_serialize_event(event) for event in event_repository.list_for_job(job_id, max(1, min(limit, 500)))], "requestId": request.state.request_id}
 
     return router
