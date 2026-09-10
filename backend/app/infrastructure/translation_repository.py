@@ -10,9 +10,9 @@ from ..domain.translation import TranslationRequest, TranslationResult
 class SQLiteTranslationRepository:
     """Append-only translation history backed by the shared SQLite store.
 
-    A translation is never updated in place.  A changed source creates a new
+    A translation is never updated in place. A changed source creates a new
     fingerprint; a re-translation of the same source fingerprint gets a new
-    translation version.  Manual translations take precedence when resolving
+    translation version. Manual translations take precedence when resolving
     the current translation for a source fingerprint.
     """
 
@@ -28,10 +28,7 @@ class SQLiteTranslationRepository:
                 "manual INTEGER NOT NULL DEFAULT 0, source_fingerprint TEXT NOT NULL, created_at TEXT NOT NULL, "
                 "metadata_json TEXT NOT NULL DEFAULT '{}')"
             )
-            columns = {
-                row["name"]
-                for row in self.store.connection.execute("PRAGMA table_info(translations)").fetchall()
-            }
+            columns = {row["name"] for row in self.store.connection.execute("PRAGMA table_info(translations)").fetchall()}
             if "source_version" not in columns:
                 self.store.connection.execute(
                     "ALTER TABLE translations ADD COLUMN source_version INTEGER NOT NULL DEFAULT 1"
@@ -56,10 +53,8 @@ class SQLiteTranslationRepository:
             ).fetchone()
 
             if existing is not None:
-                # Automated retries must reuse an existing manual translation.
                 if bool(existing["manual"]):
                     return self._from_row(existing)
-                # Never overwrite an existing row. Allocate the next immutable version.
                 next_version = int(
                     self.store.connection.execute(
                         "SELECT COALESCE(MAX(version), 0) + 1 FROM translations WHERE source_fingerprint=?",
@@ -74,6 +69,7 @@ class SQLiteTranslationRepository:
                     translated_text=result.translated_text,
                     content_type=result.content_type,
                     source_id=result.source_id,
+                    source_version=result.source_version,
                     provider=result.provider,
                     model=result.model,
                     glossary_version=result.glossary_version,
@@ -94,7 +90,7 @@ class SQLiteTranslationRepository:
                     result.translated_text,
                     result.content_type,
                     result.source_id,
-                    request.source_version,
+                    result.source_version,
                     result.provider,
                     result.model,
                     result.glossary_version,
@@ -118,18 +114,10 @@ class SQLiteTranslationRepository:
 
     def get(self, translation_id: str) -> TranslationResult | None:
         with self.store._lock:
-            row = self.store.connection.execute(
-                "SELECT * FROM translations WHERE id=?", (translation_id,)
-            ).fetchone()
+            row = self.store.connection.execute("SELECT * FROM translations WHERE id=?", (translation_id,)).fetchone()
         return self._from_row(row) if row else None
 
-    def list(
-        self,
-        *,
-        source_id: str | None = None,
-        target_language: str | None = None,
-        limit: int = 100,
-    ) -> list[TranslationResult]:
+    def list(self, *, source_id: str | None = None, target_language: str | None = None, limit: int = 100) -> list[TranslationResult]:
         limit = max(1, min(limit, 500))
         clauses: list[str] = []
         params: list[Any] = []
@@ -157,6 +145,7 @@ class SQLiteTranslationRepository:
             translated_text=row["translated_text"],
             content_type=row["content_type"],
             source_id=row["source_id"],
+            source_version=row["source_version"],
             provider=row["provider"],
             model=row["model"],
             glossary_version=row["glossary_version"],
