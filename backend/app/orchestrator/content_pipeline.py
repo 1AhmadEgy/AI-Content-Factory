@@ -120,9 +120,18 @@ class ContentPipelineOrchestrator:
         if len(audio_jobs) < 3: return []
         audio_qcs = [qc for audio in audio_jobs for qc in self.job_service.repository.list_by_parent(audio.id) if qc.type is JobType.QC and qc.status is JobStatus.COMPLETED and qc.output and qc.output.asset_ids]
         if len(audio_qcs) < len(audio_jobs): return []
-        refs = [j.output.asset_ids[0] for j in best]
+        refs = []
+        for best_job in best:
+            selected = best_job.output.metrics.get("selectedAssetId") if best_job.output else None
+            if not isinstance(selected, str) or not selected:
+                return []
+            refs.append(selected)
         refs.extend(qc.output.asset_ids[0] for qc in audio_qcs)
-        duration_us = int(float(scene.input.parameters.get("scene", {}).get("durationSeconds", 5)) * 1_000_000)
+        try:
+            duration_us = int(float(scene.input.parameters.get("scene", {}).get("durationSeconds", 5)) * 1_000_000)
+        except (TypeError, ValueError, OverflowError):
+            return []
+        if duration_us <= 0: return []
         return [self._enqueue(scene, JobType.TIMELINE, "timeline", f"{scene.id}:timeline", {"durationUs": duration_us, "sceneJobId": scene.id}, 6, refs)]
 
     def _create_render_job(self, job: GenerationJob) -> list[GenerationJob]:
