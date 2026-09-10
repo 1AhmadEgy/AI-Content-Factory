@@ -32,18 +32,26 @@ class PipelineRunner:
         output_path: str,
     ) -> PipelineRunResult:
         qc_results = {item.asset_id: self.service.qc_asset(item) for item in assets}
-        errors = [
-            finding.code
-            for result in qc_results.values()
-            for finding in result.findings
-            if not result.passed
-        ]
         best = self.service.select_take(candidates, qc_results)
         if best is None:
+            errors = [
+                finding.code
+                for result in qc_results.values()
+                for finding in result.findings
+                if not result.passed
+            ]
             return PipelineRunResult(False, None, None, errors + ["NO_ELIGIBLE_BEST_TAKE"])
+
+        # Candidate-level failures are expected during best-take selection. A
+        # pipeline run is QC-passing when the selected take itself passed QC;
+        # rejected alternative takes must not invalidate the final result.
+        selected_qc = qc_results[best.asset_id]
+        selected_errors = [finding.code for finding in selected_qc.findings if not selected_qc.passed]
+        if selected_errors or selected_qc.blocked:
+            return PipelineRunResult(False, best.asset_id, None, selected_errors or ["SELECTED_TAKE_BLOCKED"])
 
         renderer = DeterministicMockRenderer()
         result = self.service.render(renderer, timeline, RenderProfile(), str(Path(output_path)))
         if not result.success:
-            return PipelineRunResult(False, best.asset_id, None, errors + [result.error or "RENDER_FAILED"])
-        return PipelineRunResult(not errors, best.asset_id, result.output_path, errors)
+            return PipelineRunResult(False, best.asset_id, None, [result.error or "RENDER_FAILED"])
+        return PipelineRunResult(True, best.asset_id, result.output_path, [])
