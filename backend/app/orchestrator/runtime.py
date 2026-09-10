@@ -11,6 +11,7 @@ from ..infrastructure.storage import LocalAssetStorage
 from ..workers.mock_worker import DeterministicMockWorker
 from ..workers.registry import WorkerRegistry
 from .job_executor import ExecutionResult, JobExecutor
+from .queue import JobLease
 
 
 class OrchestratorRuntime:
@@ -35,3 +36,14 @@ class OrchestratorRuntime:
             return None
         job, lease = claimed
         return self.executor.execute_claimed(job, lease, worker_id=worker_id)
+
+    def heartbeat(self, job_id: str, lease_id: str, worker_id: str) -> None:
+        """Extend a worker lease after validating its job identity."""
+        if self.repositories.jobs.get(job_id) is None:
+            raise KeyError("JOB_NOT_FOUND")
+        lease = JobLease(job_id=job_id, worker_id=worker_id, lease_id=lease_id, expires_at="")
+        self.queue.heartbeat(lease)
+
+    def recover_expired(self) -> int:
+        """Recover abandoned worker leases and return the number of jobs handled."""
+        return self.queue.release_expired()
