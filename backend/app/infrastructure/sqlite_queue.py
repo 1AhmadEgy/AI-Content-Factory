@@ -55,10 +55,12 @@ class SQLiteJobQueue(JobQueue):
                     "INSERT INTO job_leases(job_id,worker_id,lease_id,expires_at,created_at) VALUES(?,?,?,?,?)",
                     (lease.job_id, lease.worker_id, lease.lease_id, lease.expires_at, now.isoformat()),
                 )
-                self.store.connection.execute(
+                updated = self.store.connection.execute(
                     "UPDATE jobs SET status='RUNNING', attempt=attempt+1, started_at=?, updated_at=? WHERE id=? AND status='QUEUED'",
                     (now.isoformat(), now.isoformat(), lease.job_id),
                 )
+                if updated.rowcount != 1:
+                    raise RuntimeError("JOB_CLAIM_CONFLICT")
                 self.store.connection.commit()
             except Exception:
                 self.store.connection.rollback()
@@ -77,6 +79,15 @@ class SQLiteJobQueue(JobQueue):
             )
             if cursor.rowcount != 1:
                 raise KeyError("JOB_LEASE_NOT_FOUND")
+
+    def is_lease_active(self, lease: JobLease) -> bool:
+        now = datetime.now(timezone.utc).isoformat()
+        with self.store._lock:
+            row = self.store.connection.execute(
+                "SELECT 1 FROM job_leases WHERE job_id=? AND lease_id=? AND worker_id=? AND expires_at>?",
+                (lease.job_id, lease.lease_id, lease.worker_id, now),
+            ).fetchone()
+            return row is not None
 
     def acknowledge(self, lease: JobLease, status: JobStatus) -> None:
         if status not in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.RETRYING, JobStatus.BLOCKED}:
