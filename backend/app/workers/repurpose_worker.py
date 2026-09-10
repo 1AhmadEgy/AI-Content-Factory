@@ -40,7 +40,12 @@ class RepurposeWorker(Worker):
         if job.type is not JobType.REPURPOSE:
             return JobExecutionResult(False, error_code="UNSUPPORTED_JOB_TYPE", error_message=job.type.value)
         references = list(dict.fromkeys(job.input.reference_asset_ids))
-        source = next((self.assets.get(asset_id) for asset_id in references if self.assets.get(asset_id)), None)
+        source = None
+        for asset_id in references:
+            candidate = self.assets.get(asset_id)
+            if candidate is not None:
+                source = candidate
+                break
         if source is None or source.status is not AssetStatus.READY:
             return JobExecutionResult(False, error_code="REPURPOSE_SOURCE_NOT_READY", error_message="No ready source asset")
         if source.type is not AssetType.VIDEO:
@@ -105,7 +110,7 @@ class RepurposeWorker(Worker):
                     expected_duration = effective_duration_us / 1_000_000
                     if (actual_width, actual_height) != (profile.width, profile.height) or abs(actual_duration - expected_duration) > max(0.25, 1.0 / profile.fps * 3):
                         return JobExecutionResult(False, error_code="REPURPOSE_QC_FAILED", error_message=f"Unexpected media output for {platform}: {actual_width}x{actual_height}, {actual_duration:.3f}s", retryable=True)
-                    payload = output.read_bytes()
+                    digest, path, size = self.storage.put_file(output)
                     thumbnail = Path(temp) / f"{platform}.jpg"
                     try:
                         thumb = subprocess.run([options.ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-y", "-ss", "0", "-i", str(output), "-frames:v", "1", "-q:v", "2", str(thumbnail)], check=False, capture_output=True, timeout=options.timeout_seconds)
@@ -114,9 +119,8 @@ class RepurposeWorker(Worker):
                     if thumb.returncode != 0 or not thumbnail.is_file():
                         return JobExecutionResult(False, error_code="REPURPOSE_THUMBNAIL_FAILED", error_message=thumb.stderr.decode("utf-8", errors="replace")[-2000:], retryable=True)
                     thumbnail_payload = thumbnail.read_bytes()
-                digest, path, size = self.storage.put_bytes(payload)
                 asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"repurpose-video:{job.id}:{platform}:{digest}"))
-                self.assets.create(Asset(asset_id, job.project_id, AssetType.VIDEO, path, "video/mp4", size, AssetStatus.READY, build_provenance(job, source_asset_ids=[source.id], metadata={"platform": platform, "profile": profile.name, "resolution": f"{actual_width}x{actual_height}", "sourceStartUs": source_start_us, "durationUs": effective_duration_us, "durationSeconds": actual_duration, "qc": "passed"}, license_status=LicenseStatus.VERIFIED)))
+                self.assets.create(Asset(asset_id, job.project_id, AssetType.VIDEO, path, "video/mp4", size, digest, AssetStatus.READY, build_provenance(job, source_asset_ids=[source.id], metadata={"platform": platform, "profile": profile.name, "resolution": f"{actual_width}x{actual_height}", "sourceStartUs": source_start_us, "durationUs": effective_duration_us, "durationSeconds": actual_duration, "qc": "passed"}, license_status=LicenseStatus.VERIFIED)))
                 thumb_digest, thumb_path, thumb_size = self.storage.put_bytes(thumbnail_payload)
                 thumb_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"repurpose-thumbnail:{job.id}:{platform}:{thumb_digest}"))
                 self.assets.create(Asset(thumb_id, job.project_id, AssetType.THUMBNAIL, thumb_path, "image/jpeg", thumb_size, AssetStatus.READY, build_provenance(job, source_asset_ids=[asset_id], metadata={"platform": platform, "engine": "ffmpeg", "timestamp": "0"}, license_status=LicenseStatus.VERIFIED)))
