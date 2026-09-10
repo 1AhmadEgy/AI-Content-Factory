@@ -27,10 +27,22 @@ class SQLiteStore:
     def __init__(self, path: str | Path = ":memory:") -> None:
         import threading
         self._lock = threading.RLock()
-        self._connection = sqlite3.connect(str(path), check_same_thread=False)
+        db_path = str(path)
+        self._connection = sqlite3.connect(db_path, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
-        self._connection.execute("PRAGMA foreign_keys = ON")
+        self._configure_connection(db_path)
         self.initialize()
+
+    def _configure_connection(self, db_path: str) -> None:
+        """Apply low-risk SQLite settings for file-backed performance."""
+        with self._lock:
+            self._connection.execute("PRAGMA foreign_keys = ON")
+            self._connection.execute("PRAGMA busy_timeout = 5000")
+            self._connection.execute("PRAGMA temp_store = MEMORY")
+            self._connection.execute("PRAGMA cache_size = -20000")
+            if db_path != ":memory:":
+                self._connection.execute("PRAGMA journal_mode = WAL")
+                self._connection.execute("PRAGMA synchronous = NORMAL")
 
     @property
     def connection(self) -> sqlite3.Connection:
