@@ -12,7 +12,7 @@ from .egypt_common import common_characters, common_locations
 
 
 def ensure_egypt_library(repositories) -> dict[str, int]:
-    """Seed built-ins additively; never overwrite, delete, or reset user-owned records."""
+    """Seed the reusable Egypt library additively; never overwrite user-owned records."""
     if os.getenv("AICF_SEED_DEFAULT_LIBRARY", "true").strip().lower() in {"0", "false", "no", "off"}:
         return {"characters": 0, "locations": 0}
 
@@ -21,9 +21,14 @@ def ensure_egypt_library(repositories) -> dict[str, int]:
         now = datetime.now(timezone.utc)
         repositories.projects.create(Project(
             id=DEFAULT_LIBRARY_PROJECT_ID,
-            name="مكتبة مصر المحلية",
-            description="مكتبة محلية قابلة لإعادة الاستخدام للشخصيات والمواقع والقوالب الجاهزة.",
-            settings={"kind": "reusable-library", "country": "Egypt", "seedVersion": 3},
+            name="Egypt",
+            description="Egypt reusable library: characters, locations, archetypes, series templates, and production-ready continuity defaults.",
+            settings={
+                "kind": "reusable-library",
+                "libraryName": "Egypt",
+                "country": "Egypt",
+                "seedVersion": 4,
+            },
             created_at=now,
             updated_at=now,
         ))
