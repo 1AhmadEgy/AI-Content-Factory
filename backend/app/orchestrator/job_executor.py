@@ -189,11 +189,13 @@ class JobExecutor:
         job.error_code = code
         job.error_message = message
         if retryable and job.attempt < job.max_attempts:
+            # Persist only execution-owned fields while the row is still RUNNING.
+            # The queue then atomically changes RUNNING -> QUEUED and releases the
+            # lease, so the old executor never performs a stale post-ack write.
             self._require_persisted(job, lease)
             transition(job, JobStatus.RETRYING)
             self.queue.acknowledge(lease, JobStatus.RETRYING)
             transition(job, JobStatus.QUEUED)
-            self.jobs.update(job)
             self._event(
                 job,
                 "JOB_RETRY_SCHEDULED",
