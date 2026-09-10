@@ -47,7 +47,7 @@ class SQLiteJobQueue(JobQueue):
                 row = self.store.connection.execute(
                     """SELECT j.* FROM jobs j
                     LEFT JOIN job_leases l ON l.job_id = j.id
-                    WHERE j.status = 'QUEUED' AND l.job_id IS NULL
+                    WHERE j.status IN ('QUEUED', 'RETRYING') AND l.job_id IS NULL
                     ORDER BY j.priority DESC, j.created_at ASC
                     LIMIT 1"""
                 ).fetchone()
@@ -65,7 +65,7 @@ class SQLiteJobQueue(JobQueue):
                     (lease.job_id, lease.worker_id, lease.lease_id, lease.expires_at, now.isoformat()),
                 )
                 self.store.connection.execute(
-                    "UPDATE jobs SET status='RUNNING', attempt=attempt+1, started_at=?, updated_at=? WHERE id=? AND status='QUEUED'",
+                    "UPDATE jobs SET status='RUNNING', attempt=attempt+1, started_at=?, completed_at=NULL, updated_at=? WHERE id=? AND status IN ('QUEUED', 'RETRYING')",
                     (now.isoformat(), now.isoformat(), lease.job_id),
                 )
                 self.store.connection.commit()
