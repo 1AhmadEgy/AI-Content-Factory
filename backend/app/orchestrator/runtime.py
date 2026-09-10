@@ -14,6 +14,7 @@ from ..infrastructure.sqlite_queue import SQLiteJobQueue
 from ..infrastructure.storage import LocalAssetStorage
 from ..providers.registry import default_provider_registry
 from ..workers.mock_worker import DeterministicMockWorker
+from ..workers.provider_worker import ProviderGenerationWorker
 from ..workers.registry import WorkerRegistry
 from .content_pipeline import ContentPipelineOrchestrator
 from .job_executor import ExecutionResult, JobExecutor
@@ -32,11 +33,20 @@ class OrchestratorRuntime:
         root = storage_root or os.getenv("AICF_ASSET_ROOT", "./data/assets")
         self.storage = LocalAssetStorage(root)
         self.workers = WorkerRegistry()
+
+        self.providers = default_provider_registry()
+        provider_worker = ProviderGenerationWorker(self.providers, self.storage, self.assets)
+        provider_worker.initialize()
+        self.workers.register(
+            provider_worker,
+            capabilities={"IMAGE", "VIDEO", "AUDIO", "DOCUMENT", "SUBTITLE"},
+            worker_id="provider-generation",
+        )
+
         mock = DeterministicMockWorker(self.storage, self.assets)
         mock.initialize()
         self.workers.register(mock, capabilities={"IMAGE", "VIDEO", "AUDIO", "DOCUMENT", "SUBTITLE"}, worker_id="mock")
 
-        self.providers = default_provider_registry()
         self.story_engine = AIStoryEngine(self.providers)
         self.script_engine = AIScriptEngine(self.providers)
         self.scene_planner = AIScenePlanner(self.providers)
