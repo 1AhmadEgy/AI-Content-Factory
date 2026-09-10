@@ -12,10 +12,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.TimeZone
 
 class Repository(private val dao: FactoryDao) {
     private val scope = CoroutineScope(Dispatchers.IO)
     private val api = NetworkClient.apiService
+    private val isoParser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSX", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
 
     val projects: StateFlow<List<Project>> = dao.getAllProjects().stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
     val series: StateFlow<List<Series>> = dao.getAllSeries().stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -70,66 +74,49 @@ class Repository(private val dao: FactoryDao) {
         syncJobs()
     }
 
-    private fun BackendJob.toLocalJob(): GenerationJob {
-        fun parseTime(value: String?): Long? = value?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() }
-        return GenerationJob(
-            id = id,
-            jobType = type,
-            targetType = targetType,
-            targetId = targetId,
-            status = runCatching { JobStatus.valueOf(status.uppercase()) }.getOrDefault(JobStatus.FAILED),
-            priority = priority,
-            attempt = attempt,
-            maxAttempts = maxAttempts,
-            provider = provider,
-            model = model,
-            progress = (progress.coerceIn(0.0, 1.0) * 100).toInt(),
-            errorCode = errorCode,
-            errorMessage = errorMessage,
-            createdAt = parseTime(createdAt) ?: System.currentTimeMillis(),
-            startedAt = parseTime(startedAt),
-            completedAt = parseTime(completedAt)
-        )
+    private fun parseTime(value: String?): Long? {
+        if (value == null) return null
+        val normalized = value.replace(Regex("\\.(\\d{3})\\d*Z$"), ".$1Z")
+        return runCatching { synchronized(isoParser) { isoParser.parse(normalized)?.time } }.getOrNull()
     }
+
+    private fun BackendJob.toLocalJob(): GenerationJob = GenerationJob(
+        id = id,
+        jobType = type,
+        targetType = targetType,
+        targetId = targetId,
+        status = runCatching { JobStatus.valueOf(status.uppercase()) }.getOrDefault(JobStatus.FAILED),
+        priority = priority,
+        attempt = attempt,
+        maxAttempts = maxAttempts,
+        provider = provider,
+        model = model,
+        progress = (progress.coerceIn(0.0, 1.0) * 100).toInt(),
+        errorCode = errorCode,
+        errorMessage = errorMessage,
+        createdAt = parseTime(createdAt) ?: System.currentTimeMillis(),
+        startedAt = parseTime(startedAt),
+        completedAt = parseTime(completedAt)
+    )
 
     suspend fun syncJobs(projectId: String? = null) {
         try {
             val feed = api.listJobs(projectId = projectId, limit = 200)
             feed.data.forEach { dao.insertJob(it.toLocalJob()) }
-        } catch (e: Exception) {
-            Log.w("Repository", "Job sync unavailable; retaining local state", e)
-        }
+        } catch (e: Exception) { Log.w("Repository", "Job sync unavailable; retaining local state", e) }
     }
 
-    suspend fun cancelJob(jobId: String): GenerationJob? {
-        return try {
-            val remote = api.cancelJob(jobId).data
-            val local = remote.toLocalJob()
-            dao.insertJob(local)
-            local
-        } catch (e: Exception) {
-            Log.e("Repository", "cancelJob failed", e)
-            null
-        }
-    }
+    suspend fun cancelJob(jobId: String): GenerationJob? = try {
+        api.cancelJob(jobId).data.toLocalJob().also { dao.insertJob(it) }
+    } catch (e: Exception) { Log.e("Repository", "cancelJob failed", e); null }
 
-    suspend fun retryJob(jobId: String): GenerationJob? {
-        return try {
-            val remote = api.retryJob(jobId).data
-            val local = remote.toLocalJob()
-            dao.insertJob(local)
-            local
-        } catch (e: Exception) {
-            Log.e("Repository", "retryJob failed", e)
-            null
-        }
-    }
+    suspend fun retryJob(jobId: String): GenerationJob? = try {
+        api.retryJob(jobId).data.toLocalJob().also { dao.insertJob(it) }
+    } catch (e: Exception) { Log.e("Repository", "retryJob failed", e); null }
 
     suspend fun refreshJob(jobId: String) {
-        try {
-            val local = api.getJob(jobId).data.toLocalJob()
-            dao.insertJob(local)
-        } catch (e: Exception) { Log.w("Repository", "refreshJob failed", e) }
+        try { api.getJob(jobId).data.toLocalJob().also { dao.insertJob(it) } }
+        catch (e: Exception) { Log.w("Repository", "refreshJob failed", e) }
     }
 }
 
