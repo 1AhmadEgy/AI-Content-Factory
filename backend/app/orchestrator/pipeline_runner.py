@@ -72,9 +72,9 @@ class PipelineRunner:
                     return PipelineRunResult(False, best.asset_id, None, ["QC_NO_AUDIO_STREAM"])
 
             staging_path.replace(final_path)
-            thumb = extract_thumbnail(str(final_path), str(final_path.with_suffix(".jpg")))
-            meta = write_metadata_sidecar(str(final_path.with_suffix(".metadata.json")), metadata or {})
             digest = sha256_file(str(final_path))
+            meta = write_metadata_sidecar(str(final_path.with_suffix(".metadata.json")), metadata or {})
+            thumb = extract_thumbnail(str(final_path), str(final_path.with_suffix(".jpg"))) if self.production else None
             provenance = create_provenance_manifest(str(final_path), timeline_id=timeline.id, timeline_version="1", render_profile=RenderProfile().name, renderer=type(renderer).__name__, renderer_version="1", source_assets=self.assets, qc={"passed": True, "sha256": digest})
             if subtitle_cues:
                 write_srt(subtitle_cues, str(final_path.with_suffix(".srt")))
