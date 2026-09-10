@@ -79,12 +79,14 @@ class FfmpegRenderer(Renderer):
         audio = [t for t in timeline.tracks if t.type in {TrackType.AUDIO, TrackType.DIALOGUE, TrackType.MUSIC, TrackType.SFX}]
         ordered_video = [c for t in video for c in sorted(t.clips, key=lambda c: (c.start_us, c.z_index, c.id))]
         ordered_audio = [c for t in audio for c in sorted(t.clips, key=lambda c: (c.start_us, c.id))]
-        inputs = ordered_video + ordered_audio
 
+        # Keep input classification by position instead of comparing dataclass instances
+        # repeatedly. This also avoids accidentally changing behavior if clip equality changes.
+        inputs = [(clip, True) for clip in ordered_video] + [(clip, False) for clip in ordered_audio]
         args = [self.options.ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-y" if self.options.overwrite else "-n"]
-        for clip in inputs:
+        for clip, is_video in inputs:
             path = self.assets[clip.asset_id]
-            if clip in ordered_video and self._is_image(path):
+            if is_video and self._is_image(path):
                 args += ["-loop", "1", "-i", path]
             else:
                 args += ["-i", path]
@@ -181,6 +183,18 @@ class FfmpegRenderer(Renderer):
         except ProcessLookupError:
             return False
         return True
+
+    def cancel_all(self) -> int:
+        """Stop every active FFmpeg process and return the number signalled."""
+        cancelled = 0
+        for render_id in list(self._processes):
+            if self.cancel(render_id):
+                cancelled += 1
+        return cancelled
+
+    def shutdown(self) -> None:
+        """Release renderer-owned subprocesses without exposing internal process state."""
+        self.cancel_all()
 
     def probe(self, path: str) -> dict[str, object]:
         completed = subprocess.run([self.options.ffprobe_bin, "-v", "error", "-show_streams", "-show_format", "-of", "json", path], capture_output=True, text=True, timeout=max(1, self.options.timeout_seconds))
