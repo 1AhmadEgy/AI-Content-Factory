@@ -30,6 +30,33 @@ def test_create_project_then_job() -> None:
     assert get_response.json()["data"]["id"] == job_id
 
 
+def test_execute_targets_requested_job_even_when_another_job_is_first() -> None:
+    client = TestClient(app)
+    project_id = client.post("/api/v1/projects", json={"name": "TargetedExecution"}).json()["data"]["id"]
+
+    first = client.post(
+        "/api/v1/jobs",
+        json={"projectId": project_id, "type": "IMAGE", "targetType": "shot", "priority": 200},
+        headers={"Idempotency-Key": "targeted-first"},
+    )
+    second = client.post(
+        "/api/v1/jobs",
+        json={"projectId": project_id, "type": "IMAGE", "targetType": "shot", "priority": 100},
+        headers={"Idempotency-Key": "targeted-second"},
+    )
+    assert first.status_code == 202
+    assert second.status_code == 202
+    first_id = first.json()["data"]["id"]
+    second_id = second.json()["data"]["id"]
+
+    response = client.post(f"/api/v1/jobs/{second_id}/execute")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["id"] == second_id
+    assert response.json()["data"]["status"] == "COMPLETED"
+    assert client.get(f"/api/v1/jobs/{first_id}").json()["data"]["status"] == "QUEUED"
+
+
 def test_job_idempotency_replays_same_job() -> None:
     client = TestClient(app)
     project_id = client.post("/api/v1/projects", json={"name": "Idempotency"}).json()["data"]["id"]
