@@ -144,7 +144,7 @@ class SQLiteShotRepository(ShotRepository):
     def create(self, shot: Shot) -> Shot:
         self.store._insert("INSERT INTO shots(id,scene_id,order_index,prompt,created_at) VALUES(?,?,?,?,?)", (shot.id, shot.scene_id, shot.order_index, shot.prompt, _dt(shot.created_at))); return shot
     def get(self, shot_id: str) -> Shot | None:
-        row = self.store._get("shots", shot_id); return Shot(row["id"], row["scene_id"], row["title"], row["order_index"], _parse_dt(row["created_at"])) if row else None
+        row = self.store._get("shots", shot_id); return Shot(row["id"], row["scene_id"], row["order_index"], row["prompt"], _parse_dt(row["created_at"])) if row else None
 
 
 def _job_input_to_dict(value: JobInput) -> dict[str, Any]: return {"parameters": value.parameters, "referenceAssetIds": value.reference_asset_ids, "constraints": value.constraints, "seed": value.seed, "deterministic": value.deterministic}
@@ -161,7 +161,11 @@ class SQLiteJobRepository(JobRepository):
         self.store._insert("INSERT INTO jobs(id,parent_job_id,project_id,type,target_type,target_id,priority,status,progress,attempt,max_attempts,provider,model,input_json,output_json,error_code,error_message,created_at,started_at,completed_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (job.id, job.parent_job_id, job.project_id, job.type.value, job.target_type, job.target_id, job.priority, job.status.value, job.progress, job.attempt, job.max_attempts, job.provider, job.model, _json(_job_input_to_dict(job.input)), _json(_job_output_to_dict(job.output)) if job.output else None, job.error_code, job.error_message, _dt(job.created_at), _dt(job.started_at), _dt(job.completed_at), _dt(job.updated_at))); return job
 
     def create_with_idempotency(self, job: GenerationJob, key: str, operation: str, fingerprint: str) -> tuple[bool, sqlite3.Row | None]:
-        """Persist a job and its idempotency claim atomically."""
+        """Persist a job and its idempotency claim atomically.
+
+        If another request owns the key, the job insert is rolled back so a
+        losing concurrent request cannot leave an orphan queued job.
+        """
         values = (job.id, job.parent_job_id, job.project_id, job.type.value, job.target_type, job.target_id,
                   job.priority, job.status.value, job.progress, job.attempt, job.max_attempts, job.provider,
                   job.model, _json(_job_input_to_dict(job.input)), _json(_job_output_to_dict(job.output)) if job.output else None,
