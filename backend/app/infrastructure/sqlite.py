@@ -144,7 +144,7 @@ class SQLiteShotRepository(ShotRepository):
     def create(self, shot: Shot) -> Shot:
         self.store._insert("INSERT INTO shots(id,scene_id,order_index,prompt,created_at) VALUES(?,?,?,?,?)", (shot.id, shot.scene_id, shot.order_index, shot.prompt, _dt(shot.created_at))); return shot
     def get(self, shot_id: str) -> Shot | None:
-        row = self.store._get("shots", shot_id); return Shot(row["id"], row["scene_id"], row["title"], row["order_index"], _parse_dt(row["created_at"])) if row else None
+        row = self.store._get("shots", shot_id); return Shot(row["id"], row["scene_id"], row["order_index"], row["prompt"], _parse_dt(row["created_at"])) if row else None
 
 
 def _job_input_to_dict(value: JobInput) -> dict[str, Any]: return {"parameters": value.parameters, "referenceAssetIds": value.reference_asset_ids, "constraints": value.constraints, "seed": value.seed, "deterministic": value.deterministic}
