@@ -37,24 +37,11 @@ class FfmpegRenderer(Renderer):
     def health_check(self) -> dict[str, object]:
         """Check the media toolchain without allowing a hung executable to block startup."""
         try:
-            ffmpeg = subprocess.run(
-                [self.options.ffmpeg_bin, "-version"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            ffprobe = subprocess.run(
-                [self.options.ffprobe_bin, "-version"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
+            ffmpeg = subprocess.run([self.options.ffmpeg_bin, "-version"], capture_output=True, text=True, timeout=10)
+            ffprobe = subprocess.run([self.options.ffprobe_bin, "-version"], capture_output=True, text=True, timeout=10)
         except (OSError, subprocess.TimeoutExpired):
             return {"available": False, "version": None}
-        return {
-            "available": ffmpeg.returncode == 0 and ffprobe.returncode == 0,
-            "version": ffmpeg.stdout.splitlines()[0] if ffmpeg.stdout else None,
-        }
+        return {"available": ffmpeg.returncode == 0 and ffprobe.returncode == 0, "version": ffmpeg.stdout.splitlines()[0] if ffmpeg.stdout else None}
 
     def validate(self, timeline: Timeline, profile: RenderProfile) -> list[str]:
         errors = timeline.validate()
@@ -79,9 +66,6 @@ class FfmpegRenderer(Renderer):
         audio = [t for t in timeline.tracks if t.type in {TrackType.AUDIO, TrackType.DIALOGUE, TrackType.MUSIC, TrackType.SFX}]
         ordered_video = [c for t in video for c in sorted(t.clips, key=lambda c: (c.start_us, c.z_index, c.id))]
         ordered_audio = [c for t in audio for c in sorted(t.clips, key=lambda c: (c.start_us, c.id))]
-
-        # Keep input classification by position instead of comparing dataclass instances
-        # repeatedly. This also avoids accidentally changing behavior if clip equality changes.
         inputs = [(clip, True) for clip in ordered_video] + [(clip, False) for clip in ordered_audio]
         args = [self.options.ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-y" if self.options.overwrite else "-n"]
         for clip, is_video in inputs:
@@ -100,11 +84,7 @@ class FfmpegRenderer(Renderer):
             dur = clip.duration_us / 1_000_000
             source_start = clip.source_start_us / 1_000_000
             label = f"v{index}"
-            filter_parts.append(
-                f"[{index}:v]trim=start={source_start}:duration={dur},setpts=PTS-STARTPTS+{start}/TB,"
-                f"fps={profile.fps:g},scale={profile.width}:{profile.height}:force_original_aspect_ratio=decrease,"
-                f"pad={profile.width}:{profile.height}:(ow-iw)/2:(oh-ih)/2:color=black[{label}]"
-            )
+            filter_parts.append(f"[{index}:v]trim=start={source_start}:duration={dur},setpts=PTS-STARTPTS+{start}/TB,fps={profile.fps:g},scale={profile.width}:{profile.height}:force_original_aspect_ratio=decrease,pad={profile.width}:{profile.height}:(ow-iw)/2:(oh-ih)/2:color=black[{label}]")
             video_labels.append(label)
 
         if video_labels:
@@ -126,17 +106,13 @@ class FfmpegRenderer(Renderer):
             start = clip.start_us / 1_000_000
             source_start = clip.source_start_us / 1_000_000
             label = f"a{offset}"
-            filter_parts.append(
-                f"[{offset}:a]atrim=start={source_start}:duration={dur},asetpts=PTS-STARTPTS,"
-                f"adelay={int(start * 1000)}:all=1[{label}]"
-            )
+            filter_parts.append(f"[{offset}:a]atrim=start={source_start}:duration={dur},asetpts=PTS-STARTPTS,adelay={int(start * 1000)}:all=1[{label}]")
             audio_labels.append(label)
         if audio_labels:
             joined = "".join(f"[{x}]" for x in audio_labels)
             filter_parts.append(f"{joined}amix=inputs={len(audio_labels)}:duration=longest:dropout_transition=0:normalize=0[aout]")
 
-        args += ["-filter_complex", ";".join(filter_parts)]
-        args += ["-map", "[vout]"]
+        args += ["-filter_complex", ";".join(filter_parts), "-map", "[vout]"]
         if audio_labels:
             args += ["-map", "[aout]"]
         args += ["-t", f"{timeline.duration_us / 1_000_000:.6f}", "-r", f"{profile.fps:g}", "-c:v", "libx264", "-preset", self.options.preset, "-crf", str(self.options.crf), "-pix_fmt", "yuv420p"]
@@ -153,7 +129,12 @@ class FfmpegRenderer(Renderer):
             return RenderResult(False, error=";".join(errors))
         destination = Path(output_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        staging = Path(tempfile.mkstemp(prefix="acf-render-", suffix=".mp4", dir=destination.parent)[1])
+        fd, staging_name = tempfile.mkstemp(prefix="acf-render-", suffix=".mp4", dir=destination.parent)
+        os.close(fd)
+        staging = Path(staging_name)
+        # Reserve a unique name without leaving an existing file behind: FFmpeg's
+        # -n mode must be able to create the staging output itself.
+        staging.unlink(missing_ok=True)
         try:
             args = self._build_args(timeline, profile, str(staging))
             proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
