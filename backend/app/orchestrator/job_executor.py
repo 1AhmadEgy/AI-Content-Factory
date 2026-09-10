@@ -115,15 +115,15 @@ class JobExecutor:
         if not gate.allowed:
             job.error_code = gate.code or "COMPLETION_GATE_BLOCKED"
             job.error_message = gate.message or "Completion gate rejected the output"
-            transition(job, JobStatus.BLOCKED)
             self._require_persisted(job, lease)
+            transition(job, JobStatus.BLOCKED)
             self.queue.acknowledge(lease, JobStatus.BLOCKED)
             self._event(job, "JOB_BLOCKED", {"errorCode": job.error_code, "qcCount": len(gate.qc_results)})
             return ExecutionResult(job, JobStatus.BLOCKED)
 
         self._set_progress(job, "completed", 1.0, persist=False, lease=lease)
-        transition(job, JobStatus.COMPLETED)
         self._require_persisted(job, lease)
+        transition(job, JobStatus.COMPLETED)
         self.queue.acknowledge(lease, JobStatus.COMPLETED)
         self._event(
             job,
@@ -148,10 +148,10 @@ class JobExecutor:
             raise RuntimeError("JOB_LEASE_LOST")
         worker = self.workers.get(worker_id or lease.worker_id)
         worker.cancel(job.id)
-        transition(job, JobStatus.CANCELLED)
         job.error_code = "CANCELLED"
         job.error_message = "Cancellation requested"
         self._require_persisted(job, lease)
+        transition(job, JobStatus.CANCELLED)
         self.queue.acknowledge(lease, JobStatus.CANCELLED)
         self._event(job, "JOB_CANCELLED", {})
         return ExecutionResult(job, JobStatus.CANCELLED)
@@ -188,10 +188,9 @@ class JobExecutor:
             raise RuntimeError("JOB_LEASE_LOST")
         job.error_code = code
         job.error_message = message
-        can_retry = retryable and job.attempt < job.max_attempts
-        if can_retry:
-            transition(job, JobStatus.RETRYING)
+        if retryable and job.attempt < job.max_attempts:
             self._require_persisted(job, lease)
+            transition(job, JobStatus.RETRYING)
             self.queue.acknowledge(lease, JobStatus.RETRYING)
             transition(job, JobStatus.QUEUED)
             self.jobs.update(job)
@@ -201,8 +200,9 @@ class JobExecutor:
                 {"errorCode": code, "attempt": job.attempt, "maxAttempts": job.max_attempts},
             )
             return ExecutionResult(job, JobStatus.QUEUED, retried=True)
-        transition(job, JobStatus.FAILED)
+
         self._require_persisted(job, lease)
+        transition(job, JobStatus.FAILED)
         self.queue.acknowledge(lease, JobStatus.FAILED)
         self._event(job, "JOB_FAILED", {"errorCode": code, "retryable": retryable, "attempt": job.attempt})
         return ExecutionResult(job, JobStatus.FAILED)
