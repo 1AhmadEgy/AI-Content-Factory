@@ -7,6 +7,7 @@ from ..domain.projects import Project
 from ..infrastructure.character_repository import SQLiteCharacterRepository
 from ..infrastructure.location_repository import SQLiteLocationRepository
 from .default_library import DEFAULT_LIBRARY_PROJECT_ID, default_characters, default_locations
+from .egypt_catalog import EGYPT_LIBRARY_CATEGORIES, EGYPT_LIBRARY_NAME, EGYPT_LIBRARY_VERSION, EGYPT_SERIES_TEMPLATE_IDS
 from .egypt_expanded import expanded_characters, expanded_locations
 from .egypt_common import common_characters, common_locations
 
@@ -21,13 +22,16 @@ def ensure_egypt_library(repositories) -> dict[str, int]:
         now = datetime.now(timezone.utc)
         repositories.projects.create(Project(
             id=DEFAULT_LIBRARY_PROJECT_ID,
-            name="Egypt",
-            description="Egypt reusable library: characters, locations, archetypes, series templates, and production-ready continuity defaults.",
+            name=EGYPT_LIBRARY_NAME,
+            description="Egypt reusable library: characters, locations, series templates, and production-ready continuity defaults.",
             settings={
                 "kind": "reusable-library",
-                "libraryName": "Egypt",
+                "libraryName": EGYPT_LIBRARY_NAME,
                 "country": "Egypt",
-                "seedVersion": 4,
+                "libraryVersion": EGYPT_LIBRARY_VERSION,
+                "seedVersion": 5,
+                "categories": list(EGYPT_LIBRARY_CATEGORIES),
+                "seriesTemplates": list(EGYPT_SERIES_TEMPLATE_IDS),
             },
             created_at=now,
             updated_at=now,
