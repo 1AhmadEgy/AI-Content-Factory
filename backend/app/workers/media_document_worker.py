@@ -1,41 +1,43 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
 import re
-import shutil
 import signal
+import shutil
 import subprocess
 import tempfile
-import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from threading import Lock
 
-from ..application.language_media_service import LanguageMediaService
 from ..domain.asset_repositories import AssetRepository
 from ..domain.assets import Asset, AssetStatus, AssetType, LicenseStatus
-from ..domain.jobs import GenerationJob, JobType
+from ..domain.jobs import GenerationJob
 from ..infrastructure.storage import LocalAssetStorage
 from ..orchestrator.provenance import build_provenance
 from ..orchestrator.queue import JobExecutionResult, Worker, WorkerContext
+from ..services.language_media import LanguageMediaService
 
 
 class MediaDocumentWorker(Worker):
-    """Offline-first worker for language-aware subtitles, thumbnails, metadata and QC."""
+    """Generate subtitles, thumbnails, metadata and final media QC documents."""
 
     worker_type = "media-document"
-    _VTT_CLOCK = re.compile(r"^(?:(\d{2,}):)?(\d{2}):(\d{2})(?:\.(\d{1,3}))?$")
+    _VTT_CLOCK = re.compile(r"^(?:(\d+):)?(\d{2}):(\d{2})(?:\.(\d{1,3}))?$")
 
-    def __init__(self, storage: LocalAssetStorage, assets: AssetRepository, ffmpeg_binary: str = "ffmpeg", ffprobe_binary: str = "ffprobe", subprocess_timeout_seconds: int = 120) -> None:
-        self.storage, self.assets = storage, assets
-        self.ffmpeg_binary, self.ffprobe_binary = ffmpeg_binary, ffprobe_binary
+    def __init__(self, storage: LocalAssetStorage, assets: AssetRepository, ffmpeg_binary: str = "ffmpeg", ffprobe_binary: str = "ffprobe", subprocess_timeout_seconds: int = 300) -> None:
+        self.storage = storage
+        self.assets = assets
+        self.ffmpeg_binary = ffmpeg_binary
+        self.ffprobe_binary = ffprobe_binary
         self.subprocess_timeout_seconds = max(1, int(subprocess_timeout_seconds))
         self._initialized = False
         self._processes: dict[str, subprocess.Popen[str]] = {}
-        self._process_lock = threading.RLock()
+        self._process_lock = Lock()
 
     def initialize(self) -> None:
         self._initialized = True
@@ -44,52 +46,9 @@ class MediaDocumentWorker(Worker):
         return self._initialized
 
     @staticmethod
-    def _progress(context: WorkerContext | None, progress: float, stage: str) -> None:
-        if context is not None:
-            context.report_progress(progress, stage)
-
-    def execute(self, job: GenerationJob, context: WorkerContext) -> JobExecutionResult:
-        if not self._initialized:
-            return JobExecutionResult(False, error_code="WORKER_NOT_INITIALIZED", error_message="Worker is not initialized")
-        self._progress(context, 0.05, "media_prepare")
-        if job.type is JobType.SUBTITLE:
-            self._progress(context, 0.45, "subtitle_generation")
-            result = self._document(job, AssetType.SUBTITLE, "text/vtt; charset=utf-8", self._subtitle(job))
-        elif job.type is JobType.METADATA:
-            self._progress(context, 0.45, "metadata_generation")
-            result = self._document(job, AssetType.DOCUMENT, "application/json; charset=utf-8", self._metadata(job))
-        elif job.type is JobType.THUMBNAIL:
-            self._progress(context, 0.35, "thumbnail_extract")
-            result = self._thumbnail_asset(job)
-        elif job.type is JobType.QC:
-            self._progress(context, 0.35, "final_qc")
-            result = self._final_qc(job)
-        else:
-            return JobExecutionResult(False, error_code="UNSUPPORTED_JOB_TYPE", error_message=job.type.value)
-        if result.success:
-            self._progress(context, 1.0, "completed")
-        return result
-
-    def _document(self, job: GenerationJob, kind: AssetType, mime: str, payload: bytes) -> JobExecutionResult:
-        digest, path, size = self.storage.put_bytes(payload)
-        asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{job.type.value}:{job.id}:{digest}"))
-        self.assets.create(Asset(asset_id, job.project_id, kind, path, mime, size, digest, AssetStatus.READY, build_provenance(job, source_asset_ids=list(job.input.reference_asset_ids), metadata={"worker": self.worker_type}, license_status=LicenseStatus.VERIFIED)))
-        return JobExecutionResult(True, [asset_id], {"bytes": size}, f"{self.worker_type}-{job.id}")
-
-    @classmethod
-    def _vtt_time(cls, value: Any, default: str) -> str:
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            total = float(value)
-            if not math.isfinite(total) or total < 0:
-                raise ValueError("INVALID_SUBTITLE_TIME")
-            hours = int(total // 3600)
-            minutes = int((total % 3600) // 60)
-            seconds = total % 60
-            return f"{hours:02d}:{minutes:02d}:{seconds:06.3f}"
-        text = str(value or default).strip()
-        if len(text) == 5 and text.count(":") == 1:
-            text = "00:" + text + ".000"
-        match = cls._VTT_CLOCK.fullmatch(text)
+    def _vtt_time(value: object, default: str) -> str:
+        raw = default if value is None else str(value).strip()
+        match = MediaDocumentWorker._VTT_CLOCK.fullmatch(raw)
         if not match:
             raise ValueError("INVALID_SUBTITLE_TIME")
         hours = int(match.group(1) or 0)
@@ -144,8 +103,11 @@ class MediaDocumentWorker(Worker):
     def _run_process(self, job_id: str, args: list[str]) -> tuple[subprocess.CompletedProcess[str] | None, bool]:
         proc: subprocess.Popen[str] | None = None
         try:
-            proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+            # Register the process while holding the same lock used by cancel().
+            # This closes the spawn-to-registration window where cancellation
+            # could otherwise miss a newly created FFmpeg/FFprobe process.
             with self._process_lock:
+                proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
                 self._processes[job_id] = proc
             try:
                 stdout, stderr = proc.communicate(timeout=self.subprocess_timeout_seconds)
