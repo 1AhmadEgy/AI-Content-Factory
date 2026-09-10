@@ -7,6 +7,7 @@ import com.example.core.model.SceneCreateRequest
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.Header
+import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.Path
 import retrofit2.http.Query
@@ -54,6 +55,36 @@ interface FactoryApiService {
         @Path("job_id") jobId: String,
         @Query("limit") limit: Int = 50,
     ): ProviderRunsFeed
+
+    @GET("api/v1/series/templates")
+    suspend fun listSeriesTemplates(): SeriesTemplatesEnvelope
+
+    @GET("api/v1/series/templates/{template_id}")
+    suspend fun getSeriesTemplate(@Path("template_id") templateId: String): SeriesTemplateEnvelope
+
+    @POST("api/v1/series/projects/{project_id}/apply-template")
+    suspend fun applySeriesTemplate(
+        @Path("project_id") projectId: String,
+        @Body request: ApplySeriesTemplateRequest,
+    ): SeriesContextEnvelope
+
+    @GET("api/v1/series/projects/{project_id}/context")
+    suspend fun getSeriesContext(@Path("project_id") projectId: String): SeriesContextEnvelope
+
+    @PATCH("api/v1/series/projects/{project_id}/context")
+    suspend fun patchSeriesContext(
+        @Path("project_id") projectId: String,
+        @Body request: SeriesContextPatchRequest,
+    ): SeriesContextEnvelope
+
+    @POST("api/v1/series/projects/{project_id}/episodes/{episode_id}/snapshot")
+    suspend fun snapshotEpisodeContext(
+        @Path("project_id") projectId: String,
+        @Path("episode_id") episodeId: String,
+    ): EpisodeSnapshotEnvelope
+
+    @GET("api/v1/series/projects/{project_id}/snapshots")
+    suspend fun listSeriesSnapshots(@Path("project_id") projectId: String): SeriesSnapshotsEnvelope
 
     @GET("api/v1/health")
     suspend fun health(): HealthResponse
