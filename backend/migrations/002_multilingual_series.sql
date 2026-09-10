@@ -13,7 +13,7 @@ ALTER TABLE projects
 CREATE INDEX IF NOT EXISTS idx_projects_country_library ON projects(country_id, library_id);
 
 CREATE TABLE IF NOT EXISTS translations (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  id text PRIMARY KEY,
   source_language text NOT NULL,
   target_language text NOT NULL,
   source_text text NOT NULL,
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS translations (
   source_version integer NOT NULL DEFAULT 1 CHECK(source_version > 0),
   provider text NOT NULL,
   model text,
-  glossary_version integer NOT NULL DEFAULT 1,
+  glossary_version integer NOT NULL DEFAULT 1 CHECK(glossary_version > 0),
   version integer NOT NULL DEFAULT 1 CHECK(version > 0),
   manual boolean NOT NULL DEFAULT false,
   source_fingerprint text NOT NULL,
@@ -35,7 +35,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_translations_fingerprint_version
   ON translations(source_fingerprint, version);
 CREATE INDEX IF NOT EXISTS idx_translations_source_target
   ON translations(source_id, target_language, version, created_at);
+CREATE INDEX IF NOT EXISTS idx_translations_fingerprint
+  ON translations(source_fingerprint);
 
 ALTER TABLE translations ENABLE ROW LEVEL SECURITY;
--- If project-scoped translation ownership is introduced later, add project_id
--- and a matching RLS policy without changing the immutable translation payload.
+-- Translation rows are immutable history. If project-scoped ownership is introduced later,
+-- add project_id and a matching RLS policy without changing the translation payload.
