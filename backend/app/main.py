@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
@@ -18,6 +19,8 @@ from .orchestrator.worker_loop import WorkerLoop
 
 
 DATABASE_PATH = os.getenv("AICF_DATABASE_PATH", "./data/factory.db")
+if DATABASE_PATH != ":memory:":
+    Path(DATABASE_PATH).parent.mkdir(parents=True, exist_ok=True)
 repositories = SQLiteRepositories(DATABASE_PATH)
 job_repository = SQLiteJobRepository(repositories.store)
 project_repository = SQLiteProjectRepository(repositories.store)
@@ -32,18 +35,7 @@ def _worker_autostart_enabled() -> bool:
 
 def _error_response(request: Request, status_code: int, code: str, message: str, details: object | None = None) -> JSONResponse:
     request_id = getattr(request.state, "request_id", "unknown")
-    return JSONResponse(
-        status_code=status_code,
-        content={
-            "error": {
-                "code": code,
-                "message": message,
-                "details": details if details is not None else {},
-                "requestId": request_id,
-            }
-        },
-        headers={"X-Request-Id": request_id},
-    )
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message, "details": details if details is not None else {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
 
 
 @asynccontextmanager
@@ -56,14 +48,7 @@ async def lifespan(_: FastAPI):
         worker_loop.stop()
 
 
-app = FastAPI(
-    title="AI Content Factory API",
-    version="0.3.0",
-    docs_url="/api/v1/docs",
-    redoc_url="/api/v1/redoc",
-    openapi_url="/api/v1/openapi.json",
-    lifespan=lifespan,
-)
+app = FastAPI(title="AI Content Factory API", version="0.3.0", docs_url="/api/v1/docs", redoc_url="/api/v1/redoc", openapi_url="/api/v1/openapi.json", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -77,19 +62,7 @@ async def request_id_middleware(request: Request, call_next):
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    mapping = {
-        400: "VALIDATION_ERROR",
-        401: "UNAUTHORIZED",
-        403: "FORBIDDEN",
-        404: "NOT_FOUND",
-        409: "CONFLICT",
-        422: "DOMAIN_RULE_VIOLATION",
-        429: "RATE_LIMITED",
-        500: "INTERNAL_ERROR",
-        502: "PROVIDER_ERROR",
-        503: "RESOURCE_UNAVAILABLE",
-        504: "TIMEOUT",
-    }
+    mapping = {400: "VALIDATION_ERROR", 401: "UNAUTHORIZED", 403: "FORBIDDEN", 404: "NOT_FOUND", 409: "CONFLICT", 422: "DOMAIN_RULE_VIOLATION", 429: "RATE_LIMITED", 500: "INTERNAL_ERROR", 502: "PROVIDER_ERROR", 503: "RESOURCE_UNAVAILABLE", 504: "TIMEOUT"}
     detail = exc.detail if isinstance(exc.detail, str) else "Request failed"
     code = detail if isinstance(detail, str) and detail.isupper() and len(detail) <= 80 else mapping.get(exc.status_code, "INTERNAL_ERROR")
     message = detail if code == mapping.get(exc.status_code) else "Request failed"
@@ -98,13 +71,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    return _error_response(
-        request,
-        400,
-        "VALIDATION_ERROR",
-        "Request validation failed",
-        {"errors": exc.errors()},
-    )
+    return _error_response(request, 400, "VALIDATION_ERROR", "Request validation failed", {"errors": exc.errors()})
 
 
 @app.exception_handler(Exception)
@@ -120,36 +87,21 @@ app.include_router(pipeline_router)
 
 @app.get("/api/v1/health", tags=["system"])
 def health(request: Request) -> dict[str, object]:
-    return {
-        "data": {"status": "OK", "service": "ai-content-factory-backend"},
-        "requestId": request.state.request_id,
-    }
+    return {"data": {"status": "OK", "service": "ai-content-factory-backend"}, "requestId": request.state.request_id}
 
 
 @app.get("/api/v1/ready", tags=["system"])
 def readiness(request: Request) -> dict[str, object]:
     try:
         repositories.store.connection.execute("SELECT 1").fetchone()
-        return {
-            "data": {"status": "READY", "service": "ai-content-factory-backend"},
-            "requestId": request.state.request_id,
-        }
+        return {"data": {"status": "READY", "service": "ai-content-factory-backend"}, "requestId": request.state.request_id}
     except Exception:
         return _error_response(request, 503, "RESOURCE_UNAVAILABLE", "Required dependencies are not ready")
 
 
 @app.get("/api/v1/worker/status", tags=["system"])
 def worker_status(request: Request) -> dict[str, object]:
-    return {
-        "data": {
-            "workerId": worker_loop.worker_id,
-            "running": worker_loop.running,
-            "autostart": _worker_autostart_enabled(),
-            "iterations": worker_loop.iterations,
-            "lastError": worker_loop.last_error,
-        },
-        "requestId": request.state.request_id,
-    }
+    return {"data": {"workerId": worker_loop.worker_id, "running": worker_loop.running, "autostart": _worker_autostart_enabled(), "iterations": worker_loop.iterations, "lastError": worker_loop.last_error}, "requestId": request.state.request_id}
 
 
 @app.get("/api/v1/readiness", include_in_schema=False)
