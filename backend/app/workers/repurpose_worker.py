@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import tempfile
 import uuid
 from pathlib import Path
@@ -18,7 +19,7 @@ from ..rendering.renderer import RenderProfile
 
 
 class RepurposeWorker(Worker):
-    """Render provider-neutral vertical clips from an existing video asset."""
+    """Render provider-neutral vertical clips and thumbnails from an existing video asset."""
 
     worker_type = "repurpose"
 
@@ -46,6 +47,8 @@ class RepurposeWorker(Worker):
             return JobExecutionResult(False, error_code="REPURPOSE_SOURCE_MISSING", error_message=source.path)
 
         platforms = [str(p).lower() for p in job.input.parameters.get("platforms", ["youtube_shorts", "tiktok", "instagram_reels", "facebook_reels"])]
+        if not platforms:
+            return JobExecutionResult(False, error_code="REPURPOSE_NO_PLATFORMS", error_message="At least one platform is required")
         duration_us = max(1, int(float(job.input.parameters.get("clipDurationSeconds", 60)) * 1_000_000))
         source_start_us = max(0, int(job.input.parameters.get("sourceStartUs", 0)))
         profile = RenderProfile(name="vertical_1080p", width=608, height=1080, fps=float(job.input.parameters.get("fps", 30)))
@@ -59,21 +62,14 @@ class RepurposeWorker(Worker):
                 return JobExecutionResult(False, error_code="FFMPEG_NOT_AVAILABLE", error_message="FFmpeg/FFprobe executable was not found")
             for index, platform in enumerate(platforms):
                 if context:
-                    context.report_progress(index / max(len(platforms), 1), f"repurpose:{platform}:render")
+                    context.report_progress(index / len(platforms), f"repurpose:{platform}:render")
                 timeline = Timeline(
                     id=f"repurpose:{job.id}:{platform}",
                     project_id=job.project_id,
                     duration_us=duration_us,
                     tracks=[TimelineTrack(
-                        id=f"video:{job.id}:{platform}",
-                        type=TrackType.VIDEO,
-                        clips=[TimelineClip(
-                            id=f"clip:{job.id}:{platform}",
-                            asset_id=source.id,
-                            start_us=0,
-                            duration_us=duration_us,
-                            source_start_us=source_start_us,
-                        )],
+                        id=f"video:{job.id}:{platform}", type=TrackType.VIDEO,
+                        clips=[TimelineClip(id=f"clip:{job.id}:{platform}", asset_id=source.id, start_us=0, duration_us=duration_us, source_start_us=source_start_us)],
                     )],
                 )
                 errors = timeline.validate()
@@ -84,14 +80,30 @@ class RepurposeWorker(Worker):
                     result = renderer.render(timeline, profile, str(output))
                     if not result.success or not result.output_path:
                         return JobExecutionResult(False, error_code="REPURPOSE_RENDER_FAILED", error_message=result.error or platform, retryable=True)
-                    payload = Path(result.output_path).read_bytes()
+                    probe = renderer.probe(result.output_path)
+                    streams = probe.get("streams", []) if isinstance(probe, dict) else []
+                    video_streams = [s for s in streams if isinstance(s, dict) and s.get("codec_type") == "video"]
+                    if not video_streams:
+                        return JobExecutionResult(False, error_code="REPURPOSE_QC_FAILED", error_message=f"No video stream: {platform}", retryable=True)
+                    actual_width = int(video_streams[0].get("width", 0))
+                    actual_height = int(video_streams[0].get("height", 0))
+                    if (actual_width, actual_height) != (profile.width, profile.height):
+                        return JobExecutionResult(False, error_code="REPURPOSE_QC_FAILED", error_message=f"Unexpected resolution: {actual_width}x{actual_height}", retryable=True)
+                    payload = output.read_bytes()
+                    thumbnail = Path(temp) / f"{platform}.jpg"
+                    thumb = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", "0", "-i", str(output), "-frames:v", "1", "-q:v", "2", str(thumbnail)], check=False, capture_output=True)
+                    if thumb.returncode != 0 or not thumbnail.is_file():
+                        return JobExecutionResult(False, error_code="REPURPOSE_THUMBNAIL_FAILED", error_message=thumb.stderr.decode("utf-8", errors="replace")[-2000:], retryable=True)
+                    thumbnail_payload = thumbnail.read_bytes()
                 digest, path, size = self.storage.put_bytes(payload)
                 asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"repurpose-video:{job.id}:{platform}:{digest}"))
-                self.assets.create(Asset(
-                    asset_id, job.project_id, AssetType.VIDEO, path, "video/mp4", size, digest, AssetStatus.READY,
-                    build_provenance(job, source_asset_ids=[source.id], metadata={"platform": platform, "profile": profile.name, "resolution": "608x1080", "sourceStartUs": source_start_us, "durationUs": duration_us}, license_status=LicenseStatus.VERIFIED),
-                ))
-                outputs.append({"platform": platform, "assetId": asset_id, "sha256": digest, "bytes": size, "resolution": "608x1080", "durationUs": duration_us})
+                self.assets.create(Asset(asset_id, job.project_id, AssetType.VIDEO, path, "video/mp4", size, digest, AssetStatus.READY,
+                    build_provenance(job, source_asset_ids=[source.id], metadata={"platform": platform, "profile": profile.name, "resolution": f"{actual_width}x{actual_height}", "sourceStartUs": source_start_us, "durationUs": duration_us, "qc": "passed"}, license_status=LicenseStatus.VERIFIED)))
+                thumb_digest, thumb_path, thumb_size = self.storage.put_bytes(thumbnail_payload)
+                thumb_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"repurpose-thumbnail:{job.id}:{platform}:{thumb_digest}"))
+                self.assets.create(Asset(thumb_id, job.project_id, AssetType.THUMBNAIL, thumb_path, "image/jpeg", thumb_size, AssetStatus.READY,
+                    build_provenance(job, source_asset_ids=[asset_id], metadata={"platform": platform, "engine": "ffmpeg", "timestamp": "0"}, license_status=LicenseStatus.VERIFIED)))
+                outputs.append({"platform": platform, "assetId": asset_id, "thumbnailAssetId": thumb_id, "sha256": digest, "bytes": size, "resolution": f"{actual_width}x{actual_height}", "durationUs": duration_us})
 
             if context:
                 context.report_progress(1.0, "repurpose:complete")
@@ -99,21 +111,17 @@ class RepurposeWorker(Worker):
             manifest_bytes = (json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
             digest, path, size = self.storage.put_bytes(manifest_bytes)
             manifest_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"repurpose-manifest:{job.id}:{digest}"))
-            self.assets.create(Asset(
-                manifest_id, job.project_id, AssetType.DOCUMENT, path, "application/json; charset=utf-8", size, digest, AssetStatus.READY,
-                build_provenance(job, source_asset_ids=[source.id] + [str(item["assetId"]) for item in outputs], metadata={"repurposing": True, "rendered": True}, license_status=LicenseStatus.VERIFIED),
-            ))
-            return JobExecutionResult(True, [str(item["assetId"]) for item in outputs] + [manifest_id], {"outputCount": len(outputs), "manifestAssetId": manifest_id}, f"repurpose-{job.id}")
+            self.assets.create(Asset(manifest_id, job.project_id, AssetType.DOCUMENT, path, "application/json; charset=utf-8", size, AssetStatus.READY,
+                build_provenance(job, source_asset_ids=[source.id] + [str(item["assetId"]) for item in outputs] + [str(item["thumbnailAssetId"]) for item in outputs], metadata={"repurposing": True, "rendered": True, "qc": "passed", "thumbnailCount": len(outputs)}, license_status=LicenseStatus.VERIFIED)))
+            return JobExecutionResult(True, [str(item["assetId"]) for item in outputs] + [str(item["thumbnailAssetId"]) for item in outputs] + [manifest_id], {"outputCount": len(outputs), "manifestAssetId": manifest_id}, f"repurpose-{job.id}")
         finally:
             self._renderers.pop(job.id, None)
 
     def cancel(self, job_id: str) -> None:
         renderer = self._renderers.get(job_id)
         if renderer:
-            renderer.cancel(f"repurpose:{job_id}:youtube_shorts")
-            renderer.cancel(f"repurpose:{job_id}:tiktok")
-            renderer.cancel(f"repurpose:{job_id}:instagram_reels")
-            renderer.cancel(f"repurpose:{job_id}:facebook_reels")
+            for render_id in list(renderer._processes):
+                renderer.cancel(render_id)
 
     def shutdown(self) -> None:
         for renderer in list(self._renderers.values()):
