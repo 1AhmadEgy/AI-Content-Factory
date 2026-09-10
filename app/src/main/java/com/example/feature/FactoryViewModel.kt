@@ -22,4 +22,5 @@ class FactoryViewModel : ViewModel() {
     fun refreshJobs(projectId: String? = null) = viewModelScope.launch { repo.syncJobs(projectId) }
     fun refreshJob(jobId: String) = viewModelScope.launch { repo.refreshJob(jobId) }
     fun cancelJob(jobId: String) = viewModelScope.launch { repo.cancelJob(jobId) }
+    fun retryJob(jobId: String) = viewModelScope.launch { repo.retryJob(jobId) }
 }
