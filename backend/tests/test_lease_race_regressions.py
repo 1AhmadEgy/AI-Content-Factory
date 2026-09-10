@@ -6,10 +6,11 @@ from backend.app.domain.jobs import JobInput, JobStatus, JobType
 from backend.app.domain.projects import Project
 from backend.app.infrastructure.sqlite import SQLiteRepositories
 from backend.app.orchestrator.job_service import JobService
+from backend.app.orchestrator.queue import JobLease
 from backend.app.orchestrator.runtime import OrchestratorRuntime
 
 
-def test_stale_worker_cannot_finalize_after_lease_recovery(tmp_path):
+def _queued_claim(tmp_path):
     repositories = SQLiteRepositories(":memory:")
     repositories.projects.create(Project(id="project-1", name="Race test"))
     runtime = OrchestratorRuntime(repositories, tmp_path / "assets")
@@ -23,6 +24,11 @@ def test_stale_worker_cannot_finalize_after_lease_recovery(tmp_path):
     runtime.queue.enqueue(job)
     claimed = runtime.queue.claim_next("mock")
     assert claimed is not None
+    return repositories, runtime, job, claimed
+
+
+def test_stale_worker_cannot_finalize_after_lease_recovery(tmp_path):
+    repositories, runtime, job, claimed = _queued_claim(tmp_path)
     stale_job, stale_lease = claimed
 
     expired = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
@@ -45,4 +51,14 @@ def test_stale_worker_cannot_finalize_after_lease_recovery(tmp_path):
     assert persisted is not None
     assert persisted.status is JobStatus.QUEUED
     assert persisted.attempt == 1
+    repositories.close()
+
+
+def test_lease_worker_identity_is_required_for_heartbeat(tmp_path):
+    repositories, runtime, _job, claimed = _queued_claim(tmp_path)
+    _stale_job, lease = claimed
+    forged = JobLease(lease.job_id, "other-worker", lease.lease_id, lease.expires_at)
+    with pytest.raises(KeyError, match="JOB_LEASE_NOT_FOUND"):
+        runtime.queue.heartbeat(forged)
+    assert runtime.queue.is_lease_active(lease) is True
     repositories.close()
