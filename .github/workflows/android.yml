@@ -40,3 +40,4 @@ jobs:
           name: AI-Content-Factory-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+      # Validation-only workflow: merge only after this job is green.
