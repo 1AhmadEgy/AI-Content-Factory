@@ -73,7 +73,12 @@ def _serialize_plan(plan: Any) -> dict[str, Any]:
 
 
 def _fingerprint(request: StartFactoryRequest) -> str:
-    canonical = json.dumps(request.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    canonical = json.dumps(
+        request.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -106,24 +111,13 @@ def build_router(
 
         operation = f"POST:/api/v1/factory/projects/{project_id}/start"
         fingerprint = _fingerprint(request)
-        store = jobs.store
-        existing = store.get_idempotency(idempotency_key, operation)
-        if existing:
-            if existing["request_fingerprint"] != fingerprint:
-                raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
-            existing_job = jobs.get(existing["resource_id"])
-            if existing_job is None:
-                raise HTTPException(status_code=409, detail="IDEMPOTENCY_RESOURCE_MISSING")
-            return {
-                "data": {"projectId": project_id, "jobId": existing_job.id, "stage": existing_job.type.value, "status": existing_job.status.value},
-                "requestId": http_request.state.request_id,
-                "idempotentReplay": True,
-            }
-
         brief = _brief(request)
         plan = runtime.plan_content(brief, request.model)
-        job_input = JobInput(parameters={**request.model_dump(), "plan": _serialize_plan(plan)}, deterministic=request.model is None)
-        job, existing_resource_id = job_service.create_with_idempotency(
+        job_input = JobInput(
+            parameters={**request.model_dump(), "plan": _serialize_plan(plan)},
+            deterministic=request.model is None,
+        )
+        result = job_service.create_with_idempotency(
             key=idempotency_key,
             operation=operation,
             fingerprint=fingerprint,
@@ -136,27 +130,32 @@ def build_router(
             model=request.model or "mock-deterministic",
             input=job_input,
         )
-        if existing_resource_id == "__IDEMPOTENCY_CONFLICT__":
+        if result.conflict:
             raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
-        if existing_resource_id:
-            existing_job = jobs.get(existing_resource_id)
+        if result.existing_resource_id:
+            existing_job = jobs.get(result.existing_resource_id)
             if existing_job is None:
                 raise HTTPException(status_code=409, detail="IDEMPOTENCY_RESOURCE_MISSING")
             return {
-                "data": {"projectId": project_id, "jobId": existing_job.id, "stage": existing_job.type.value, "status": existing_job.status.value},
+                "data": {
+                    "projectId": project_id,
+                    "jobId": existing_job.id,
+                    "stage": existing_job.type.value,
+                    "status": existing_job.status.value,
+                },
                 "requestId": http_request.state.request_id,
                 "idempotentReplay": True,
             }
-        if job is None:
+        if result.job is None:
             raise HTTPException(status_code=500, detail="JOB_CREATION_FAILED")
 
-        runtime.queue.enqueue(job)
+        runtime.queue.enqueue(result.job)
         return {
             "data": {
                 "projectId": project_id,
-                "jobId": job.id,
+                "jobId": result.job.id,
                 "stage": "STORY",
-                "status": job.status.value,
+                "status": result.job.status.value,
                 "plan": _serialize_plan(plan),
             },
             "requestId": http_request.state.request_id,
