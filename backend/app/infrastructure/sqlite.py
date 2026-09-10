@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -21,12 +21,17 @@ class SQLiteStore:
     """Owns the SQLite connection, schema lifecycle and idempotency records."""
     def __init__(self, path: str | Path = ":memory:") -> None:
         self.path = str(path)
-        if self.path != ":memory:": Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+        if self.path != ":memory":
+            Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = RLock()
         self._connection = sqlite3.connect(self.path, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA foreign_keys = ON")
+        self._connection.execute("PRAGMA busy_timeout = 5000")
+        self._connection.execute("PRAGMA temp_store = MEMORY")
+        self._connection.execute("PRAGMA cache_size = -20000")
         self._connection.execute("PRAGMA journal_mode = WAL")
+        self._connection.execute("PRAGMA synchronous = NORMAL")
         self.initialize()
 
     @property
@@ -68,7 +73,7 @@ class SQLiteStore:
     def claim_idempotency(self, key: str, operation: str, fingerprint: str, resource_id: str) -> bool:
         with self._lock, self._connection:
             try:
-                self._connection.execute("INSERT INTO idempotency_keys(key,operation,request_fingerprint,resource_id,created_at) VALUES(?,?,?,?,?)", (key, operation, fingerprint, resource_id, datetime.now().astimezone().isoformat()))
+                self._connection.execute("INSERT INTO idempotency_keys(key,operation,request_fingerprint,resource_id,created_at) VALUES(?,?,?,?,?)", (key, operation, fingerprint, resource_id, datetime.now(timezone.utc).isoformat()))
                 return True
             except sqlite3.IntegrityError: return False
 
