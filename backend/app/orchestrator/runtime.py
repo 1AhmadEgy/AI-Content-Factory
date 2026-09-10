@@ -15,6 +15,7 @@ from ..infrastructure.provider_run_repository import SQLiteProviderRunRepository
 from ..infrastructure.sqlite import SQLiteRepositories
 from ..infrastructure.sqlite_queue import SQLiteJobQueue
 from ..infrastructure.storage import LocalAssetStorage
+from ..library.country_catalog import get_country_library
 from ..library.seed import ensure_country_library_projects, ensure_egypt_library
 from ..providers.registry import default_provider_registry
 from ..workers.best_take_worker import BestTakeWorker
@@ -82,14 +83,35 @@ class OrchestratorRuntime:
         self.pipeline = ContentPipelineOrchestrator(JobService(repositories.jobs), self.queue.enqueue)
         self.completion_gate = CompletionGate(self.assets, self.storage)
         self.executor = JobExecutor(repositories.jobs, self.queue, self.workers, self.events.append, self.pipeline.on_completed, completion_gate=self.completion_gate)
-        # Create independent metadata records for all registered countries, then
-        # add the complete Egypt built-in content without replacing user edits.
+        # Country metadata is additive. Real content is seeded only for countries
+        # that explicitly provide a content pack; catalog-only countries stay empty.
         self.country_library_seed = ensure_country_library_projects(repositories)
         self.library_seed = ensure_egypt_library(repositories)
 
+    def _resolve_library_scope(self, brief: ContentBrief) -> tuple[str, str]:
+        country_id = brief.country_id or "egypt"
+        country = get_country_library(country_id)
+        if country is None:
+            raise ValueError("COUNTRY_LIBRARY_NOT_FOUND")
+        expected_library_id = str(country["libraryId"])
+        library_id = brief.library_id or expected_library_id
+        if library_id != expected_library_id:
+            raise ValueError("COUNTRY_LIBRARY_MISMATCH")
+        return country_id, library_id
+
     def plan_content(self, brief: ContentBrief, model_id: str | None = None) -> StoryPlan:
-        characters = tuple(c for cid in brief.character_ids if (c := self.characters.get(cid)) is not None)
-        locations = tuple(l for lid in brief.location_ids if (l := self.locations.get(lid)) is not None)
+        self._resolve_library_scope(brief)
+        project_id = brief.project_id
+        characters = tuple(
+            c for cid in brief.character_ids
+            if (c := self.characters.get(cid)) is not None
+            and (project_id is None or c.project_id == brief.library_id)
+        )
+        locations = tuple(
+            l for lid in brief.location_ids
+            if (l := self.locations.get(lid)) is not None
+            and (project_id is None or l.project_id == brief.library_id)
+        )
         story = self.story_engine.generate(brief, model_id, characters, locations)
         script = self.script_engine.generate(brief, story, model_id)
         return self.scene_planner.plan(brief, script, model_id)
