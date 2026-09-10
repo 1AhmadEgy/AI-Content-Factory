@@ -15,7 +15,7 @@ class SQLiteTranslationRepository:
         with self.store._lock, self.store.connection:
             self.store.connection.execute("CREATE TABLE IF NOT EXISTS translations (id TEXT PRIMARY KEY, source_language TEXT NOT NULL, target_language TEXT NOT NULL, source_text TEXT NOT NULL, translated_text TEXT NOT NULL, content_type TEXT NOT NULL, source_id TEXT, provider TEXT NOT NULL, model TEXT, glossary_version INTEGER NOT NULL DEFAULT 1, version INTEGER NOT NULL DEFAULT 1, manual INTEGER NOT NULL DEFAULT 0, source_fingerprint TEXT NOT NULL, created_at TEXT NOT NULL, metadata_json TEXT NOT NULL DEFAULT '{}')")
             self.store.connection.execute("CREATE INDEX IF NOT EXISTS idx_translations_source ON translations(source_id, target_language, version)")
-            self.store.connection.execute("CREATE INDEX IF NOT EXISTS idx_translations_fingerprint ON translations(source_fingerprint)")
+            self.store.connection.execute("CREATE INDEX IF NOT EXISTS idx_translations_fingerprint ON translations(source_fingerprint, version, created_at)")
 
     def save(self, result: TranslationResult, request: TranslationRequest) -> TranslationResult:
         with self.store._lock, self.store.connection:
