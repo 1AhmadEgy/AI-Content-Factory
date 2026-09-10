@@ -21,18 +21,20 @@ class ExecutionResult:
 class JobExecutor:
     """Runs a leased GenerationJob and durably records its lifecycle."""
 
-    def __init__(self, jobs: JobRepository, queue: JobQueue, workers: WorkerRegistry, events: Callable[[JobEvent], None] | None = None) -> None:
+    def __init__(self, jobs: JobRepository, queue: JobQueue, workers: WorkerRegistry,
+                 events: Callable[[JobEvent], None] | None = None,
+                 on_completed: Callable[[GenerationJob], None] | None = None) -> None:
         self.jobs = jobs
         self.queue = queue
         self.workers = workers
         self.emit = events or (lambda _event: None)
+        self.on_completed = on_completed or (lambda _job: None)
 
     def execute_claimed(self, job: GenerationJob, lease: JobLease, *, worker_id: str | None = None) -> ExecutionResult:
         worker_id = worker_id or lease.worker_id
         worker: Worker = self.workers.get(worker_id)
         if not worker.health_check():
             return self._fail(job, lease, "WORKER_UNHEALTHY", "Worker health check failed", retryable=True)
-
         if job.status is not JobStatus.RUNNING:
             raise ValueError(f"Job must be RUNNING before execution: {job.status}")
 
@@ -40,32 +42,27 @@ class JobExecutor:
         job.progress = 0.05
         self.jobs.update(job)
         self._event(job, "JOB_PROGRESS", {"stage": "worker_execution"})
-
         try:
-            result = worker.execute(
-                job,
-                WorkerContext(worker_id=worker_id, lease_id=lease.lease_id, metadata={"attempt": job.attempt}),
-            )
-        except Exception as exc:  # worker boundary converts unexpected failures into controlled job failures
+            result = worker.execute(job, WorkerContext(worker_id=worker_id, lease_id=lease.lease_id,
+                                                       metadata={"attempt": job.attempt}))
+        except Exception as exc:
             return self._fail(job, lease, "WORKER_EXCEPTION", str(exc), retryable=True)
 
         if result.success:
             if not result.asset_ids:
                 return self._fail(job, lease, "MISSING_OUTPUT_ASSET", "Successful worker execution returned no assets", retryable=False)
-            job.output = JobOutput(
-                asset_ids=list(result.asset_ids),
-                metrics=dict(result.metrics),
-                provider_run_id=result.provider_run_id,
-            )
+            job.output = JobOutput(asset_ids=list(result.asset_ids), metrics=dict(result.metrics),
+                                   provider_run_id=result.provider_run_id)
             job.error_code = None
             job.error_message = None
             transition(job, JobStatus.COMPLETED)
             self.jobs.update(job)
             self.queue.acknowledge(lease, JobStatus.COMPLETED)
             self._event(job, "JOB_COMPLETED", {"assetIds": result.asset_ids, "providerRunId": result.provider_run_id})
+            self.on_completed(job)
             return ExecutionResult(job, JobStatus.COMPLETED)
-
-        return self._fail(job, lease, result.error_code or "WORKER_FAILED", result.error_message or "Worker execution failed", result.retryable)
+        return self._fail(job, lease, result.error_code or "WORKER_FAILED",
+                          result.error_message or "Worker execution failed", result.retryable)
 
     def cancel_claimed(self, job: GenerationJob, lease: JobLease, worker_id: str | None = None) -> ExecutionResult:
         worker = self.workers.get(worker_id or lease.worker_id)
@@ -90,7 +87,6 @@ class JobExecutor:
             self.jobs.update(job)
             self._event(job, "JOB_RETRY_SCHEDULED", {"errorCode": code, "attempt": job.attempt, "maxAttempts": job.max_attempts})
             return ExecutionResult(job, JobStatus.QUEUED, retried=True)
-
         transition(job, JobStatus.FAILED)
         self.jobs.update(job)
         self.queue.acknowledge(lease, JobStatus.FAILED)
