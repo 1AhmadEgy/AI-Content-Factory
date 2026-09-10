@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+
 from ..application.ai_generation import AIGenerationPlanner
 from ..domain.content import ContentBrief, ScenePlan, ShotPlan
 from ..domain.jobs import GenerationJob, JobInput, JobStatus, JobType
@@ -96,8 +99,6 @@ class ContentPipelineOrchestrator:
         if len(generations) < expected or any(j.status is not JobStatus.COMPLETED for j in generations): return []
         videos = [(g, q) for g in generations if g.type is JobType.VIDEO for q in self.job_service.repository.list_by_parent(g.id) if q.type is JobType.QC and q.status is JobStatus.COMPLETED and q.output and q.output.asset_ids]
         if len(videos) < int(shot.input.parameters.get("takeCount", 1)): return []
-        existing = [j for j in self.job_service.repository.list_by_parent(shot.id) if j.type is JobType.BEST_TAKE]
-        if existing: return []
         candidates = []
         for generation, qc in videos:
             score = float((qc.output.metrics if qc.output else {}).get("score", (generation.output.metrics if generation.output else {}).get("score", 0)))
@@ -116,8 +117,6 @@ class ContentPipelineOrchestrator:
         best = [j for shot in shots for j in self.job_service.repository.list_by_parent(shot.id) if j.type is JobType.BEST_TAKE and j.status is JobStatus.COMPLETED and j.output and j.output.asset_ids]
         if not shots or len(best) < len(shots): return []
         audio_qcs = [j for a in self.job_service.repository.list_by_parent(scene.id) if a.type in {JobType.TTS, JobType.MUSIC, JobType.SFX} for j in self.job_service.repository.list_by_parent(a.id) if j.type is JobType.QC and j.status is JobStatus.COMPLETED and j.output and j.output.asset_ids]
-        existing = [j for j in self.job_service.repository.list_by_parent(scene.id) if j.type is JobType.TIMELINE]
-        if existing: return []
         refs = [j.output.asset_ids[0] for j in best]
         refs.extend(j.output.asset_ids[0] for j in audio_qcs)
         duration_us = int(float(scene.input.parameters.get("scene", {}).get("durationSeconds", 5)) * 1_000_000)
@@ -138,6 +137,52 @@ class ContentPipelineOrchestrator:
         return [self._enqueue(job, t, target, f"{job.id}:{target}", common, 1, ids) for t, target in ((JobType.SUBTITLE, "subtitle"), (JobType.THUMBNAIL, "thumbnail"), (JobType.METADATA, "metadata"), (JobType.PUBLISH, "publish"), (JobType.REPURPOSE, "repurpose"))]
 
     def _enqueue(self, parent: GenerationJob, job_type: JobType, target_type: str, target_id: str, parameters: dict[str, object], priority_offset: int, reference_asset_ids: list[str] | None = None) -> GenerationJob:
-        child = self.job_service.create(project_id=parent.project_id, job_type=job_type, target_type=target_type, target_id=target_id, parent_job_id=parent.id, priority=max(parent.priority - priority_offset, 0), provider=parent.provider, model=parent.model, input=JobInput(parameters=parameters, reference_asset_ids=list(reference_asset_ids or []), deterministic=parent.input.deterministic))
-        self.enqueue(child)
-        return child
+        input_data = JobInput(
+            parameters=parameters,
+            reference_asset_ids=list(reference_asset_ids or []),
+            deterministic=parent.input.deterministic,
+        )
+        fingerprint_payload = {
+            "parentJobId": parent.id,
+            "projectId": parent.project_id,
+            "jobType": job_type.value,
+            "targetType": target_type,
+            "targetId": target_id,
+            "priority": max(parent.priority - priority_offset, 0),
+            "provider": parent.provider,
+            "model": parent.model,
+            "input": {
+                "parameters": parameters,
+                "referenceAssetIds": input_data.reference_asset_ids,
+                "deterministic": input_data.deterministic,
+            },
+        }
+        fingerprint = hashlib.sha256(
+            json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+        key = f"pipeline:{parent.id}:{job_type.value}:{target_id}"
+        result = self.job_service.create_with_idempotency(
+            key=key,
+            operation="pipeline_enqueue",
+            fingerprint=fingerprint,
+            project_id=parent.project_id,
+            job_type=job_type,
+            target_type=target_type,
+            target_id=target_id,
+            parent_job_id=parent.id,
+            input=input_data,
+            priority=fingerprint_payload["priority"],
+            max_attempts=3,
+            provider=parent.provider,
+            model=parent.model,
+        )
+        if result.conflict:
+            raise ValueError(f"PIPELINE_IDEMPOTENCY_CONFLICT: {key}")
+        if result.job is not None:
+            self.enqueue(result.job)
+            return result.job
+        if result.existing_resource_id:
+            existing = self.job_service.repository.get(result.existing_resource_id)
+            if existing is not None:
+                return existing
+        raise RuntimeError(f"PIPELINE_IDEMPOTENCY_RESOURCE_MISSING: {key}")
