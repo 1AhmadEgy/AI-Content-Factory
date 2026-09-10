@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from pathlib import Path
 
 from ..domain.asset_repositories import AssetRepository
-from ..domain.assets import Asset, AssetProvenance, AssetStatus, AssetType, LicenseStatus
+from ..domain.assets import Asset, AssetStatus, AssetType, LicenseStatus
 from ..domain.jobs import GenerationJob
 from ..infrastructure.storage import LocalAssetStorage
 from ..orchestrator.provenance import build_provenance
@@ -49,6 +48,7 @@ class DeterministicMockWorker(Worker):
             provenance=build_provenance(
                 job,
                 metadata={"deterministic": True, "workerType": self.worker_type},
+                license_status=LicenseStatus.VERIFIED,
             ),
         )
         self.assets.create(asset)
