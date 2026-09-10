@@ -24,6 +24,7 @@ class ProviderRequest:
 class ProviderResponse:
     success: bool
     output_asset_ids: list[str] = field(default_factory=list)
+    output_text: str | None = None
     provider_run_id: str | None = None
     metrics: dict[str, float] = field(default_factory=dict)
     error_code: str | None = None
