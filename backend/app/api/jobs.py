@@ -154,11 +154,11 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
         return {"data": {"recovered": recovered}, "requestId": request.state.request_id}
 
     @router.get("/{job_id}/events")
-    def get_job_events(job_id: str, limit: int = 200, request: Request = None) -> dict[str, Any]:
+    def get_job_events(job_id: str, request: Request, limit: int = 200) -> dict[str, Any]:
         if repository.get(job_id) is None:
             raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
         if event_repository is None:
-            return {"data": []}
-        return {"data": [_serialize_event(event) for event in event_repository.list_for_job(job_id, max(1, min(limit, 500)))], "requestId": request.state.request_id if request else None}
+            return {"data": [], "requestId": request.state.request_id}
+        return {"data": [_serialize_event(event) for event in event_repository.list_for_job(job_id, max(1, min(limit, 500)))], "requestId": request.state.request_id}
 
     return router
