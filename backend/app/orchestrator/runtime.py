@@ -10,6 +10,7 @@ from ..infrastructure.sqlite_queue import SQLiteJobQueue
 from ..infrastructure.storage import LocalAssetStorage
 from ..workers.mock_worker import DeterministicMockWorker
 from ..workers.registry import WorkerRegistry
+from .completion_gate import CompletionGate
 from .content_pipeline import ContentPipelineOrchestrator
 from .job_executor import ExecutionResult, JobExecutor
 from .job_service import JobService
@@ -30,9 +31,16 @@ class OrchestratorRuntime:
         mock = DeterministicMockWorker(self.storage, self.assets)
         mock.initialize()
         self.workers.register(mock, capabilities={"IMAGE", "VIDEO", "AUDIO", "DOCUMENT", "SUBTITLE"}, worker_id="mock")
+        self.completion_gate = CompletionGate(self.assets, self.storage)
         self.pipeline = ContentPipelineOrchestrator(JobService(repositories.jobs), self.queue.enqueue)
-        self.executor = JobExecutor(repositories.jobs, self.queue, self.workers,
-                                    self.events.append, self.pipeline.on_completed)
+        self.executor = JobExecutor(
+            repositories.jobs,
+            self.queue,
+            self.workers,
+            self.events.append,
+            self.pipeline.on_completed,
+            completion_gate=self.completion_gate,
+        )
 
     def execute_next(self, worker_id: str = "mock") -> ExecutionResult | None:
         claimed = self.queue.claim_next(worker_id)
@@ -42,12 +50,10 @@ class OrchestratorRuntime:
         return self.executor.execute_claimed(job, lease, worker_id=worker_id)
 
     def heartbeat(self, job_id: str, lease_id: str, worker_id: str) -> None:
-        """Extend a worker lease after validating its job identity."""
         if self.repositories.jobs.get(job_id) is None:
             raise KeyError("JOB_NOT_FOUND")
         lease = JobLease(job_id=job_id, worker_id=worker_id, lease_id=lease_id, expires_at="")
         self.queue.heartbeat(lease)
 
     def recover_expired(self) -> int:
-        """Recover abandoned worker leases and return the number of jobs handled."""
         return self.queue.release_expired()

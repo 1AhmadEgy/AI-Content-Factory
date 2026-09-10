@@ -13,6 +13,7 @@ class JobStatus(str, Enum):
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
+    BLOCKED = "BLOCKED"
 
 
 class JobType(str, Enum):

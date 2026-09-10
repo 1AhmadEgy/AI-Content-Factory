@@ -9,12 +9,13 @@ class InvalidJobTransition(ValueError):
 _ALLOWED: dict[JobStatus, set[JobStatus]] = {
     JobStatus.PENDING: {JobStatus.QUEUED, JobStatus.CANCELLED},
     JobStatus.QUEUED: {JobStatus.RUNNING, JobStatus.PAUSED, JobStatus.CANCELLED},
-    JobStatus.RUNNING: {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.RETRYING, JobStatus.PAUSED, JobStatus.CANCELLED},
+    JobStatus.RUNNING: {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.RETRYING, JobStatus.PAUSED, JobStatus.CANCELLED, JobStatus.BLOCKED},
     JobStatus.PAUSED: {JobStatus.QUEUED, JobStatus.CANCELLED},
     JobStatus.RETRYING: {JobStatus.QUEUED, JobStatus.FAILED, JobStatus.CANCELLED},
     JobStatus.COMPLETED: set(),
     JobStatus.FAILED: set(),
     JobStatus.CANCELLED: set(),
+    JobStatus.BLOCKED: set(),
 }
 
 
@@ -33,7 +34,7 @@ def transition(job: GenerationJob, target: JobStatus, *, now: datetime | None = 
     elif target == JobStatus.COMPLETED:
         job.progress = 1.0
         job.completed_at = now
-    elif target in {JobStatus.FAILED, JobStatus.CANCELLED}:
+    elif target in {JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.BLOCKED}:
         job.completed_at = now
 
     return job

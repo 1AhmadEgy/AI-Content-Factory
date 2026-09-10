@@ -6,8 +6,10 @@ from typing import Callable
 
 from ..domain.job_events import JobEvent
 from ..domain.jobs import GenerationJob, JobOutput, JobStatus
-from ..domain.repositories import JobRepository
+from ..domain.asset_repositories import AssetRepository
+from ..infrastructure.storage import LocalAssetStorage
 from ..workers.registry import WorkerRegistry
+from .completion_gate import CompletionGate
 from .heartbeat import LeaseHeartbeat
 from .job_state import transition
 from .queue import JobLease, JobQueue, Worker, WorkerContext
@@ -25,18 +27,20 @@ class JobExecutor:
 
     def __init__(
         self,
-        jobs: JobRepository,
+        jobs,
         queue: JobQueue,
         workers: WorkerRegistry,
         events: Callable[[JobEvent], None] | None = None,
         on_completed: Callable[[GenerationJob], None] | None = None,
         heartbeat_interval_seconds: float | None = None,
+        completion_gate: CompletionGate | None = None,
     ) -> None:
         self.jobs = jobs
         self.queue = queue
         self.workers = workers
         self.emit = events or (lambda _event: None)
         self.on_completed = on_completed or (lambda _job: None)
+        self.completion_gate = completion_gate
         configured_interval = heartbeat_interval_seconds
         if configured_interval is None:
             configured_interval = float(os.getenv("AICF_LEASE_HEARTBEAT_SECONDS", "5.0"))
@@ -60,34 +64,42 @@ class JobExecutor:
         heartbeat = LeaseHeartbeat(self.queue, lease, interval_seconds=self.heartbeat_interval_seconds)
         heartbeat.start()
         try:
-            result = worker.execute(
-                job,
-                WorkerContext(
-                    worker_id=worker_id,
-                    lease_id=lease.lease_id,
-                    metadata={"attempt": job.attempt},
-                ),
-            )
+            result = worker.execute(job, WorkerContext(worker_id=worker_id, lease_id=lease.lease_id, metadata={"attempt": job.attempt}))
         except Exception as exc:
             return self._fail(job, lease, "WORKER_EXCEPTION", str(exc), retryable=True)
         finally:
             heartbeat.stop()
 
-        if result.success:
-            if not result.asset_ids:
-                return self._fail(job, lease, "MISSING_OUTPUT_ASSET", "Successful worker execution returned no assets", retryable=False)
-            job.output = JobOutput(asset_ids=list(result.asset_ids), metrics=dict(result.metrics),
-                                   provider_run_id=result.provider_run_id)
-            job.error_code = None
-            job.error_message = None
-            transition(job, JobStatus.COMPLETED)
+        if not result.success:
+            return self._fail(job, lease, result.error_code or "WORKER_FAILED", result.error_message or "Worker execution failed", result.retryable)
+        if not result.asset_ids:
+            return self._fail(job, lease, "MISSING_OUTPUT_ASSET", "Successful worker execution returned no assets", retryable=False)
+
+        job.output = JobOutput(asset_ids=list(result.asset_ids), metrics=dict(result.metrics), provider_run_id=result.provider_run_id)
+        job.error_code = None
+        job.error_message = None
+
+        if self.completion_gate is None:
+            raise RuntimeError("COMPLETION_GATE_NOT_CONFIGURED")
+        gate = self.completion_gate.check(job)
+        if not gate.allowed:
+            job.error_code = gate.code or "COMPLETION_GATE_BLOCKED"
+            job.error_message = gate.message or "Completion gate rejected the output"
+            transition(job, JobStatus.BLOCKED)
             self.jobs.update(job)
-            self.queue.acknowledge(lease, JobStatus.COMPLETED)
-            self._event(job, "JOB_COMPLETED", {"assetIds": result.asset_ids, "providerRunId": result.provider_run_id})
-            self.on_completed(job)
-            return ExecutionResult(job, JobStatus.COMPLETED)
-        return self._fail(job, lease, result.error_code or "WORKER_FAILED",
-                          result.error_message or "Worker execution failed", result.retryable)
+            self.queue.acknowledge(lease, JobStatus.BLOCKED)
+            self._event(job, "JOB_BLOCKED", {"errorCode": job.error_code, "qcCount": len(gate.qc_results)})
+            return ExecutionResult(job, JobStatus.BLOCKED)
+
+        job.progress = 0.95
+        self.jobs.update(job)
+        self._event(job, "JOB_PROGRESS", {"stage": "qc_passed", "qcCount": len(gate.qc_results)})
+        transition(job, JobStatus.COMPLETED)
+        self.jobs.update(job)
+        self.queue.acknowledge(lease, JobStatus.COMPLETED)
+        self._event(job, "JOB_COMPLETED", {"assetIds": result.asset_ids, "providerRunId": result.provider_run_id})
+        self.on_completed(job)
+        return ExecutionResult(job, JobStatus.COMPLETED)
 
     def cancel_claimed(self, job: GenerationJob, lease: JobLease, worker_id: str | None = None) -> ExecutionResult:
         worker = self.workers.get(worker_id or lease.worker_id)
