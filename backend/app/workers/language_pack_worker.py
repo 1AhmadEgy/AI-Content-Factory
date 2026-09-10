@@ -28,6 +28,13 @@ class LanguagePackWorker(Worker):
     def health_check(self) -> bool:
         return self._initialized
 
+    def cancel(self, job_id: str) -> None:
+        """Language-pack generation is atomic; cancellation is observed between jobs."""
+        return None
+
+    def shutdown(self) -> None:
+        self._initialized = False
+
     def execute(self, job: GenerationJob, context: WorkerContext) -> JobExecutionResult:
         if not self._initialized:
             return JobExecutionResult(False, error_code="WORKER_NOT_INITIALIZED", error_message="Worker is not initialized")
