@@ -1,0 +1,78 @@
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android licenses
+        run: yes | sdkmanager --licenses || true
+
+      - name: Install Android SDK 36
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Make Gradle executable
+        run: chmod +x ./gradlew
+
+      - name: Build Debug APK
+        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Prepare APK
+        run: |
+          mkdir -p release
+          cp app/build/outputs/apk/debug/app-debug.apk \
+            release/AI-Content-Factory.apk
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI-Content-Factory-APK
+          path: release/AI-Content-Factory.apk
+          retention-days: 30
+
+      - name: Delete previous latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest \
+            --yes \
+            --cleanup-tag \
+            2>/dev/null || true
+
+      - name: Create latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create latest \
+            release/AI-Content-Factory.apk \
+            --title "AI Content Factory - Latest APK" \
+            --notes "Automatically generated APK from the latest main branch." \
+            --prerelease
