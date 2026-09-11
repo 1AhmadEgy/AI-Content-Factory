@@ -11,7 +11,7 @@ class LanguageMediaService:
         item = item or {}
         return {
             "sourceId": item.get("sourceId") or item.get("segmentId") or variant.get("sourceId"),
-            "sourceVersion": item.get("sourceVersion") or variant.get("sourceVersion") or variant.get("version"),
+            "sourceVersion": item.get("sourceVersion") or variant.get("sourceVersion"),
             "translationVersion": item.get("translationVersion") or variant.get("translationVersion") or variant.get("languagePackVersion"),
             "sourceLanguage": item.get("sourceLanguage") or variant.get("sourceLanguage"),
             "targetLanguage": item.get("targetLanguage") or variant.get("language") or variant.get("targetLanguage"),
@@ -30,7 +30,7 @@ class LanguageMediaService:
                 continue
             normalized = dict(cue)
             normalized["index"] = normalized.get("index", index)
-            normalized.update(self._provenance(variant, normalized))
+            normalized.update(LanguageMediaService._provenance(variant, normalized))
             output.append(normalized)
         return output
 
