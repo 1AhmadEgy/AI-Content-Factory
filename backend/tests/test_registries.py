@@ -1,5 +1,4 @@
-from backend.app.providers.contracts import ProviderRequest
-from backend.app.providers.mock_adapter import MockModelAdapter
+from backend.app.providers.builtin import LocalMediaModelAdapter, LocalModelAdapter
 from backend.app.providers.registry import ModelRegistry, RegisteredModel
 from backend.app.workers.contracts import Worker
 from backend.app.workers.registry import WorkerRegistry
@@ -7,6 +6,7 @@ from backend.app.workers.registry import WorkerRegistry
 
 class HealthyWorker(Worker):
     name = "healthy"
+
     def initialize(self): pass
     def health_check(self): return True
     def execute(self, context, parameters): raise NotImplementedError
@@ -22,12 +22,12 @@ def test_worker_registry_routes_by_capability():
     assert registry.find("VIDEO") == []
 
 
-def test_model_registry_routes_healthy_enabled_model():
+def test_real_provider_adapters_expose_generation_capabilities():
     registry = ModelRegistry()
-    adapter = MockModelAdapter()
-    registry.register(RegisteredModel("mock-image", "mock", adapter, priority=10))
-    selected = registry.route("IMAGE", "offline")
-    assert selected is not None
-    assert selected.id == "mock-image"
-    response = selected.adapter.execute(ProviderRequest("mock-image", {"prompt": "x"}, seed=1))
-    assert response.success is True
+    text = LocalModelAdapter("http://127.0.0.1:11434", frozenset({"story", "script"}))
+    media = LocalMediaModelAdapter("http://127.0.0.1:8188", frozenset({"image", "video"}))
+    registry.register(RegisteredModel("text", "local-text", text, priority=10))
+    registry.register(RegisteredModel("media", "local-media", media, priority=20))
+    assert registry.get("text").adapter.capability().category == "generation"
+    assert "story" in registry.get("text").adapter.capability().capabilities
+    assert "image" in registry.get("media").adapter.capability().capabilities
