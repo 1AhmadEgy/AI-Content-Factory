@@ -62,20 +62,24 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
 
     @router.post("", status_code=status.HTTP_202_ACCEPTED)
     def create_job(request: CreateJobRequest, http_request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
-        if not idempotency_key: raise HTTPException(status_code=400, detail="IDEMPOTENCY_KEY_REQUIRED")
-        if repository.store._get("projects", request.projectId) is None: raise HTTPException(status_code=404, detail="PROJECT_NOT_FOUND")
-        fingerprint = _fingerprint(request)
-        operation = "POST:/api/v1/jobs"
+        if not idempotency_key:
+            raise HTTPException(status_code=400, detail="IDEMPOTENCY_KEY_REQUIRED")
+        if repository.store._get("projects", request.projectId) is None:
+            raise HTTPException(status_code=404, detail="PROJECT_NOT_FOUND")
         input_value = JobInput(parameters=request.input.parameters, reference_asset_ids=request.input.referenceAssetIds, constraints=request.input.constraints, seed=request.input.seed, deterministic=request.input.deterministic)
-        job, existing_resource_id = service.create_with_idempotency(key=idempotency_key, operation=operation, fingerprint=fingerprint, project_id=request.projectId, job_type=request.type, target_type=request.targetType, target_id=request.targetId, parent_job_id=request.parentJobId, priority=request.priority, max_attempts=request.maxAttempts, provider=request.provider, model=request.model, input=input_value)
-        if existing_resource_id == "__IDEMPOTENCY_CONFLICT__": raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
-        if existing_resource_id:
-            existing_job = repository.get(existing_resource_id)
-            if existing_job is None: raise HTTPException(status_code=409, detail="IDEMPOTENCY_RESOURCE_MISSING")
+        result = service.create_with_idempotency(key=idempotency_key, operation="POST:/api/v1/jobs", fingerprint=_fingerprint(request), project_id=request.projectId, job_type=request.type, target_type=request.targetType, target_id=request.targetId, parent_job_id=request.parentJobId, priority=request.priority, max_attempts=request.maxAttempts, provider=request.provider, model=request.model, input=input_value)
+        if result.conflict:
+            raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
+        if result.existing_resource_id:
+            existing_job = repository.get(result.existing_resource_id)
+            if existing_job is None:
+                raise HTTPException(status_code=409, detail="IDEMPOTENCY_RESOURCE_MISSING")
             return {"data": _serialize(existing_job), "requestId": http_request.state.request_id, "idempotentReplay": True}
-        if job is None: raise HTTPException(status_code=500, detail="JOB_CREATION_FAILED")
-        if runtime: runtime.queue.enqueue(job)
-        return {"data": _serialize(job), "requestId": http_request.state.request_id}
+        if result.job is None:
+            raise HTTPException(status_code=500, detail="JOB_CREATION_FAILED")
+        if runtime:
+            runtime.queue.enqueue(result.job)
+        return {"data": _serialize(result.job), "requestId": http_request.state.request_id}
 
     @router.get("/{job_id}")
     def get_job(job_id: str, request: Request) -> dict[str, Any]:
