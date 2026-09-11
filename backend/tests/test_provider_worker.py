@@ -3,7 +3,8 @@ from pathlib import Path
 from backend.app.domain.assets import AssetType
 from backend.app.domain.jobs import GenerationJob, JobInput, JobStatus, JobType
 from backend.app.infrastructure.storage import LocalAssetStorage
-from backend.app.providers.registry import ModelRegistry, default_provider_registry
+from backend.app.providers.contracts import ModelAdapter, ModelCapability, ProviderResponse
+from backend.app.providers.registry import ModelRegistry, RegisteredModel, default_provider_registry
 from backend.app.workers.provider_worker import ProviderGenerationWorker
 
 
@@ -11,6 +12,23 @@ class AssetStore:
     def __init__(self): self.items = {}
     def create(self, asset): self.items[asset.id] = asset; return asset
     def get(self, asset_id): return self.items.get(asset_id)
+
+
+class ResponseAdapter(ModelAdapter):
+    def __init__(self, response: ProviderResponse):
+        self.response = response
+
+    def capability(self) -> ModelCapability:
+        return ModelCapability(category="generation", capabilities=frozenset({"image"}), runtime="TEST")
+
+    def health_check(self) -> bool:
+        return True
+
+    def execute(self, request):
+        return self.response
+
+    def cancel(self, provider_run_id: str) -> bool:
+        return False
 
 
 def _job(job_id: str = "image-1") -> GenerationJob:
@@ -25,14 +43,66 @@ def _job(job_id: str = "image-1") -> GenerationJob:
     )
 
 
+def _worker(tmp_path: Path, response: ProviderResponse, assets: AssetStore | None = None) -> tuple[ProviderGenerationWorker, AssetStore]:
+    asset_store = assets or AssetStore()
+    registry = ModelRegistry()
+    registry.register(RegisteredModel("test-image", "test-provider", ResponseAdapter(response)))
+    worker = ProviderGenerationWorker(registry, LocalAssetStorage(tmp_path), asset_store)
+    worker.initialize()
+    return worker, asset_store
+
+
+def _context():
+    return type("Context", (), {"cancellation_requested": False})()
+
+
 def test_provider_generation_worker_does_not_succeed_without_real_provider(tmp_path: Path) -> None:
     assets = AssetStore()
     worker = ProviderGenerationWorker(ModelRegistry(), LocalAssetStorage(tmp_path), assets)
     worker.initialize()
-    result = worker.execute(_job(), type("Context", (), {"cancellation_requested": False})())
+    result = worker.execute(_job(), _context())
     assert result.success is False
     assert result.error_code == "MODEL_UNAVAILABLE"
     assert result.asset_ids == []
+    assert assets.items == {}
+
+
+def test_provider_success_without_provider_run_id_is_rejected(tmp_path: Path) -> None:
+    worker, assets = _worker(
+        tmp_path,
+        ProviderResponse(success=True, output_bytes=b"real-output", output_mime_type="image/png"),
+    )
+    result = worker.execute(_job(), _context())
+    assert result.success is False
+    assert result.error_code == "PROVIDER_RUN_ID_MISSING"
+    assert assets.items == {}
+
+
+def test_provider_success_with_real_output_and_run_id_persists_asset(tmp_path: Path) -> None:
+    worker, assets = _worker(
+        tmp_path,
+        ProviderResponse(success=True, output_bytes=b"real-output", output_mime_type="image/png", provider_run_id="provider-run-1"),
+    )
+    result = worker.execute(_job(), _context())
+    assert result.success is True
+    assert result.provider_run_id == "provider-run-1"
+    assert len(result.asset_ids) == 1
+    asset = assets.items[result.asset_ids[0]]
+    assert asset.project_id == "project-1"
+    assert asset.type == AssetType.IMAGE
+    assert asset.size_bytes == len(b"real-output")
+    assert asset.provenance.license_status.value == "VERIFIED"
+    assert Path(asset.path).read_bytes() == b"real-output"
+
+
+def test_provider_rejects_referenced_asset_that_does_not_exist(tmp_path: Path) -> None:
+    worker, assets = _worker(
+        tmp_path,
+        ProviderResponse(success=True, output_asset_ids=["missing"], provider_run_id="provider-run-1"),
+    )
+    result = worker.execute(_job(), _context())
+    assert result.success is False
+    assert result.error_code == "PROVIDER_ASSET_NOT_FOUND"
     assert assets.items == {}
 
 
