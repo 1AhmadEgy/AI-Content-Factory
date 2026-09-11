@@ -18,8 +18,6 @@ from ..services.brand_video_renderer import BrandVideoRenderer
 
 
 class RenderWorker(Worker):
-    """Production render worker backed by the canonical FfmpegRenderer."""
-
     worker_type = "render"
 
     def __init__(self, storage: LocalAssetStorage, assets: AssetRepository, ffmpeg_binary: str = "ffmpeg", ffprobe_binary: str = "ffprobe") -> None:
@@ -32,8 +30,7 @@ class RenderWorker(Worker):
 
     def initialize(self) -> None:
         renderer = FfmpegRenderer({}, FfmpegRenderOptions(ffmpeg_bin=self.ffmpeg_binary, ffprobe_bin=self.ffprobe_binary))
-        health = renderer.health_check()
-        self._initialized = bool(health.get("available"))
+        self._initialized = bool(renderer.health_check().get("available"))
 
     def health_check(self) -> bool:
         return self._initialized
@@ -49,11 +46,9 @@ class RenderWorker(Worker):
             return JobExecutionResult(False, error_code="FFMPEG_NOT_AVAILABLE", error_message="FFmpeg/ffprobe executable was not found")
         if not job.input.reference_asset_ids:
             return JobExecutionResult(False, error_code="RENDER_NO_TIMELINE", error_message="No timeline asset supplied")
-
         timeline_asset = self.assets.get(job.input.reference_asset_ids[0])
         if timeline_asset is None or timeline_asset.type is not AssetType.DOCUMENT:
             return JobExecutionResult(False, error_code="RENDER_TIMELINE_NOT_FOUND", error_message="Timeline document was not found")
-
         try:
             manifest = json.loads(self.storage.read_bytes(timeline_asset.sha256))
             timeline = self._timeline_from_manifest(manifest, job.project_id, job.id)
@@ -62,7 +57,6 @@ class RenderWorker(Worker):
         if not timeline.tracks:
             return JobExecutionResult(False, error_code="RENDER_EMPTY_TIMELINE", error_message="Timeline has no tracks")
         self._progress(context, 0.20, "assets_loaded")
-
         width, height = self._resolution(job.input.parameters)
         try:
             fps_value = float(job.input.parameters.get("fps", 30))
@@ -86,7 +80,6 @@ class RenderWorker(Worker):
                 if not path.is_file():
                     return JobExecutionResult(False, error_code="RENDER_ASSET_MISSING", error_message=clip.asset_id)
                 asset_paths[clip.asset_id] = str(path)
-
         subtitle_path = str(job.input.parameters.get("subtitlePath", "")).strip() or None
         subtitle_asset_id = job.input.parameters.get("subtitleAssetId")
         if not subtitle_path and subtitle_asset_id:
@@ -99,7 +92,6 @@ class RenderWorker(Worker):
             if not subtitle_file.is_file():
                 return JobExecutionResult(False, error_code="RENDER_SUBTITLE_MISSING", error_message=str(subtitle_asset_id))
             subtitle_path = str(subtitle_file)
-
         renderer = FfmpegRenderer(asset_paths, FfmpegRenderOptions(ffmpeg_bin=self.ffmpeg_binary, ffprobe_bin=self.ffprobe_binary, overwrite=True, subtitles_path=subtitle_path))
         self._renderers[job.id] = renderer
         timeline.id = job.id
@@ -112,12 +104,10 @@ class RenderWorker(Worker):
             result = renderer.render(timeline, profile, str(rendered_output))
             if not result.success or not result.output_path:
                 return JobExecutionResult(False, error_code="FFMPEG_RENDER_FAILED", error_message=result.error or "FFmpeg render failed", retryable=True)
-
             self._progress(context, 0.72, "applying_brand")
             brand_renderer = BrandVideoRenderer(brand_id)
             brand_renderer.apply(result.output_path, branded_output, width, height, fps)
             self._progress(context, 0.82, "audio_mix_complete")
-
             probe = renderer.probe(str(branded_output))
             errors = self._validate_probe(probe, width, height)
             if errors:
@@ -130,7 +120,6 @@ class RenderWorker(Worker):
             self._renderers.pop(job.id, None)
             rendered_output.unlink(missing_ok=True)
             branded_output.unlink(missing_ok=True)
-
         self._progress(context, 0.96, "provenance")
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"render:{job.id}:{digest}"))
         asset = Asset(id=asset_id, project_id=job.project_id, type=AssetType.VIDEO, path=path, mime_type="video/mp4", size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, source_asset_ids=[timeline_asset.id, *asset_paths.keys()], metadata={"width": width, "height": height, "fps": fps, "durationUs": timeline.duration_us, "engine": "ffmpeg", "brandId": brand_id, "brandName": brand_renderer.config.get("brand_name_en", brand_id), "finalQc": "passed", "language": job.input.parameters.get("language"), "locale": job.input.parameters.get("locale"), "languagePackVersion": job.input.parameters.get("languagePackVersion"), "languageRender": bool(job.input.parameters.get("languageRender"))}, license_status=LicenseStatus.VERIFIED))
@@ -141,13 +130,11 @@ class RenderWorker(Worker):
     def _timeline_from_manifest(manifest: dict[str, object], project_id: str, timeline_id: str) -> Timeline:
         tracks: list[TimelineTrack] = []
         for raw_track in manifest.get("tracks", []):
-            if not isinstance(raw_track, dict):
-                continue
+            if not isinstance(raw_track, dict): continue
             track_type = TrackType(str(raw_track.get("type", "VIDEO")).upper())
             clips: list[TimelineClip] = []
             for raw_clip in raw_track.get("clips", []):
-                if not isinstance(raw_clip, dict):
-                    continue
+                if not isinstance(raw_clip, dict): continue
                 clips.append(TimelineClip(id=str(raw_clip.get("id", uuid.uuid4().hex)), asset_id=str(raw_clip["assetId"]), start_us=int(raw_clip.get("startUs", 0)), duration_us=int(raw_clip.get("durationUs", 0)), source_start_us=int(raw_clip.get("sourceStartUs", 0)), z_index=int(raw_clip.get("zIndex", 0))))
             tracks.append(TimelineTrack(id=str(raw_track.get("id", uuid.uuid4().hex)), type=track_type, clips=clips))
         return Timeline(id=timeline_id, project_id=project_id, duration_us=int(manifest["durationUs"]), timebase=int(manifest.get("timebase", 1_000_000)), tracks=tracks)
@@ -155,26 +142,17 @@ class RenderWorker(Worker):
     @staticmethod
     def _validate_probe(probe: dict[str, object], width: int, height: int) -> list[str]:
         streams = probe.get("streams", [])
-        if not isinstance(streams, list) or not streams:
-            return ["NO_MEDIA_STREAMS"]
+        if not isinstance(streams, list) or not streams: return ["NO_MEDIA_STREAMS"]
         video = next((s for s in streams if isinstance(s, dict) and s.get("codec_type") == "video"), None)
-        if not video:
-            return ["NO_VIDEO_STREAM"]
+        if not video: return ["NO_VIDEO_STREAM"]
         errors: list[str] = []
-        try:
-            actual_width = int(video.get("width", 0))
-            actual_height = int(video.get("height", 0))
-        except (TypeError, ValueError, OverflowError):
-            return ["VIDEO_DIMENSIONS_INVALID"]
-        if actual_width != width or actual_height != height:
-            errors.append("VIDEO_RESOLUTION_MISMATCH")
+        try: actual_width, actual_height = int(video.get("width", 0)), int(video.get("height", 0))
+        except (TypeError, ValueError, OverflowError): return ["VIDEO_DIMENSIONS_INVALID"]
+        if actual_width != width or actual_height != height: errors.append("VIDEO_RESOLUTION_MISMATCH")
         media_duration = probe.get("format", {})
-        try:
-            duration = float(media_duration.get("duration", 0)) if isinstance(media_duration, dict) else 0.0
-        except (TypeError, ValueError, OverflowError):
-            duration = 0.0
-        if not math.isfinite(duration) or duration <= 0:
-            errors.append("VIDEO_DURATION_INVALID")
+        try: duration = float(media_duration.get("duration", 0)) if isinstance(media_duration, dict) else 0.0
+        except (TypeError, ValueError, OverflowError): duration = 0.0
+        if not math.isfinite(duration) or duration <= 0: errors.append("VIDEO_DURATION_INVALID")
         return errors
 
     @staticmethod
@@ -182,19 +160,15 @@ class RenderWorker(Worker):
         preset = str(parameters.get("resolution", parameters.get("quality", "1080p"))).lower()
         ratio = str(parameters.get("aspectRatio", "16:9"))
         height = {"720p": 720, "1080p": 1080, "4k": 2160}.get(preset, 1080)
-        if ratio == "9:16":
-            return ((height * 9 // 16) // 2 * 2, height)
-        if ratio == "1:1":
-            return (height, height)
-        return ((height * 16 // 9) // 2 * 2, height)
+        if ratio == "9:16": return (round(height * 9 / 16), height)
+        if ratio == "1:1": return (height, height)
+        return (round(height * 16 / 9), height)
 
     def cancel(self, job_id: str) -> None:
         renderer = self._renderers.get(job_id)
-        if renderer is not None:
-            renderer.cancel(job_id)
+        if renderer is not None: renderer.cancel(job_id)
 
     def shutdown(self) -> None:
-        for renderer in list(self._renderers.values()):
-            renderer.shutdown()
+        for renderer in list(self._renderers.values()): renderer.shutdown()
         self._renderers.clear()
         self._initialized = False
