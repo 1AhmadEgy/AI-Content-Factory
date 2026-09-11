@@ -72,7 +72,7 @@ class OrchestratorRuntime:
         media = MediaDocumentWorker(self.storage, self.assets); media.initialize(); self.workers.register(media, capabilities={"SUBTITLE", "THUMBNAIL", "METADATA"}, worker_id="media-document")
         language_pack = LanguagePackWorker(self.storage, self.assets); language_pack.initialize(); self.workers.register(language_pack, capabilities={"LANGUAGE_PACK"}, worker_id="language-pack")
         publisher = PublishWorker(self.storage, self.assets); publisher.initialize(); self.workers.register(publisher, capabilities={"PUBLISH"}, worker_id="publish")
-        repurpose = RepurposeWorker(self.storage, self.assets); repurpose.initialize(); self.workers.register(repurpose, capabilities={"REPURPOSE"}, worker_id="repurpose"})
+        repurpose = RepurposeWorker(self.storage, self.assets); repurpose.initialize(); self.workers.register(repurpose, capabilities={"REPURPOSE"}, worker_id="repurpose")
 
         self.story_engine = AIStoryEngine(self.providers)
         self.script_engine = AIScriptEngine(self.providers)
