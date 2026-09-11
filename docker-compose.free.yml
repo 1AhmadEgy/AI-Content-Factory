@@ -1,0 +1,59 @@
+name: ai-content-factory
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
+  ollama-model:
+    image: ollama/ollama:latest
+    depends_on:
+      - ollama
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["until ollama list >/dev/null 2>&1; do sleep 2; done; ollama pull ${AICF_TEXT_PROVIDER_MODEL:-llama3.2:3b}"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    restart: "no"
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      ollama-model:
+        condition: service_completed_successfully
+    ports:
+      - "8000:8000"
+    environment:
+      AICF_ENV: development
+      AICF_DATABASE_PATH: /app/data/factory.db
+      AICF_ASSET_ROOT: /app/data/assets
+      AICF_WORKER_ID: local-worker
+      AICF_WORKER_AUTOSTART: "true"
+      AICF_SCHEDULER_AUTOSTART: "true"
+      AICF_SCHEDULER_INTERVAL_SECONDS: "5"
+      AICF_FFMPEG_BIN: ffmpeg
+      AICF_FFPROBE_BIN: ffprobe
+      AICF_API_TOKEN: ${AICF_API_TOKEN:-}
+      AICF_TEXT_PROVIDER_ENDPOINT: http://ollama:11434
+      AICF_TEXT_PROVIDER_MODEL: ${AICF_TEXT_PROVIDER_MODEL:-llama3.2:3b}
+      AICF_TEXT_PROVIDER_NAME: ollama-local
+      AICF_TEXT_PROVIDER_CAPABILITIES: story,script,scene,shot
+      AICF_TEXT_PROVIDER_TIMEOUT_SECONDS: ${AICF_TEXT_PROVIDER_TIMEOUT_SECONDS:-300}
+      AICF_TEXT_PROVIDER_PRIORITY: "10"
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+volumes:
+  ollama_data:
