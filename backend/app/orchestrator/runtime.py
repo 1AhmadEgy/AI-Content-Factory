@@ -23,7 +23,6 @@ from ..providers.registry import default_provider_registry
 from ..workers.best_take_worker import BestTakeWorker
 from ..workers.language_pack_worker import LanguagePackWorker
 from ..workers.media_document_worker import MediaDocumentWorker
-from ..workers.mock_worker import DeterministicMockWorker
 from ..workers.provider_worker import ProviderGenerationWorker
 from ..workers.publish_worker import PublishWorker
 from ..workers.qc_worker import QualityControlWorker
@@ -41,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 
 class OrchestratorRuntime:
-    """Local-first composition root coordinating AI, durable assets, characters and reusable locations."""
+    """Composition root using only configured providers and durable workers."""
 
     def __init__(self, repositories: SQLiteRepositories, storage_root: str | Path | None = None) -> None:
         self.repositories = repositories
@@ -55,12 +54,15 @@ class OrchestratorRuntime:
         self.storage = LocalAssetStorage(root)
         self.workers = WorkerRegistry()
         self.providers = default_provider_registry()
+
         provider_worker = ProviderGenerationWorker(self.providers, self.storage, self.assets, self.provider_runs)
         provider_worker.initialize()
-        self.workers.register(provider_worker, capabilities={"STORY", "CHARACTER", "WORLD", "SCENE", "SHOT", "IMAGE", "VIDEO", "TTS", "LIPSYNC", "MUSIC", "SFX", "UPSCALE", "INTERPOLATION"}, worker_id="provider-generation")
-        mock = DeterministicMockWorker(self.storage, self.assets)
-        mock.initialize()
-        self.workers.register(mock, capabilities={"IMAGE", "VIDEO", "AUDIO", "DOCUMENT", "SUBTITLE"}, worker_id="mock")
+        self.workers.register(
+            provider_worker,
+            capabilities={"STORY", "CHARACTER", "WORLD", "SCENE", "SHOT", "IMAGE", "VIDEO", "TTS", "LIPSYNC", "MUSIC", "SFX", "UPSCALE", "INTERPOLATION"},
+            worker_id="provider-generation",
+        )
+
         qc = QualityControlWorker(self.storage, self.assets)
         qc.initialize()
         self.workers.register(qc, capabilities={"DOCUMENT"}, worker_id="quality-control")
@@ -85,6 +87,7 @@ class OrchestratorRuntime:
         repurpose = RepurposeWorker(self.storage, self.assets)
         repurpose.initialize()
         self.workers.register(repurpose, capabilities={"REPURPOSE"}, worker_id="repurpose")
+
         self.story_engine = AIStoryEngine(self.providers)
         self.script_engine = AIScriptEngine(self.providers)
         self.scene_planner = AIScenePlanner(self.providers)
@@ -124,13 +127,18 @@ class OrchestratorRuntime:
         script = self.script_engine.generate(brief, story, model_id)
         return self.scene_planner.plan(brief, script, model_id)
 
+    def _execute_claimed(self, job, lease, worker_id: str) -> ExecutionResult:
+        self.queue.start(lease)
+        job = self.repositories.jobs.get(job.id) or job
+        return self.executor.execute_claimed(job, lease, worker_id=worker_id)
+
     def execute_next(self, worker_id: str = "auto") -> ExecutionResult | None:
         claimed = self.queue.claim_next(worker_id)
         if claimed is None:
             return None
         job, lease = claimed
         selected_worker = worker_id if worker_id != "auto" else self.workers.resolve_for_job(job.type)
-        return self.executor.execute_claimed(job, lease, worker_id=selected_worker)
+        return self._execute_claimed(job, lease, selected_worker)
 
     def execute_job(self, job_id: str, worker_id: str = "auto") -> ExecutionResult | None:
         claimed = self.queue.claim(job_id, worker_id)
@@ -138,7 +146,7 @@ class OrchestratorRuntime:
             return None
         job, lease = claimed
         selected_worker = worker_id if worker_id != "auto" else self.workers.resolve_for_job(job.type)
-        return self.executor.execute_claimed(job, lease, worker_id=selected_worker)
+        return self._execute_claimed(job, lease, selected_worker)
 
     def cancel_job(self, job_id: str) -> object:
         job = self.repositories.jobs.get(job_id)
@@ -150,9 +158,6 @@ class OrchestratorRuntime:
                 self.workers.get(worker_id).cancel(job.id)
             except Exception:  # noqa: BLE001 - durable cancellation must not depend on worker shutdown
                 logger.exception("Best-effort worker cancellation failed for job %s", job.id)
-        # Persist cancellation even if the worker is unhealthy, missing, or its
-        # process has already exited. The CAS in JobService resolves races with
-        # the executor and prevents a stale snapshot from overwriting a winner.
         return self.job_service.cancel(job_id)
 
     def heartbeat(self, job_id: str, lease_id: str, worker_id: str) -> None:
