@@ -70,12 +70,16 @@ class ProviderGenerationWorker(Worker):
         asset_ids = list(response.output_asset_ids)
         if not asset_ids and response.output_bytes is not None:
             asset_ids = [self._persist_media(job, model.provider, model.id, response, provider_run_id)]
-        if not asset_ids:
+        if not asset_ids and response.output_text is not None and response.output_text.strip():
             payload = self._serialize_output(job, response.output_text, response.metrics)
             digest, path, size = self._store(payload)
             asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"provider-asset:{job.id}:{digest}"))
             self.assets.create(Asset(id=asset_id, project_id=job.project_id, type=self._asset_type(job), path=path, mime_type="application/json; charset=utf-8", size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, metadata={"provider": model.provider, "model": model.id, "providerRunId": provider_run_id}, license_status=LicenseStatus.VERIFIED)))
             asset_ids = [asset_id]
+        if not asset_ids:
+            if self.provider_runs:
+                self.provider_runs.complete(run_id, status="FAILED", error_code="PROVIDER_EMPTY_OUTPUT", response_metadata=dict(response.metrics))
+            return JobExecutionResult(False, provider_run_id=provider_run_id, error_code="PROVIDER_EMPTY_OUTPUT", error_message="Provider reported success without an asset or output", retryable=True)
         if self.provider_runs:
             self.provider_runs.complete(run_id, status="COMPLETED", response_metadata={"assetIds": asset_ids, **dict(response.metrics)})
         return JobExecutionResult(success=True, asset_ids=asset_ids, metrics=dict(response.metrics), provider_run_id=provider_run_id)
@@ -100,7 +104,7 @@ class ProviderGenerationWorker(Worker):
         return digest, path, size
 
     @staticmethod
-    def _serialize_output(job: GenerationJob, output_text: str | None, metrics: dict[str, float]) -> bytes:
+    def _serialize_output(job: GenerationJob, output_text: str, metrics: dict[str, float]) -> bytes:
         return (json.dumps({"jobId": job.id, "jobType": job.type.value, "targetId": job.target_id, "output": output_text, "metrics": metrics}, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
 
     @staticmethod
