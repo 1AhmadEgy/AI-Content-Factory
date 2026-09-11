@@ -22,10 +22,11 @@ Legend:
 | `backend/app/orchestrator/job_executor.py` | ⚠️ | Execution is fenced by attempt and checks active lease before persistence; broader stale-worker integration coverage is still needed. | Add expiry/reclaim integration tests. |
 | `backend/app/orchestrator/content_pipeline.py` | ⚠️ | Real image/TTS/subtitle/timeline orchestration exists; integration paths need full end-to-end coverage. | Verify scene → timeline → render transitions. |
 | `backend/app/orchestrator/production_pipeline.py` | ⚠️ | Additional language/lipsync orchestration exists; competing/overlapping transitions require integration coverage. | Audit dependency transitions and idempotency. |
-| `backend/app/providers/` | ⚠️ | Provider registry and OpenAI adapter use real HTTP/API behavior; broader provider failover and circuit breaking are not complete. | Add provider resilience layer. |
-| `backend/app/providers/openai_adapter.py` | ✅ | Real text/image/TTS HTTP calls; no synthetic media fallback. | Add shared cache and resilience. |
+| `backend/app/providers/` | ⚠️ | Provider registry and OpenAI adapter use real HTTP/API behavior; circuit breaking and complete failover are not complete. | Add provider resilience layer. |
+| `backend/app/providers/openai_adapter.py` | ⚠️ | Real text/image/TTS HTTP calls remain authoritative; provider responses are now cached at the worker boundary after successful execution. | Add resilience and transient-error classification. |
 | `backend/app/providers/registry.py` | ⚠️ | Explicit model configuration and health filtering exist; failover policy is not yet a complete circuit-breaker implementation. | Implement provider breaker at provider boundary. |
-| `backend/app/workers/provider_worker.py` | ✅ | Validates real provider outputs, assets, project ownership, readiness, and storage checksums. | Add broader failure/retry tests. |
+| `backend/app/infrastructure/provider_cache.py` | ✅ | SQLite-backed success-only cache, canonical provider/model/parameter key, TTL, hit counting, purge, and binary-size guard. Cache hits are rematerialized as fresh project-owned assets. | Add scheduled maintenance hook. |
+| `backend/app/workers/provider_worker.py` | ✅ | Validates real provider outputs, assets, project ownership, readiness, storage checksums, and now supports durable response caching without bypassing provenance. | Add broader failure/retry and cache-hit integration tests. |
 | `backend/app/workers/render_worker.py` | ✅ | Real FFmpeg/FFprobe rendering, media validation, content-addressed output, cancellation. | Add resource/time-limit coverage and benchmark. |
 | `backend/app/workers/media_document_worker.py` | ⚠️ | Real subtitle, thumbnail, metadata, and QC document/media operations exist. | Harden initialization and integration coverage. |
 | `backend/app/workers/qc_worker.py` | ✅ | Real filesystem/asset QC path exists and fails closed on invalid assets. | Integrate quantitative Take scoring without duplicating QC responsibilities. |
@@ -36,7 +37,7 @@ Legend:
 | `backend/app/publishing/adapters.py` | ⚠️ | Adapter contract and fail-closed defaults exist; external publishing is not yet implemented. | Add one real platform adapter at a time. |
 | `backend/app/api/` | ⚠️ | `/api/v1` API layer exists; production-wide integration and idempotency coverage remain. | Complete API integration tests. |
 | Android `app/` | ⚠️ | Android control client exists; backend URL fallback was removed, but repository/cache/paging audit remains. | Audit Room/Paging/cache and production fallbacks. |
-| `backend/tests/` | ⚠️ | Queue, provider configuration, executor, and production guard tests exist. | Add concurrent stale-worker and end-to-end pipeline tests. |
+| `backend/tests/` | ⚠️ | Queue, provider configuration, executor, production guard, and provider-cache tests exist. | Add concurrent stale-worker and end-to-end pipeline tests. |
 | `docs/` + `specs/` | ✅ | Specifications document architecture and production acceptance rules. | Keep specs; do not replace implementation with parallel architecture. |
 
 ## Three critical risk areas
@@ -65,6 +66,20 @@ Providers fail closed rather than returning synthetic outputs. Provider configur
 
 The current render worker uses real FFmpeg/FFprobe, validates inputs and output, and supports cancellation. It is not acceptable to replace this with a second simplified render worker. Production hardening should add explicit process timeout/resource-limit tests and benchmark the existing renderer before changing encoding defaults.
 
+## Provider Cache acceptance
+
+Implemented in `backend/app/infrastructure/provider_cache.py` and integrated in `backend/app/workers/provider_worker.py`.
+
+- Cache key includes provider, model, job type, target type, all provider parameters, and seed.
+- Only successful provider responses are cached.
+- Cache has configurable TTL via `AICF_PROVIDER_CACHE_TTL_SECONDS` (default 24h).
+- Binary payloads above `AICF_PROVIDER_CACHE_MAX_BYTES` (default 20 MiB) are not cached.
+- Cache hits increment `hits` and are materialized into a new project-owned asset, preserving current-job provenance.
+- Expired entries can be purged through the cache API.
+- No ARQ/Redis dependency was introduced merely to provide caching.
+
+Automated coverage was added for key stability, hit counting, TTL/purge, and oversized binary rejection. Tests have not been claimed as executed unless a CI run reports them.
+
 ## Architecture decision
 
 The supplied ARQ/PostgreSQL example is **not copied verbatim** because it creates a competing job schema and execution lifecycle. The repository already has a persistent SQLite queue, leases, idempotency, worker lifecycle, execution fencing, asset validation, and a completion gate. Introducing a second queue before migrating the existing contract would increase duplicate-execution risk rather than reduce it.
@@ -75,7 +90,7 @@ PostgreSQL/Redis/ARQ may be introduced later as an explicit infrastructure migra
 
 1. Finish stale-worker/lease integration tests.
 2. Verify complete scene → provider → QC → subtitle → timeline → FFmpeg → final QC path.
-3. Add provider cache using the existing provider boundary.
+3. ~~Add provider cache using the existing provider boundary.~~ **Implemented.**
 4. Add provider circuit breaker/failover.
 5. Add structured correlation IDs/logging and metrics.
 6. Benchmark and harden FFmpeg resource limits.
