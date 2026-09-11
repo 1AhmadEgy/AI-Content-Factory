@@ -1,6 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+from app.domain.assets import AssetType
 from app.domain.jobs import JobType
 from app.infrastructure.storage import LocalAssetStorage
 from app.workers.media_document_worker import MediaDocumentWorker
@@ -46,7 +47,7 @@ def test_document_worker_does_not_report_a_fake_provider_run_id(tmp_path: Path):
     assets = AssetStore()
     worker = MediaDocumentWorker(LocalAssetStorage(tmp_path), assets)
     worker.initialize()
-    result = worker._document(_job(), kind=__import__("app.domain.assets", fromlist=["AssetType"]).AssetType.DOCUMENT, mime="application/json", payload=b"real-document")
+    result = worker._document(_job(), kind=AssetType.DOCUMENT, mime="application/json", payload=b"real-document")
     assert result.success is True
     assert result.provider_run_id is None
     assert len(result.asset_ids) == 1
