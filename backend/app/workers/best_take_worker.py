@@ -79,7 +79,6 @@ class BestTakeWorker(Worker):
             success=True,
             asset_ids=[decision_id],
             metrics={"score": winner_score, "selectedAssetId": winner_id},
-            provider_run_id=f"best-take-{job.id}",
         )
 
     def cancel(self, job_id: str) -> None:
