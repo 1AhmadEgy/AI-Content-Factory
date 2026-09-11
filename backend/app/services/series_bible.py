@@ -104,6 +104,36 @@ class SeriesBibleService:
             bible["latest"]["publishedAssetId"] = str(target_id)
         return self._save(project_id, bible, "generation.job", job, "job", job.get("jobId"))
 
+    def record_qc_review(
+        self,
+        project_id: str,
+        review_id: str,
+        asset_id: str,
+        status: str,
+        reviewed_at: str,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist a human/explicit QC decision as a review, not as a job.
+
+        QC execution jobs and review decisions are different lifecycle events:
+        keeping them separate prevents review mutations from overwriting the
+        canonical latest job id with ``None`` and preserves the actual review
+        identifier for audit and continuity consumers.
+        """
+        bible = self.snapshot(project_id)
+        review = {
+            "reviewId": review_id,
+            "assetId": asset_id,
+            "status": status,
+            "reviewedAt": reviewed_at,
+        }
+        if reason is not None:
+            review["reason"] = reason
+        bible["qc"][review_id] = deepcopy(review)
+        bible["storyState"]["latestQCReview"] = deepcopy(review)
+        bible["latest"]["qcId"] = review_id
+        return self._save(project_id, bible, "qc.reviewed", review, "qc_review", review_id)
+
     def update_continuity(self, project_id: str, continuity: dict[str, Any]) -> dict[str, Any]:
         bible = self.snapshot(project_id)
         bible["continuity"] = {**bible.get("continuity", {}), **deepcopy(continuity)}
