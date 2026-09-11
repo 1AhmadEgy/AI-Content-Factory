@@ -12,8 +12,10 @@ def build_provenance(
     license_status: LicenseStatus = LicenseStatus.UNKNOWN,
 ) -> AssetProvenance:
     """Build a normalized provenance record for every produced asset."""
+    if not job.provider:
+        raise ValueError("PROVENANCE_PROVIDER_REQUIRED")
     return AssetProvenance(
-        provider=job.provider or "mock",
+        provider=job.provider,
         model=job.model,
         prompt=str(job.input.parameters.get("prompt", "")) or None,
         negative_prompt=str(job.input.parameters.get("negativePrompt", "")) or None,
