@@ -120,6 +120,8 @@ class ProviderGenerationWorker(Worker):
                 return "PROVIDER_ASSET_NOT_READY", asset_id, "Provider asset is not READY"
             if asset.type != expected_type:
                 return "PROVIDER_ASSET_TYPE_MISMATCH", asset_id, "Provider asset type does not match the generation job"
+            if asset.provenance.license_status != LicenseStatus.VERIFIED:
+                return "PROVIDER_ASSET_LICENSE_UNVERIFIED", asset_id, "Provider asset does not have verified licensing provenance"
             if not self.storage.verify(asset):
                 return "PROVIDER_ASSET_INTEGRITY_FAILED", asset_id, "Provider asset failed storage integrity verification"
         return None
