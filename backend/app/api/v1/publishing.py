@@ -88,7 +88,7 @@ def build_router(runtime: OrchestratorRuntime, jobs: SQLiteJobRepository) -> API
         if not jobs.store.claim_idempotency(idempotency_key, operation, fingerprint, job.id):
             raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
         runtime.queue.enqueue(job)
-        return {"data": {"jobId": job.id, "projectId": job.projectId if hasattr(job, "projectId") else job.project_id, "assetId": body.assetId, "status": job.status.value, "contextVersion": job.input.parameters.get("contextVersion", 0)}, "requestId": request.state.request_id}
+        return {"data": {"jobId": job.id, "projectId": job.project_id, "assetId": body.assetId, "status": job.status.value, "contextVersion": job.input.parameters.get("contextVersion", 0)}, "requestId": request.state.request_id}
 
     @router.get("/{publish_job_id}")
     def get_publish(publish_job_id: str, request: Request) -> dict[str, Any]:
