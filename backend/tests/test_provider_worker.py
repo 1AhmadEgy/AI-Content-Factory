@@ -19,7 +19,7 @@ class ResponseAdapter(ModelAdapter):
         self.response = response
 
     def capability(self) -> ModelCapability:
-        return ModelCapability(category="generation", capabilities=frozenset({"image"}), runtime="TEST")
+        return ModelCapability(category="generation", capabilities=frozenset({"image", "video", "tts"}), runtime="TEST")
 
     def health_check(self) -> bool:
         return True
@@ -31,11 +31,11 @@ class ResponseAdapter(ModelAdapter):
         return False
 
 
-def _job(job_id: str = "image-1") -> GenerationJob:
+def _job(job_id: str = "image-1", job_type: JobType = JobType.IMAGE) -> GenerationJob:
     return GenerationJob(
         id=job_id,
         project_id="project-1",
-        type=JobType.IMAGE,
+        type=job_type,
         target_type="shot",
         target_id="shot-1",
         status=JobStatus.RUNNING,
@@ -93,6 +93,63 @@ def test_provider_success_with_real_output_and_run_id_persists_asset(tmp_path: P
     assert asset.size_bytes == len(b"real-output")
     assert asset.provenance.license_status.value == "VERIFIED"
     assert Path(asset.path).read_bytes() == b"real-output"
+
+
+def test_provider_rejects_binary_output_without_mime_type(tmp_path: Path) -> None:
+    worker, assets = _worker(
+        tmp_path,
+        ProviderResponse(success=True, output_bytes=b"real-output", provider_run_id="provider-run-1"),
+    )
+    result = worker.execute(_job(), _context())
+    assert result.success is False
+    assert result.error_code == "PROVIDER_MIME_TYPE_MISSING"
+    assert assets.items == {}
+
+
+def test_provider_rejects_binary_output_with_wrong_mime_type(tmp_path: Path) -> None:
+    worker, assets = _worker(
+        tmp_path,
+        ProviderResponse(success=True, output_bytes=b"real-output", output_mime_type="video/mp4", provider_run_id="provider-run-1"),
+    )
+    result = worker.execute(_job(), _context())
+    assert result.success is False
+    assert result.error_code == "PROVIDER_MIME_TYPE_MISMATCH"
+    assert assets.items == {}
+
+
+def test_provider_accepts_video_mime_for_video_job(tmp_path: Path) -> None:
+    worker, assets = _worker(
+        tmp_path,
+        ProviderResponse(success=True, output_bytes=b"real-video", output_mime_type="video/mp4", provider_run_id="provider-run-video"),
+    )
+    result = worker.execute(_job("video-1", JobType.VIDEO), _context())
+    assert result.success is True
+    asset = assets.items[result.asset_ids[0]]
+    assert asset.type == AssetType.VIDEO
+    assert asset.mime_type == "video/mp4"
+
+
+def test_provider_rejects_audio_mime_for_lipsync_job(tmp_path: Path) -> None:
+    worker, assets = _worker(
+        tmp_path,
+        ProviderResponse(success=True, output_bytes=b"real-lipsync", output_mime_type="audio/wav", provider_run_id="provider-run-lipsync"),
+    )
+    result = worker.execute(_job("lipsync-1", JobType.LIPSYNC), _context())
+    assert result.success is False
+    assert result.error_code == "PROVIDER_MIME_TYPE_MISMATCH"
+    assert assets.items == {}
+
+
+def test_provider_accepts_video_mime_for_lipsync_job(tmp_path: Path) -> None:
+    worker, assets = _worker(
+        tmp_path,
+        ProviderResponse(success=True, output_bytes=b"real-lipsync", output_mime_type="video/mp4", provider_run_id="provider-run-lipsync"),
+    )
+    result = worker.execute(_job("lipsync-1", JobType.LIPSYNC), _context())
+    assert result.success is True
+    asset = assets.items[result.asset_ids[0]]
+    assert asset.type == AssetType.VIDEO
+    assert asset.mime_type == "video/mp4"
 
 
 def test_provider_rejects_referenced_asset_that_does_not_exist(tmp_path: Path) -> None:
