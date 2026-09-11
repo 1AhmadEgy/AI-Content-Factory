@@ -1,9 +1,10 @@
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 
-from app.domain.assets import AssetStatus, AssetType
+from app.domain.assets import AssetProvenance, AssetStatus, AssetType, LicenseStatus
+from app.infrastructure.storage import LocalAssetStorage
+from app.publishing.adapters import AdapterRegistry
 from app.workers.publish_worker import PublishWorker
-from app.publishing.adapters import DryRunAdapter, PublishRequest
 
 
 class _Assets:
@@ -14,38 +15,27 @@ class _Assets:
         return self.asset if asset_id == self.asset.id else None
 
     def create(self, asset):
+        self.asset = asset
         return asset
 
 
-class _Storage:
-    def __init__(self, path):
-        self.path = Path(path)
-
-    def put_bytes(self, payload):
-        return "digest", str(self.path), len(payload)
-
-
 def _job(platforms):
-    return SimpleNamespace(
-        id="job-1",
-        project_id="project-1",
-        type=SimpleNamespace(value="PUBLISH"),
-        input=SimpleNamespace(
-            reference_asset_ids=["asset-1"],
-            parameters={"platforms": platforms, "title": "Test", "description": "Description"},
-        ),
-    )
+    return SimpleNamespace(id="job-1", project_id="project-1", type=SimpleNamespace(value="PUBLISH"), input=SimpleNamespace(reference_asset_ids=["asset-1"], parameters={"platforms": platforms, "title": "Test", "description": "Description"}))
 
 
-def test_dry_run_adapter_rejects_missing_asset_path():
-    errors = DryRunAdapter().validate(PublishRequest(asset_path="", title="Test"))
-    assert errors == ["ASSET_PATH_REQUIRED"]
+def test_default_registry_has_no_unconfigured_publishing_provider(monkeypatch):
+    for platform in ("YOUTUBE", "TIKTOK", "INSTAGRAM", "FACEBOOK"):
+        monkeypatch.delenv(f"AICF_PUBLISH_{platform}_ENDPOINT", raising=False)
+    assert AdapterRegistry().names() == []
 
 
 def test_publish_worker_fails_unknown_platform(tmp_path):
-    source = SimpleNamespace(id="asset-1", status=AssetStatus.READY, type=AssetType.VIDEO, path=str(tmp_path / "video.mp4"))
-    Path(source.path).write_bytes(b"video")
-    worker = PublishWorker(_Storage(tmp_path / "package.json"), _Assets(source))
+    storage = LocalAssetStorage(tmp_path)
+    source_path = tmp_path / "video.mp4"
+    source_path.write_bytes(b"video")
+    digest, stored_path, size = storage.put_file(source_path)
+    source = SimpleNamespace(id="asset-1", project_id="project-1", status=AssetStatus.READY, type=AssetType.VIDEO, path=stored_path, sha256=digest, size_bytes=size, provenance=AssetProvenance(job_id="source-job", license_status=LicenseStatus.VERIFIED))
+    worker = PublishWorker(storage, _Assets(source), AdapterRegistry())
     worker.initialize()
     result = worker.execute(_job(["unknown"]), SimpleNamespace(report_progress=lambda *_: None))
     assert not result.success
@@ -54,9 +44,10 @@ def test_publish_worker_fails_unknown_platform(tmp_path):
 
 
 def test_publish_worker_requires_existing_source(tmp_path):
-    source = SimpleNamespace(id="asset-1", status=AssetStatus.READY, type=AssetType.VIDEO, path=str(tmp_path / "missing.mp4"))
-    worker = PublishWorker(_Storage(tmp_path / "package.json"), _Assets(source))
+    storage = LocalAssetStorage(tmp_path)
+    source = SimpleNamespace(id="asset-1", project_id="project-1", status=AssetStatus.READY, type=AssetType.VIDEO, path=str(tmp_path / "missing.mp4"), sha256="0" * 64, size_bytes=5, provenance=AssetProvenance(job_id="source-job", license_status=LicenseStatus.VERIFIED))
+    worker = PublishWorker(storage, _Assets(source), AdapterRegistry())
     worker.initialize()
     result = worker.execute(_job(["youtube"]), SimpleNamespace(report_progress=lambda *_: None))
     assert not result.success
-    assert result.error_code == "PUBLISH_ASSET_MISSING"
+    assert result.error_code == "PUBLISH_ASSET_INTEGRITY_FAILED"
