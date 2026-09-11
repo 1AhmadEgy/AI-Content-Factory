@@ -89,7 +89,7 @@ class OrchestratorRuntime:
         return self.series_bible.snapshot(project_id)
 
     def _on_job_completed(self, job: GenerationJob) -> None:
-        """Persist provider outputs and materialize every completed generation in the bible."""
+        """Persist provider outputs and materialize the completed job in the audit stream."""
         if job.status is JobStatus.COMPLETED and job.output and job.output.asset_ids:
             try:
                 if job.type is JobType.IMAGE and job.target_type == "shot":
@@ -99,17 +99,25 @@ class OrchestratorRuntime:
             except Exception:
                 logger.exception("Failed to bind completed %s job %s to target %s/%s", job.type.value, job.id, job.target_type, job.target_id)
         if job.project_id:
-            event = {"jobId": job.id, "type": job.type.value, "targetType": job.target_type, "targetId": job.target_id, "status": job.status.value, "assetIds": list(job.output.asset_ids) if job.output else [], "errorCode": job.error_code, "errorMessage": job.error_message, "contextVersion": job.input.parameters.get("contextVersion", 0)}
+            event = {
+                "jobId": job.id,
+                "type": job.type.value,
+                "targetType": job.target_type,
+                "targetId": job.target_id,
+                "status": job.status.value,
+                "assetIds": list(job.output.asset_ids) if job.output else [],
+                "errorCode": job.error_code,
+                "errorMessage": job.error_message,
+                "contextVersion": job.input.parameters.get("contextVersion", 0),
+            }
             try:
+                # record_job is the canonical durable mutation for the finished
+                # job. Avoid a second context event for the same state transition.
                 self.series_bible.record_job(job.project_id, event)
                 for asset_id in event["assetIds"]:
                     self.series_bible.record_asset(job.project_id, asset_id, {"jobId": job.id, "type": job.type.value, "targetType": job.target_type, "targetId": job.target_id, "status": job.status.value})
             except Exception:
                 logger.exception("Failed to materialize job %s in series bible", job.id)
-            try:
-                self.context.append_event(job.project_id, "job.completed" if job.status is JobStatus.COMPLETED else "job.finished", event, entity_type="job", entity_id=job.id)
-            except Exception:
-                logger.exception("Failed to append project context event for job %s", job.id)
         self.pipeline.on_completed(job)
 
     def _resolve_library_scope(self, brief: ContentBrief) -> tuple[str, str]:
