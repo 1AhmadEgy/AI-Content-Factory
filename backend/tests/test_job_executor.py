@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from backend.app.domain.job_events import JobEvent
 from backend.app.domain.jobs import GenerationJob, JobOutput, JobStatus, JobType
 from backend.app.orchestrator.job_executor import JobExecutor
@@ -54,9 +56,8 @@ def test_executor_requires_completion_gate():
     jobs, queue = FakeJobs(job), FakeQueue()
     worker = FakeWorker(JobExecutionResult(True, ["asset-1"], {"score": 1.0}, "run-1"))
     registry = WorkerRegistry(); registry.register(worker, {"IMAGE"}, worker_id="worker-1")
-    result = JobExecutor(jobs, queue, registry).execute_claimed(job, make_lease())
-    assert result.status is JobStatus.FAILED
-    assert result.job.error_code == "WORKER_EXCEPTION"
+    with pytest.raises(RuntimeError, match="COMPLETION_GATE_NOT_CONFIGURED"):
+        JobExecutor(jobs, queue, registry).execute_claimed(job, make_lease())
 
 
 def test_executor_persists_success_and_emits_events_with_gate():
@@ -90,6 +91,6 @@ def test_executor_does_not_retry_non_retryable_failure():
     jobs, queue = FakeJobs(job), FakeQueue()
     worker = FakeWorker(JobExecutionResult(False, error_code="INVALID_INPUT", error_message="bad", retryable=False))
     registry = WorkerRegistry(); registry.register(worker, worker_id="worker-1")
-    result = JobExecutor(jobs, queue, registry).execute_claimed(job, make_lease())
+    result = JobExecutor(jobs, queue, registry, events.append).execute_claimed(job, make_lease())
     assert result.status is JobStatus.FAILED
     assert queue.acknowledged == [JobStatus.FAILED]
