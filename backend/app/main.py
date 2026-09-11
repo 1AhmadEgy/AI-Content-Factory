@@ -44,6 +44,23 @@ worker_id = os.getenv("AICF_WORKER_ID", "auto")
 worker_loop = WorkerLoop(orchestrator_runtime, worker_id=worker_id)
 
 
+def _is_production() -> bool:
+    return os.getenv("AICF_ENV", "development").strip().lower() in {"prod", "production"}
+
+
+def _production_configuration_errors() -> list[str]:
+    """Fail closed instead of presenting the development stack as production-ready."""
+    if not _is_production():
+        return []
+    errors: list[str] = []
+    if not os.getenv("AICF_API_TOKEN", "").strip():
+        errors.append("AICF_API_TOKEN_REQUIRED")
+    if not os.getenv("AICF_DATABASE_URL", "").strip():
+        errors.append("AICF_DATABASE_URL_REQUIRED")
+    errors.append("POSTGRES_RUNTIME_NOT_IMPLEMENTED")
+    return errors
+
+
 def _worker_autostart_enabled() -> bool:
     return os.getenv("AICF_WORKER_AUTOSTART", "false").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -76,6 +93,9 @@ scheduler_loop = SchedulerLoop(persistent_scheduler, float(os.getenv("AICF_SCHED
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    configuration_errors = _production_configuration_errors()
+    if configuration_errors:
+        raise RuntimeError("PRODUCTION_CONFIGURATION_INVALID:" + ",".join(configuration_errors))
     if _worker_autostart_enabled():
         worker_loop.start()
     if _scheduler_autostart_enabled():
@@ -121,6 +141,10 @@ def health(request: Request):
 
 
 def _readiness_response(request: Request):
+    configuration_errors = _production_configuration_errors()
+    if configuration_errors:
+        request_id = getattr(request.state, "request_id", "unknown")
+        return JSONResponse(status_code=503, content={"error": {"code": "PRODUCTION_CONFIGURATION_INVALID", "message": "Production configuration is incomplete", "details": {"errors": configuration_errors}, "requestId": request_id}, "detail": "PRODUCTION_CONFIGURATION_INVALID"}, headers={"X-Request-Id": request_id})
     try:
         repositories.store.connection.execute("SELECT 1").fetchone()
         return {"status": "ready", "data": {"status": "READY", "service": "ai-content-factory-backend", "version": app.version}, "requestId": request.state.request_id}
