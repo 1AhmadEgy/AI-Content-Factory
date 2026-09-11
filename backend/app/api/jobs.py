@@ -12,7 +12,6 @@ from pydantic import BaseModel, Field
 from ..domain.job_events import JobEvent
 from ..domain.jobs import GenerationJob, JobInput, JobStatus, JobType
 from ..infrastructure.job_event_repository import SQLiteJobEventRepository
-from ..infrastructure.provider_run_repository import SQLiteProviderRunRepository
 from ..infrastructure.sqlite import SQLiteJobRepository
 from ..orchestrator.job_service import JobService
 from ..orchestrator.runtime import OrchestratorRuntime
@@ -102,12 +101,10 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
 
     @router.post("/{job_id}/cancel")
     def cancel_job(job_id: str, request: Request) -> dict[str, Any]:
-        try:
-            job = runtime.cancel_job(job_id) if runtime else service.cancel(job_id)
+        try: job = runtime.cancel_job(job_id) if runtime else service.cancel(job_id)
         except KeyError as exc: raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
         except RuntimeError as exc:
-            if str(exc) == "JOB_STATE_CONFLICT":
-                raise HTTPException(status_code=409, detail="JOB_STATE_CONFLICT") from exc
+            if str(exc) == "JOB_STATE_CONFLICT": raise HTTPException(status_code=409, detail="JOB_STATE_CONFLICT") from exc
             raise
         return {"data": _serialize(job), "requestId": request.state.request_id}
 
@@ -168,16 +165,14 @@ def build_router(repository: SQLiteJobRepository, runtime: OrchestratorRuntime |
         if repository.get(job_id) is None: raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
         if event_repository is None: raise HTTPException(status_code=503, detail="EVENTS_NOT_CONFIGURED")
         async def generate():
-            cursor=last_event_id
-            idle=0
+            cursor=last_event_id; idle=0
             while idle < 150:
                 if await request.is_disconnected(): break
                 events_now=event_repository.list_for_job_after(job_id,cursor,100)
                 if events_now:
                     for event in events_now:
                         payload=json.dumps(_serialize_event(event),ensure_ascii=False,separators=(",",":"))
-                        yield f"id: {event.id}\nevent: job\ndata: {payload}\n\n"
-                        cursor=event.id
+                        yield f"id: {event.id}\nevent: job\ndata: {payload}\n\n"; cursor=event.id
                     idle=0
                 else:
                     yield ": heartbeat\n\n"; idle+=1
