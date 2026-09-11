@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 
 from app.domain.characters import CharacterProfile
 from app.domain.locations import LocationProfile
-from app.domain.projects import Episode, Project, Scene, Shot
 from app.infrastructure.character_repository import SQLiteCharacterRepository
 from app.infrastructure.location_repository import SQLiteLocationRepository
 from app.infrastructure.shot_composition_repository import SQLiteShotCompositionRepository, ShotCharacterLink
@@ -32,8 +31,8 @@ def test_shot_composer_is_deterministic():
     location = LocationProfile(id="loc-1", project_id="project-1", name="Dojo", description="old wooden dojo")
     composer = ShotComposer()
 
-    first = composer.compose([character], location, camera_angle="close_up", mood="determined", character_emotions={"char-1": "determined"})
-    second = composer.compose([character], location, camera_angle="close_up", mood="determined", character_emotions={"char-1": "determined"})
+    first = composer.compose([character], location, camera_angle="close_up", mood="epic", character_emotions={"char-1": "determined"})
+    second = composer.compose([character], location, camera_angle="close_up", mood="epic", character_emotions={"char-1": "determined"})
 
     assert first == second
     assert "Ziko" in first["prompt"]
@@ -44,14 +43,16 @@ def test_shot_composer_is_deterministic():
 
 def test_shot_links_persist_and_are_replaced():
     store = SQLiteStore(":memory:")
+    now = datetime.now(timezone.utc).isoformat()
+    store._insert("INSERT INTO projects(id,name,description,settings_json,created_at,updated_at) VALUES(?,?,?,?,?,?)", ("project-1", "P", "", "{}", now, now))
+    store._insert("INSERT INTO episodes(id,project_id,title,created_at,updated_at) VALUES(?,?,?,?,?)", ("ep-1", "project-1", "E", now, now))
+    store._insert("INSERT INTO scenes(id,episode_id,title,order_index,created_at) VALUES(?,?,?,?,?)", ("scene-1", "ep-1", "S", 0, now))
+    store._insert("INSERT INTO shots(id,scene_id,order_index,prompt,created_at) VALUES(?,?,?,?,?)", ("shot-1", "scene-1", 0, "", now))
+
     SQLiteCharacterRepository(store).create(_character("char-1", "Ziko"))
     SQLiteLocationRepository(store).create(LocationProfile(id="loc-1", project_id="project-1", name="Dojo"))
-    store._insert("INSERT INTO projects(id,name,description,settings_json,created_at,updated_at) VALUES(?,?,?,?,?,?)", ("project-1", "P", "", "{}", datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat()))
-    store._insert("INSERT INTO episodes(id,project_id,title,created_at,updated_at) VALUES(?,?,?,?,?)", ("ep-1", "project-1", "E", datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat()))
-    store._insert("INSERT INTO scenes(id,episode_id,title,order_index,created_at) VALUES(?,?,?,?,?)", ("scene-1", "ep-1", "S", 0, datetime.now(timezone.utc).isoformat()))
-    store._insert("INSERT INTO shots(id,scene_id,order_index,prompt,created_at) VALUES(?,?,?,?,?)", ("shot-1", "scene-1", 0, "", datetime.now(timezone.utc).isoformat()))
-
     repo = SQLiteShotCompositionRepository(store)
+
     repo.replace_characters([ShotCharacterLink(id="link-1", shot_id="shot-1", character_id="char-1", action="runs", is_speaking=True)])
     assert len(repo.list_characters("shot-1")) == 1
     assert repo.list_characters("shot-1")[0].action == "runs"
