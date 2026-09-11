@@ -54,18 +54,30 @@ class OrchestratorRuntime:
         self.storage = LocalAssetStorage(root)
         self.workers = WorkerRegistry()
         self.providers = default_provider_registry()
+
         provider_worker = ProviderGenerationWorker(self.providers, self.storage, self.assets, self.provider_runs)
         provider_worker.initialize()
-        self.workers.register(provider_worker, capabilities={"STORY", "CHARACTER", "WORLD", "SCENE", "SHOT", "IMAGE", "VIDEO", "TTS", "LIPSYNC", "MUSIC", "SFX", "UPSCALE", "INTERPOLATION"}, worker_id="provider-generation")
+        # Keep this list aligned with the actual job types that the provider registry
+        # can execute. Unsupported media types must fail as unavailable rather than
+        # being advertised by a generic production worker.
+        self.workers.register(
+            provider_worker,
+            capabilities={"STORY", "CHARACTER", "WORLD", "SCENE", "SHOT", "IMAGE", "TTS"},
+            worker_id="provider-generation",
+        )
+
         qc = QualityControlWorker(self.storage, self.assets)
         qc.initialize()
-        self.workers.register(qc, capabilities={"DOCUMENT"}, worker_id="quality-control")
+        self.workers.register(qc, capabilities={"QC"}, worker_id="quality-control")
+
         best_take = BestTakeWorker(self.storage, self.assets)
         best_take.initialize()
-        self.workers.register(best_take, capabilities={"DOCUMENT"}, worker_id="best-take")
+        self.workers.register(best_take, capabilities={"BEST_TAKE"}, worker_id="best-take")
+
         timeline = TimelineWorker(self.storage, self.assets)
         timeline.initialize()
-        self.workers.register(timeline, capabilities={"DOCUMENT"}, worker_id="timeline")
+        self.workers.register(timeline, capabilities={"TIMELINE"}, worker_id="timeline")
+
         render = RenderWorker(
             self.storage,
             self.assets,
@@ -73,26 +85,38 @@ class OrchestratorRuntime:
             ffprobe_binary=os.getenv("AICF_FFPROBE_BIN", "ffprobe"),
         )
         render.initialize()
-        self.workers.register(render, capabilities={"VIDEO"}, worker_id="render")
+        self.workers.register(render, capabilities={"RENDER"}, worker_id="render")
+
         media = MediaDocumentWorker(self.storage, self.assets)
         media.initialize()
         self.workers.register(media, capabilities={"SUBTITLE", "THUMBNAIL", "METADATA"}, worker_id="media-document")
+
         language_pack = LanguagePackWorker(self.storage, self.assets)
         language_pack.initialize()
         self.workers.register(language_pack, capabilities={"LANGUAGE_PACK"}, worker_id="language-pack")
+
         publisher = PublishWorker(self.storage, self.assets)
         publisher.initialize()
         self.workers.register(publisher, capabilities={"PUBLISH"}, worker_id="publish")
+
         repurpose = RepurposeWorker(self.storage, self.assets)
         repurpose.initialize()
         self.workers.register(repurpose, capabilities={"REPURPOSE"}, worker_id="repurpose")
+
         self.story_engine = AIStoryEngine(self.providers)
         self.script_engine = AIScriptEngine(self.providers)
         self.scene_planner = AIScenePlanner(self.providers)
         self.job_service = JobService(repositories.jobs)
         self.pipeline = ProductionPipelineOrchestrator(self.job_service, self.queue.enqueue)
         self.completion_gate = CompletionGate(self.assets, self.storage)
-        self.executor = JobExecutor(repositories.jobs, self.queue, self.workers, self.events.append, self.pipeline.on_completed, completion_gate=self.completion_gate)
+        self.executor = JobExecutor(
+            repositories.jobs,
+            self.queue,
+            self.workers,
+            self.events.append,
+            self.pipeline.on_completed,
+            completion_gate=self.completion_gate,
+        )
         self.country_library_seed = ensure_country_library_projects(repositories)
         self.library_seed = ensure_egypt_library(repositories)
         self.libya_library_seed = ensure_libya_library(repositories)
