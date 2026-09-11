@@ -74,18 +74,25 @@ class ProviderGenerationWorker(Worker):
         provider_run_id = provider_run_id.strip()
 
         asset_ids = list(response.output_asset_ids)
-        if not asset_ids and response.output_bytes is not None:
+        if asset_ids:
+            invalid_asset = self._validate_existing_assets(job, asset_ids)
+            if invalid_asset:
+                if self.provider_runs:
+                    self.provider_runs.complete(internal_run_id, status="FAILED", error_code=invalid_asset[0], response_metadata={"assetId": invalid_asset[1]})
+                return JobExecutionResult(False, provider_run_id=provider_run_id, error_code=invalid_asset[0], error_message=invalid_asset[2], retryable=True)
+        elif response.output_bytes is not None:
+            if not response.output_bytes:
+                return self._fail_provider_run(internal_run_id, provider_run_id, "PROVIDER_EMPTY_OUTPUT", "Provider returned empty binary output")
             asset_ids = [self._persist_media(job, model.provider, model.id, response, provider_run_id)]
-        if not asset_ids and response.output_text is not None and response.output_text.strip():
+        elif response.output_text is not None and response.output_text.strip():
             payload = self._serialize_output(job, response.output_text, response.metrics)
             digest, path, size = self._store(payload)
             asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"provider-asset:{job.id}:{digest}"))
             self.assets.create(Asset(id=asset_id, project_id=job.project_id, type=self._asset_type(job), path=path, mime_type="application/json; charset=utf-8", size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, metadata={"provider": model.provider, "model": model.id, "providerRunId": provider_run_id}, license_status=LicenseStatus.VERIFIED)))
             asset_ids = [asset_id]
-        if not asset_ids:
-            if self.provider_runs:
-                self.provider_runs.complete(internal_run_id, status="FAILED", error_code="PROVIDER_EMPTY_OUTPUT", response_metadata=dict(response.metrics))
-            return JobExecutionResult(False, provider_run_id=provider_run_id, error_code="PROVIDER_EMPTY_OUTPUT", error_message="Provider reported success without an asset or output", retryable=True)
+        else:
+            return self._fail_provider_run(internal_run_id, provider_run_id, "PROVIDER_EMPTY_OUTPUT", "Provider reported success without an asset or output")
+
         if self.provider_runs:
             self.provider_runs.complete(internal_run_id, status="COMPLETED", response_metadata={"assetIds": asset_ids, "providerRunId": provider_run_id, **dict(response.metrics)})
         return JobExecutionResult(success=True, asset_ids=asset_ids, metrics=dict(response.metrics), provider_run_id=provider_run_id)
@@ -95,6 +102,27 @@ class ProviderGenerationWorker(Worker):
 
     def shutdown(self) -> None:
         self._initialized = False
+
+    def _fail_provider_run(self, internal_run_id: str, provider_run_id: str, error_code: str, message: str) -> JobExecutionResult:
+        if self.provider_runs:
+            self.provider_runs.complete(internal_run_id, status="FAILED", error_code=error_code)
+        return JobExecutionResult(False, provider_run_id=provider_run_id, error_code=error_code, error_message=message, retryable=True)
+
+    def _validate_existing_assets(self, job: GenerationJob, asset_ids: list[str]) -> tuple[str, str, str] | None:
+        expected_type = self._asset_type(job)
+        for asset_id in asset_ids:
+            asset = self.assets.get(asset_id)
+            if asset is None:
+                return "PROVIDER_ASSET_NOT_FOUND", asset_id, "Provider referenced an asset that does not exist"
+            if asset.project_id != job.project_id:
+                return "PROVIDER_ASSET_PROJECT_MISMATCH", asset_id, "Provider asset belongs to another project"
+            if asset.status != AssetStatus.READY:
+                return "PROVIDER_ASSET_NOT_READY", asset_id, "Provider asset is not READY"
+            if asset.type != expected_type:
+                return "PROVIDER_ASSET_TYPE_MISMATCH", asset_id, "Provider asset type does not match the generation job"
+            if not self.storage.verify(asset):
+                return "PROVIDER_ASSET_INTEGRITY_FAILED", asset_id, "Provider asset failed storage integrity verification"
+        return None
 
     def _persist_media(self, job: GenerationJob, provider: str, model: str, response, provider_run_id: str) -> str:
         data = response.output_bytes or b""
