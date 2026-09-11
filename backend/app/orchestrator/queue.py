@@ -67,6 +67,15 @@ class JobQueue(ABC):
         """Atomically claim one specific runnable job when supported."""
         raise NotImplementedError("TARGETED_CLAIM_NOT_SUPPORTED")
 
+    def start(self, lease: JobLease) -> GenerationJob:
+        """Persist LEASED -> RUNNING and increment the execution attempt once.
+
+        The queue owns this persisted execution boundary. Implementations that
+        do not support an explicit start operation must fail loudly rather than
+        allowing the executor to manufacture a RUNNING state in memory.
+        """
+        raise NotImplementedError("LEASE_START_NOT_SUPPORTED")
+
     @abstractmethod
     def heartbeat(self, lease: JobLease) -> None:
         """Extend an active lease."""
