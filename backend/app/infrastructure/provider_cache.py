@@ -37,6 +37,29 @@ class SQLiteProviderCache:
         self.store = store
         self.ttl_seconds = ttl_seconds
         self.max_bytes = max_bytes
+        self._ensure_schema()
+
+    def _ensure_schema(self) -> None:
+        with self.store._lock, self.store.connection:
+            self.store.connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS provider_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    provider TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    output_text TEXT,
+                    output_bytes BLOB,
+                    output_mime_type TEXT,
+                    output_filename TEXT,
+                    output_metadata_json TEXT NOT NULL DEFAULT '{}',
+                    metrics_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT,
+                    hits INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS idx_provider_cache_expiry ON provider_cache(expires_at);
+                """
+            )
 
     def get(self, cache_key: str) -> ProviderCacheEntry | None:
         with self.store._lock, self.store.connection:
