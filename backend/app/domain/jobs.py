@@ -7,10 +7,11 @@ from typing import Any
 class JobStatus(str, Enum):
     PENDING = "PENDING"
     QUEUED = "QUEUED"
-    LEASED = "LEASED"
     RUNNING = "RUNNING"
-    QC_PENDING = "QC_PENDING"
-    SUCCEEDED = "SUCCEEDED"
+    PAUSED = "PAUSED"
+    RETRYING = "RETRYING"
+    BLOCKED = "BLOCKED"
+    COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
 
@@ -47,7 +48,6 @@ def utc_now() -> datetime:
 
 @dataclass(slots=True)
 class JobInput:
-    schema_version: int = 1
     parameters: dict[str, Any] = field(default_factory=dict)
     reference_asset_ids: list[str] = field(default_factory=list)
     constraints: dict[str, Any] = field(default_factory=dict)
@@ -57,7 +57,6 @@ class JobInput:
 
 @dataclass(slots=True)
 class JobOutput:
-    schema_version: int = 1
     asset_ids: list[str] = field(default_factory=list)
     metrics: dict[str, Any] = field(default_factory=dict)
     provider_run_id: str | None = None
@@ -75,7 +74,6 @@ class GenerationJob:
     max_attempts: int = 3
     input: JobInput = field(default_factory=JobInput)
     parent_job_id: str | None = None
-    depends_on: list[str] = field(default_factory=list)
     target_id: str | None = None
     priority: int = 100
     provider: str | None = None
@@ -83,10 +81,6 @@ class GenerationJob:
     output: JobOutput | None = None
     error_code: str | None = None
     error_message: str | None = None
-    idempotency_key: str | None = None
-    lease_owner: str | None = None
-    lease_expires_at: datetime | None = None
-    event_log: list[dict[str, Any]] = field(default_factory=list)
     created_at: datetime = field(default_factory=utc_now)
     started_at: datetime | None = None
     completed_at: datetime | None = None
