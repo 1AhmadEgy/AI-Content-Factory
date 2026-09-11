@@ -13,7 +13,6 @@ from ..infrastructure.storage import LocalAssetStorage
 from ..orchestrator.provenance import build_provenance
 from ..orchestrator.queue import JobExecutionResult, Worker, WorkerContext
 from ..providers.contracts import ProviderRequest
-from ..providers.media import media_mime
 from ..providers.registry import ModelRegistry
 
 
@@ -150,7 +149,7 @@ class ProviderGenerationWorker(Worker):
         digest, path, size = self._store(data)
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"provider-media:{job.id}:{digest}"))
         metadata = {"provider": provider, "model": model, "providerRunId": provider_run_id, **dict(response.output_metadata)}
-        self.assets.create(Asset(id=asset_id, project_id=job.project_id, type=self._asset_type(job), path=path, mime_type=response.output_mime_type or media_mime(job.type.value, job.input.parameters), size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, metadata=metadata, license_status=LicenseStatus.VERIFIED)))
+        self.assets.create(Asset(id=asset_id, project_id=job.project_id, type=self._asset_type(job), path=path, mime_type=response.output_mime_type.strip(), size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, metadata=metadata, license_status=LicenseStatus.VERIFIED)))
         return asset_id
 
     def _store(self, payload: bytes) -> tuple[str, str, int]:
@@ -165,7 +164,7 @@ class ProviderGenerationWorker(Worker):
     @staticmethod
     def _asset_type(job: GenerationJob) -> AssetType:
         if job.type.value in {"IMAGE", "THUMBNAIL"}: return AssetType.IMAGE
-        if job.type.value in {"VIDEO", "RENDER"}: return AssetType.VIDEO
-        if job.type.value in {"TTS", "MUSIC", "SFX", "LIPSYNC"}: return AssetType.AUDIO
+        if job.type.value in {"VIDEO", "RENDER", "LIPSYNC"}: return AssetType.VIDEO
+        if job.type.value in {"TTS", "MUSIC", "SFX"}: return AssetType.AUDIO
         if job.type.value == "SUBTITLE": return AssetType.SUBTITLE
         return AssetType.DOCUMENT
