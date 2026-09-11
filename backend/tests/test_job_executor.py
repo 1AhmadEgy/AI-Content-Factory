@@ -10,6 +10,11 @@ class FakeJobs:
     def create(self, job): self.job = job; return job
     def get(self, job_id): return self.job if self.job.id == job_id else None
     def update(self, job): self.job = job; return job
+    def update_if_current(self, job, expected_status, expected_attempt):
+        if self.job.status is not expected_status and self.job.status is not job.status: return False
+        if self.job.attempt != expected_attempt: return False
+        self.job = job
+        return True
 
 
 class FakeQueue(JobQueue):
@@ -19,6 +24,7 @@ class FakeQueue(JobQueue):
     def heartbeat(self, lease): pass
     def acknowledge(self, lease, status): self.acknowledged.append(status)
     def release_expired(self): return 0
+    def is_lease_active(self, lease): return True
 
 
 class FakeWorker(Worker):
@@ -43,8 +49,7 @@ def make_lease():
 
 
 def test_executor_persists_success_and_emits_events():
-    job = make_job()
-    jobs, queue = FakeJobs(job), FakeQueue()
+    job = make_job(); jobs, queue = FakeJobs(job), FakeQueue()
     worker = FakeWorker(JobExecutionResult(True, ["asset-1"], {"score": 1.0}, "run-1"))
     registry = WorkerRegistry(); registry.register(worker, {"IMAGE"}, worker_id="worker-1")
     events: list[JobEvent] = []
@@ -56,8 +61,7 @@ def test_executor_persists_success_and_emits_events():
 
 
 def test_executor_retries_retryable_failure_until_limit():
-    job = make_job(max_attempts=2)
-    jobs, queue = FakeJobs(job), FakeQueue()
+    job = make_job(max_attempts=2); jobs, queue = FakeJobs(job), FakeQueue()
     worker = FakeWorker(JobExecutionResult(False, error_code="TIMEOUT", error_message="temporary", retryable=True))
     registry = WorkerRegistry(); registry.register(worker, worker_id="worker-1")
     events: list[JobEvent] = []
@@ -69,8 +73,7 @@ def test_executor_retries_retryable_failure_until_limit():
 
 
 def test_executor_does_not_retry_non_retryable_failure():
-    job = make_job(max_attempts=3)
-    jobs, queue = FakeJobs(job), FakeQueue()
+    job = make_job(max_attempts=3); jobs, queue = FakeJobs(job), FakeQueue()
     worker = FakeWorker(JobExecutionResult(False, error_code="INVALID_INPUT", error_message="bad", retryable=False))
     registry = WorkerRegistry(); registry.register(worker, worker_id="worker-1")
     result = JobExecutor(jobs, queue, registry).execute_claimed(job, make_lease())
