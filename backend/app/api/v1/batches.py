@@ -31,19 +31,19 @@ class CreateBatchRequest(BaseModel):
     priority: int=100
 
 def _job(j):
-    return {"id":j.id,"type":j.type.value,"status":j.status.value,"progress":j.progress,"targetType":j.target_type,"targetId":j.target_id,"attempt":j.attempt,"maxAttempts":j.max_attempts}
+    return {"id":j.id,"type":j.type.value,"status":j.status.value,"progress":j.progress,"targetType":j.target_type,"targetId":j.target_id,"attempt":j.attempt,"maxAttempts":j.max_attempts,"contextVersion":j.input.parameters.get("contextVersion",0)}
 
 def _summary(s):
     return {k:([_job(j) for j in v] if k=="children" else v.value if hasattr(v,"value") else v) for k,v in s.items()}
 
 def build_router(projects:SQLiteProjectRepository,jobs:SQLiteJobRepository,runtime:OrchestratorRuntime)->APIRouter:
-    service=BatchService(jobs,runtime.queue.enqueue)
+    service=BatchService(jobs,runtime.queue.enqueue,context_provider=runtime.context_snapshot)
     @router.post("",status_code=202)
     def create_batch(body:CreateBatchRequest,request:Request):
         if projects.get(body.projectId) is None: raise HTTPException(404,"PROJECT_NOT_FOUND")
         items=[BatchItem(type=i.type,target_type=i.targetType,target_id=i.targetId,input=JobInput(parameters=i.parameters,reference_asset_ids=i.referenceAssetIds,constraints=i.constraints,seed=i.seed,deterministic=i.deterministic),priority=i.priority,max_attempts=i.maxAttempts,provider=i.provider,model=i.model) for i in body.items]
         parent=service.create(body.projectId,items,body.priority)
-        return {"data":{"batchId":parent.id,"status":parent.status.value,"itemCount":len(items)},"requestId":request.state.request_id}
+        return {"data":{"batchId":parent.id,"status":parent.status.value,"itemCount":len(items),"contextVersion":parent.input.parameters.get("contextVersion",0)},"requestId":request.state.request_id}
     @router.get("/{batch_id}")
     def get_batch(batch_id:str,request:Request):
         try: data=service.summary(batch_id)
