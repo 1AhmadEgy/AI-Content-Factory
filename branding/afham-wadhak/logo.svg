@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" role="img" aria-labelledby="title">
+  <title id="title">افهم واضحك</title>
+  <rect width="108" height="108" rx="24" fill="#0B1020"/>
+  <path fill="#FFC928" d="M20 25c0-6.6 5.4-12 12-12h44c6.6 0 12 5.4 12 12v29c0 6.6-5.4 12-12 12H52L37 91V66h-5c-6.6 0-12-5.4-12-12z"/>
+  <rect x="38" y="28" width="32" height="12" rx="6" fill="#0B1020"/>
+  <rect x="39" y="46" width="30" height="10" rx="5" fill="#0B1020"/>
+  <path fill="#FF7A3D" d="M73 69c0 7.2-5.8 13-13 13s-13-5.8-13-13c0-2.1.5-4.1 1.4-5.8 2.5 3.2 6.5 5.2 11 5.2s8.5-2 11-5.2c.9 1.7 1.4 3.7 1.4 5.8z"/>
+</svg>

@@ -28,6 +28,7 @@ class FfmpegRenderOptions:
     audio_bitrate: str = "192k"
     timeout_seconds: int = 600
     cancel_grace_seconds: float = 1.0
+    branding: Mapping[str, object] | None = None
 
 
 class FfmpegRenderer(Renderer):
@@ -40,7 +41,6 @@ class FfmpegRenderer(Renderer):
         self._process_lock = RLock()
 
     def health_check(self) -> dict[str, object]:
-        """Check the media toolchain without allowing a hung executable to block startup."""
         try:
             ffmpeg = subprocess.run([self.options.ffmpeg_bin, "-version"], capture_output=True, text=True, timeout=10)
             ffprobe = subprocess.run([self.options.ffprobe_bin, "-version"], capture_output=True, text=True, timeout=10)
@@ -70,6 +70,12 @@ class FfmpegRenderer(Renderer):
                     errors.append(f"ASSET_NOT_FOUND:{clip.asset_id}")
         if not any(t.type == TrackType.VIDEO and t.clips for t in timeline.tracks):
             errors.append("TIMELINE_HAS_NO_VIDEO")
+        branding = self.options.branding or {}
+        if bool(branding.get("enabled", False)):
+            for key in ("introAssetId", "outroAssetId", "watermarkAssetId"):
+                asset_id = branding.get(key)
+                if asset_id and str(asset_id) not in self.assets:
+                    errors.append(f"BRANDING_ASSET_NOT_FOUND:{asset_id}")
         return errors
 
     @staticmethod
@@ -94,9 +100,8 @@ class FfmpegRenderer(Renderer):
         filter_parts: list[str] = []
         video_labels: list[str] = []
         for index, clip in enumerate(ordered_video):
-            start = clip.start_us / 1_000_000
-            dur = clip.duration_us / 1_000_000
             source_start = clip.source_start_us / 1_000_000
+            dur = clip.duration_us / 1_000_000
             label = f"v{index}"
             filter_parts.append(f"[{index}:v]trim=start={source_start}:duration={dur},setpts=PTS-STARTPTS,fps={profile.fps:g},scale={profile.width}:{profile.height}:force_original_aspect_ratio=decrease,pad={profile.width}:{profile.height}:(ow-iw)/2:(oh-ih)/2:color=black[{label}]")
             video_labels.append(label)
@@ -139,20 +144,112 @@ class FfmpegRenderer(Renderer):
         args += ["-movflags", "+faststart", output]
         return args
 
+    def _probe_has_audio(self, path: str) -> bool:
+        try:
+            completed = subprocess.run([self.options.ffprobe_bin, "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=index", "-of", "csv=p=0", path], capture_output=True, text=True, timeout=20)
+            return completed.returncode == 0 and bool(completed.stdout.strip())
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+
+    def _apply_branding(self, source: str, output: str, profile: RenderProfile, timeline_id: str) -> RenderResult:
+        branding = self.options.branding or {}
+        if not bool(branding.get("enabled", False)):
+            os.replace(source, output)
+            return RenderResult(True, output_path=output)
+        intro = self.assets.get(str(branding.get("introAssetId"))) if branding.get("introAssetId") else None
+        outro = self.assets.get(str(branding.get("outroAssetId"))) if branding.get("outroAssetId") else None
+        watermark = self.assets.get(str(branding.get("watermarkAssetId"))) if branding.get("watermarkAssetId") else None
+        if not intro and not outro and not watermark:
+            os.replace(source, output)
+            return RenderResult(True, output_path=output)
+
+        args = [self.options.ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-y", "-i", source]
+        extra_inputs: list[tuple[str, bool, str]] = []
+        if intro:
+            args += ["-i", intro]
+            extra_inputs.append((intro, self._probe_has_audio(intro), "intro"))
+        if outro:
+            args += ["-i", outro]
+            extra_inputs.append((outro, self._probe_has_audio(outro), "outro"))
+        if watermark:
+            args += ["-i", watermark]
+        filters: list[str] = []
+        filters.append(f"[0:v]scale={profile.width}:{profile.height}:force_original_aspect_ratio=decrease,pad={profile.width}:{profile.height}:(ow-iw)/2:(oh-ih)/2:color=black,format=yuv420p[corev]")
+        has_core_audio = self._probe_has_audio(source)
+        core_audio = "0:a"
+        if not has_core_audio:
+            filters.append("anullsrc=channel_layout=stereo:sample_rate=48000:d=3600[corea]")
+            core_audio = "corea"
+
+        segment_v: list[str] = []
+        segment_a: list[str] = []
+        input_index = 1
+        for path, has_audio, _kind in extra_inputs:
+            label_v = f"brandv{input_index}"
+            filters.append(f"[{input_index}:v]scale={profile.width}:{profile.height}:force_original_aspect_ratio=decrease,pad={profile.width}:{profile.height}:(ow-iw)/2:(oh-ih)/2:color=black,format=yuv420p[{label_v}]")
+            label_a = f"branda{input_index}"
+            if has_audio:
+                filters.append(f"[{input_index}:a]aresample=48000,asetpts=PTS-STARTPTS[{label_a}]")
+            else:
+                filters.append(f"anullsrc=channel_layout=stereo:sample_rate=48000:d=3600[{label_a}]")
+            segment_v.append(label_v)
+            segment_a.append(label_a)
+            input_index += 1
+
+        ordered_v: list[str] = []
+        ordered_a: list[str] = []
+        if intro:
+            intro_pos = next(i for i, item in enumerate(extra_inputs) if item[2] == "intro")
+            ordered_v.append(segment_v[intro_pos])
+            ordered_a.append(segment_a[intro_pos])
+        ordered_v.append("corev")
+        ordered_a.append(core_audio)
+        if outro:
+            outro_pos = next(i for i, item in enumerate(extra_inputs) if item[2] == "outro")
+            ordered_v.append(segment_v[outro_pos])
+            ordered_a.append(segment_a[outro_pos])
+
+        if len(ordered_v) > 1:
+            concat_inputs = "".join(f"[{v}][{a}]" for v, a in zip(ordered_v, ordered_a))
+            filters.append(f"{concat_inputs}concat=n={len(ordered_v)}:v=1:a=1[brandedv][brandeda]")
+            current_v, current_a = "brandedv", "brandeda"
+        else:
+            current_v, current_a = ordered_v[0], ordered_a[0]
+
+        if watermark:
+            opacity = min(1.0, max(0.0, float(branding.get("watermarkOpacity", 0.82))))
+            filters.append(f"[{input_index}:v]format=rgba,colorchannelmixer=aa={opacity:g}[wm]")
+            filters.append(f"[{current_v}][wm]overlay=W-w-24:H-h-24:shortest=0[finalv]")
+            current_v = "finalv"
+        args += ["-filter_complex", ";".join(filters), "-map", f"[{current_v}]", "-map", f"[{current_a}]", "-c:v", "libx264", "-preset", self.options.preset, "-crf", str(self.options.crf), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", self.options.audio_bitrate, "-movflags", "+faststart", output]
+        try:
+            completed = subprocess.run(args, capture_output=True, text=True, timeout=max(1, self.options.timeout_seconds))
+            if completed.returncode != 0:
+                return RenderResult(False, error=completed.stderr[-4000:] or "BRANDING_FFMPEG_FAILED")
+            return RenderResult(True, output_path=output)
+        except subprocess.TimeoutExpired:
+            return RenderResult(False, error="BRANDING_FFMPEG_TIMEOUT")
+        finally:
+            Path(source).unlink(missing_ok=True)
+
     def render(self, timeline: Timeline, profile: RenderProfile, output_path: str) -> RenderResult:
         errors = self.validate(timeline, profile)
         if errors:
             return RenderResult(False, error=";".join(errors))
         destination = Path(output_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
+        branding_enabled = bool((self.options.branding or {}).get("enabled", False))
+        has_branding_assets = any((self.options.branding or {}).get(key) for key in ("introAssetId", "outroAssetId", "watermarkAssetId"))
+        needs_post = branding_enabled and has_branding_assets
         fd, staging_name = tempfile.mkstemp(prefix="acf-render-", suffix=".mp4", dir=destination.parent)
         os.close(fd)
         staging = Path(staging_name)
         staging.unlink(missing_ok=True)
+        core_staging = staging if not needs_post else staging.with_name(staging.stem + "-core.mp4")
         proc: subprocess.Popen[str] | None = None
         registered = False
         try:
-            args = self._build_args(timeline, profile, str(staging))
+            args = self._build_args(timeline, profile, str(core_staging))
             with self._process_lock:
                 existing = self._processes.get(timeline.id)
                 if existing is not None and existing.poll() is None:
@@ -168,7 +265,13 @@ class FfmpegRenderer(Renderer):
                 return RenderResult(False, error="FFMPEG_TIMEOUT")
             if proc.returncode != 0:
                 return RenderResult(False, error=stderr[-4000:] or "FFMPEG_FAILED")
-            os.replace(staging, destination)
+            if needs_post:
+                result = self._apply_branding(str(core_staging), str(staging), profile, timeline.id)
+                if not result.success:
+                    return result
+                os.replace(staging, destination)
+            else:
+                os.replace(core_staging, destination)
             return RenderResult(True, output_path=str(destination))
         except (OSError, ValueError) as exc:
             return RenderResult(False, error=str(exc))
@@ -178,6 +281,7 @@ class FfmpegRenderer(Renderer):
                     if self._processes.get(timeline.id) is proc:
                         self._processes.pop(timeline.id, None)
             staging.unlink(missing_ok=True)
+            core_staging.unlink(missing_ok=True)
 
     def cancel(self, render_id: str) -> bool:
         with self._process_lock:

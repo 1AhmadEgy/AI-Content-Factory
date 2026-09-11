@@ -86,6 +86,25 @@ class RenderWorker(Worker):
                     return JobExecutionResult(False, error_code="RENDER_ASSET_MISSING", error_message=clip.asset_id)
                 asset_paths[clip.asset_id] = str(path)
 
+        branding = job.input.parameters.get("branding") or {}
+        if not isinstance(branding, dict):
+            return JobExecutionResult(False, error_code="RENDER_BRANDING_INVALID", error_message="branding must be an object")
+        branding = dict(branding)
+        if bool(branding.get("enabled", False)):
+            for key in ("introAssetId", "outroAssetId", "watermarkAssetId"):
+                asset_id = branding.get(key)
+                if not asset_id:
+                    continue
+                asset = self.assets.get(str(asset_id))
+                if asset is None or asset.status is not AssetStatus.READY:
+                    return JobExecutionResult(False, error_code="RENDER_BRANDING_ASSET_NOT_READY", error_message=str(asset_id))
+                if asset.project_id != job.project_id:
+                    return JobExecutionResult(False, error_code="RENDER_BRANDING_ASSET_PROJECT_MISMATCH", error_message=str(asset_id))
+                path = Path(asset.path)
+                if not path.is_file():
+                    return JobExecutionResult(False, error_code="RENDER_BRANDING_ASSET_MISSING", error_message=str(asset_id))
+                asset_paths[str(asset_id)] = str(path)
+
         subtitle_path = str(job.input.parameters.get("subtitlePath", "")).strip() or None
         subtitle_asset_id = job.input.parameters.get("subtitleAssetId")
         if not subtitle_path and subtitle_asset_id:
@@ -99,11 +118,8 @@ class RenderWorker(Worker):
                 return JobExecutionResult(False, error_code="RENDER_SUBTITLE_MISSING", error_message=str(subtitle_asset_id))
             subtitle_path = str(subtitle_file)
 
-        renderer = FfmpegRenderer(asset_paths, FfmpegRenderOptions(ffmpeg_bin=self.ffmpeg_binary, ffprobe_bin=self.ffprobe_binary, overwrite=True, subtitles_path=subtitle_path))
+        renderer = FfmpegRenderer(asset_paths, FfmpegRenderOptions(ffmpeg_bin=self.ffmpeg_binary, ffprobe_bin=self.ffprobe_binary, overwrite=True, subtitles_path=subtitle_path, branding=branding))
         self._renderers[job.id] = renderer
-        # FfmpegRenderer keys its active process by timeline.id. Normalize the
-        # in-memory timeline id to the owning render job so cancel(job.id) always
-        # reaches the actual FFmpeg process.
         timeline.id = job.id
         output = self.storage.root / "staging" / f"render-{job.id}-{uuid.uuid4().hex}.mp4"
         try:
@@ -127,9 +143,9 @@ class RenderWorker(Worker):
 
         self._progress(context, 0.96, "provenance")
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"render:{job.id}:{digest}"))
-        asset = Asset(id=asset_id, project_id=job.project_id, type=AssetType.VIDEO, path=path, mime_type="video/mp4", size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, source_asset_ids=[timeline_asset.id, *asset_paths.keys()], metadata={"width": width, "height": height, "fps": fps, "durationUs": timeline.duration_us, "engine": "ffmpeg", "finalQc": "passed", "language": job.input.parameters.get("language"), "locale": job.input.parameters.get("locale"), "languagePackVersion": job.input.parameters.get("languagePackVersion"), "languageRender": bool(job.input.parameters.get("languageRender"))}, license_status=LicenseStatus.VERIFIED))
+        asset = Asset(id=asset_id, project_id=job.project_id, type=AssetType.VIDEO, path=path, mime_type="video/mp4", size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, source_asset_ids=[timeline_asset.id, *asset_paths.keys()], metadata={"width": width, "height": height, "fps": fps, "durationUs": timeline.duration_us, "engine": "ffmpeg", "finalQc": "passed", "language": job.input.parameters.get("language"), "locale": job.input.parameters.get("locale"), "languagePackVersion": job.input.parameters.get("languagePackVersion"), "languageRender": bool(job.input.parameters.get("languageRender")), "brandingEnabled": bool(branding.get("enabled", False))}, license_status=LicenseStatus.VERIFIED))
         self.assets.create(asset)
-        return JobExecutionResult(True, [asset_id], {"width": width, "height": height, "fps": fps, "durationUs": timeline.duration_us, "finalQc": "passed", "engine": "ffmpeg", "languageRender": bool(job.input.parameters.get("languageRender")), "language": job.input.parameters.get("language")}, f"ffmpeg-{job.id}")
+        return JobExecutionResult(True, [asset_id], {"width": width, "height": height, "fps": fps, "durationUs": timeline.duration_us, "finalQc": "passed", "engine": "ffmpeg", "languageRender": bool(job.input.parameters.get("languageRender")), "language": job.input.parameters.get("language"), "brandingEnabled": bool(branding.get("enabled", False))}, f"ffmpeg-{job.id}")
 
     @staticmethod
     def _timeline_from_manifest(manifest: dict[str, object], project_id: str, timeline_id: str) -> Timeline:

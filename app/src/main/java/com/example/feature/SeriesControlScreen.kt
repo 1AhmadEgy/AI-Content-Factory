@@ -22,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -63,6 +64,7 @@ fun SeriesControlScreen(projectId: String, onBack: () -> Unit) {
     var factText by remember { mutableStateOf("") }
     var gagText by remember { mutableStateOf("") }
     var threadText by remember { mutableStateOf("") }
+    var brandingEnabled by remember { mutableStateOf(false) }
     var snapshots by remember { mutableStateOf<List<Map<String, Any?>>>(emptyList()) }
     var message by remember { mutableStateOf<String?>(null) }
 
@@ -80,6 +82,7 @@ fun SeriesControlScreen(projectId: String, onBack: () -> Unit) {
                 selectedCountry = current?.countryId ?: "egypt"
                 sourceLanguage = current?.sourceLanguage ?: "ar"
                 targetLanguages = current?.targetLanguages ?: emptyList()
+                brandingEnabled = (current?.branding?.get("enabled") as? Boolean) == true
                 languages = runCatching { api.getCountryLanguages(selectedCountry).data }.getOrDefault(emptyList())
                 message = null
             } catch (t: Throwable) {
@@ -118,6 +121,7 @@ fun SeriesControlScreen(projectId: String, onBack: () -> Unit) {
                     ApplySeriesTemplateRequest(templateId, title.ifBlank { null }, selectedCountry, sourceLanguage, targetLanguages, context?.dialect)
                 ).data
                 selectedTemplate = templateId
+                brandingEnabled = (context?.branding?.get("enabled") as? Boolean) == true
                 message = "تم تطبيق القالب مع الحفاظ على البيانات الموجودة"
             } catch (t: Throwable) {
                 message = t.message ?: "فشل تطبيق القالب"
@@ -135,6 +139,14 @@ fun SeriesControlScreen(projectId: String, onBack: () -> Unit) {
                 if (gagText.isNotBlank()) gags += mapOf("text" to gagText.trim(), "source" to "android")
                 val threads = current.openThreads.toMutableList()
                 if (threadText.isNotBlank()) threads += mapOf("text" to threadText.trim(), "source" to "android", "status" to "open")
+                val previousBranding = current.branding
+                val branding = previousBranding.toMutableMap().apply {
+                    put("enabled", brandingEnabled)
+                    put("applyToNewEpisodes", true)
+                    put("brand", get("brand") ?: "afham-wadhak")
+                    put("watermarkOpacity", get("watermarkOpacity") ?: 0.82)
+                    put("version", ((get("version") as? Number)?.toInt() ?: 1) + if (brandingEnabled != ((previousBranding["enabled"] as? Boolean) == true)) 1 else 0)
+                }
                 val updated = NetworkClient.apiService.patchSeriesContext(projectId, com.example.data.remote.SeriesContextPatchRequest(mapOf(
                     "title" to title.ifBlank { current.title },
                     "countryId" to selectedCountry,
@@ -154,10 +166,11 @@ fun SeriesControlScreen(projectId: String, onBack: () -> Unit) {
                     "importantProps" to current.importantProps,
                     "timeline" to current.timeline,
                     "rules" to current.rules,
+                    "branding" to branding,
                 ))).data
                 context = updated
                 factText = ""; gagText = ""; threadText = ""
-                message = "تم حفظ الإعدادات والذاكرة دون حذف السجل السابق"
+                message = if (brandingEnabled) "تم تشغيل الهوية؛ ستُطبّق تلقائيًا على الحلقات الجديدة" else "تم إيقاف الهوية للحلقات الجديدة"
             } catch (t: Throwable) {
                 message = t.message ?: "فشل حفظ الاستمرارية"
             }
@@ -174,6 +187,22 @@ fun SeriesControlScreen(projectId: String, onBack: () -> Unit) {
                 Text("Series ID: $projectId", color = TextMuted)
                 context?.let { Text("الحلقة التالية: ${it.nextEpisodeNumber} · ${it.genre}", style = MaterialTheme.typography.titleMedium, color = PrimaryCyan) }
                 message?.let { Text(it, color = PrimaryCyan) }
+            }
+
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = SurfaceBlue), modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("الهوية البصرية", style = MaterialTheme.typography.titleLarge, color = TextLight)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Column(Modifier.weight(1f)) {
+                                Text("افهم واضحك", color = TextLight)
+                                Text("عند التشغيل تُطبّق تلقائيًا على الحلقات الجديدة. الحلقات المثبتة تحتفظ بنسخة هويتها.", color = TextMuted)
+                            }
+                            Switch(checked = brandingEnabled, onCheckedChange = { brandingEnabled = it })
+                        }
+                        Text(if (brandingEnabled) "✓ الهوية مفعّلة" else "الهوية متوقفة", color = if (brandingEnabled) PrimaryCyan else TextMuted)
+                    }
+                }
             }
 
             item {
@@ -236,7 +265,7 @@ fun SeriesControlScreen(projectId: String, onBack: () -> Unit) {
             item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button(onClick = { saveContext() }, Modifier.weight(1f)) { Text("حفظ") }; OutlinedButton(onClick = { refresh() }, Modifier.weight(1f)) { Text("تحديث") } } }
             item { Text("السجل التاريخي (${snapshots.size})", style = MaterialTheme.typography.titleLarge, color = PrimaryCyan) }
             items(snapshots.take(50)) { snapshot ->
-                Card(colors = CardDefaults.cardColors(containerColor = SurfaceBlue), modifier = Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp)) { Text("الحلقة ${snapshot["episodeNumber"] ?: "?"}", color = TextLight); Text("Episode ID: ${snapshot["episodeId"] ?: "?"}", color = TextMuted); Text("تم تثبيت نسخ الشخصيات والمواقع لهذه الحلقة", color = TextMuted) } }
+                Card(colors = CardDefaults.cardColors(containerColor = SurfaceBlue), modifier = Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp)) { Text("الحلقة ${snapshot["episodeNumber"] ?: "?"}", color = TextLight); Text("Episode ID: ${snapshot["episodeId"] ?: "?"}", color = TextMuted); Text("تم تثبيت نسخ الشخصيات والمواقع والهوية لهذه الحلقة", color = TextMuted) } }
             }
         }
     }

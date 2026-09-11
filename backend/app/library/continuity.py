@@ -4,11 +4,24 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
 
-CONTEXT_VERSION = 2
+CONTEXT_VERSION = 3
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def default_branding() -> dict[str, Any]:
+    return {
+        "enabled": False,
+        "applyToNewEpisodes": True,
+        "brand": "afham-wadhak",
+        "introAssetId": None,
+        "outroAssetId": None,
+        "watermarkAssetId": None,
+        "watermarkOpacity": 0.82,
+        "version": 1,
+    }
 
 
 def new_series_context(*, series_id: str, title: str, template_id: str, genre: str, character_ids: list[str] | None = None, location_ids: list[str] | None = None, country_id: str = "egypt", library_id: str | None = None, source_language: str = "ar", target_languages: list[str] | None = None, dialect: str | None = None) -> dict[str, Any]:
@@ -23,7 +36,7 @@ def new_series_context(*, series_id: str, title: str, template_id: str, genre: s
         "glossary": {}, "translationVersions": {},
         "characters": list(character_ids or []), "locations": list(location_ids or []),
         "relationships": [], "facts": [], "runningGags": [], "openThreads": [], "importantProps": [],
-        "timeline": [], "episodeSnapshots": [],
+        "timeline": [], "episodeSnapshots": [], "branding": default_branding(),
         "rules": {"preserveCharacterIdentity": True, "preserveLocationIdentity": True, "preserveEstablishedFacts": True, "neverOverwriteUserChanges": True},
     }
 
@@ -36,7 +49,7 @@ def append_episode_memory(context: dict[str, Any], episode: dict[str, Any]) -> d
 
 
 def merge_series_defaults(context: dict[str, Any], *, character_ids: list[str] | None = None, location_ids: list[str] | None = None, rules: dict[str, Any] | None = None) -> dict[str, Any]:
-    result = deepcopy(context); result.setdefault("characters", []); result.setdefault("locations", []); result.setdefault("rules", {})
+    result = deepcopy(context); result.setdefault("characters", []); result.setdefault("locations", []); result.setdefault("rules", {}); result.setdefault("branding", default_branding())
     for value in character_ids or []:
         if value not in result["characters"]: result["characters"].append(value)
     for value in location_ids or []:
@@ -48,4 +61,8 @@ def merge_series_defaults(context: dict[str, Any], *, character_ids: list[str] |
 def build_episode_context(context: dict[str, Any], episode_number: int) -> dict[str, Any]:
     snapshot = deepcopy(context); snapshot["episodeNumber"] = episode_number; snapshot["workingSnapshotAt"] = _now()
     snapshot["sourceContextVersion"] = context.get("contextVersion", CONTEXT_VERSION); snapshot["sourceUpdatedAt"] = context.get("updatedAt")
+    branding = deepcopy(context.get("branding") or default_branding())
+    branding["version"] = int(branding.get("version", 1))
+    snapshot["branding"] = branding
+    snapshot["brandingSnapshot"] = deepcopy(branding)
     return snapshot
