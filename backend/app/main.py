@@ -35,10 +35,14 @@ from .infrastructure.sqlite import SQLiteJobRepository, SQLiteProjectRepository,
 from .orchestrator.job_service import JobService
 from .orchestrator.runtime import OrchestratorRuntime
 from .orchestrator.worker_loop import WorkerLoop
+from .providers.configuration import validate_openai_configuration
 from .scheduling.loop import SchedulerLoop
 from .scheduling.persistent import PersistentScheduler, SQLiteScheduleRepository
 
 DATABASE_PATH = os.getenv("AICF_DATABASE_PATH", "./data/factory.db")
+# Fail during startup when credentials are enabled but provider model IDs are absent.
+# This prevents a production deployment from silently guessing model names.
+validate_openai_configuration()
 repositories = SQLiteRepositories(DATABASE_PATH)
 job_repository = SQLiteJobRepository(repositories.store)
 project_repository = SQLiteProjectRepository(repositories.store)
