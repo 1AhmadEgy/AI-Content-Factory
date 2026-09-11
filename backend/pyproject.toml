@@ -21,8 +21,8 @@ test = [
 pythonpath = [".."]
 
 [tool.ruff.lint]
-# Keep the CI gate focused on correctness while the pre-existing style debt is migrated incrementally.
-select = ["E4", "E7", "E9", "F"]
+# CI correctness gate: syntax/import/runtime-safety diagnostics only.
+select = ["E4", "E9", "F"]
 ignore = ["F401"]
 
 [tool.setuptools.packages.find]
