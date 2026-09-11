@@ -3,8 +3,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from .builtin import LocalMediaModelAdapter, LocalModelAdapter
-from .contracts import ModelAdapter, ModelCapability
+from .builtin import GeminiModelAdapter, LocalMediaModelAdapter, LocalModelAdapter, OpenAICompatibleCloudAdapter
+from .contracts import ModelAdapter
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,25 +55,43 @@ def _capabilities(raw: str, default: frozenset[str]) -> frozenset[str]:
 
 
 def default_provider_registry() -> ModelRegistry:
-    """Build the registry exclusively from explicitly configured real provider endpoints."""
+    """Build the registry exclusively from explicitly configured real provider endpoints/keys."""
     registry = ModelRegistry()
 
     text_endpoint = os.getenv("AICF_TEXT_PROVIDER_ENDPOINT", "").strip()
     text_model = os.getenv("AICF_TEXT_PROVIDER_MODEL", "").strip()
-    if text_endpoint and text_model:
+    if text_endpoint and text_model and text_model != "your-text-model":
         registry.register(
             RegisteredModel(
                 id=text_model,
                 provider=os.getenv("AICF_TEXT_PROVIDER_NAME", "local-text"),
-                adapter=LocalModelAdapter(
-                    text_endpoint,
-                    _capabilities(
-                        os.getenv("AICF_TEXT_PROVIDER_CAPABILITIES", "story,script,scene,shot"),
-                        frozenset({"story", "script", "scene", "shot"}),
-                    ),
-                    timeout_seconds=int(os.getenv("AICF_TEXT_PROVIDER_TIMEOUT_SECONDS", "120")),
-                ),
+                adapter=LocalModelAdapter(text_endpoint, _capabilities(os.getenv("AICF_TEXT_PROVIDER_CAPABILITIES", "story,script,scene,shot"), frozenset({"story", "script", "scene", "shot"})), timeout_seconds=int(os.getenv("AICF_TEXT_PROVIDER_TIMEOUT_SECONDS", "120"))),
                 priority=int(os.getenv("AICF_TEXT_PROVIDER_PRIORITY", "50")),
+            )
+        )
+
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+    gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+    if gemini_key and gemini_model:
+        registry.register(
+            RegisteredModel(
+                id=f"gemini:{gemini_model}",
+                provider="gemini",
+                adapter=GeminiModelAdapter(gemini_key, gemini_model, _capabilities(os.getenv("GEMINI_CAPABILITIES", "story,script,scene,shot,character,world,text"), frozenset({"story", "script", "scene", "shot", "character", "world", "text"})), timeout_seconds=int(os.getenv("GEMINI_TIMEOUT_SECONDS", "120"))),
+                priority=int(os.getenv("GEMINI_PRIORITY", "40")),
+            )
+        )
+
+    hf_token = os.getenv("HF_TOKEN", "").strip()
+    hf_model = os.getenv("HF_MODEL", "").strip()
+    hf_endpoint = os.getenv("HF_ENDPOINT", "https://router.huggingface.co").strip()
+    if hf_token and hf_model and hf_endpoint:
+        registry.register(
+            RegisteredModel(
+                id=f"huggingface:{hf_model}",
+                provider="huggingface",
+                adapter=OpenAICompatibleCloudAdapter(hf_endpoint, hf_token, _capabilities(os.getenv("HF_CAPABILITIES", "story,script,scene,shot,character,world,text"), frozenset({"story", "script", "scene", "shot", "character", "world", "text"})), timeout_seconds=int(os.getenv("HF_TIMEOUT_SECONDS", "120"))),
+                priority=int(os.getenv("HF_PRIORITY", "60")),
             )
         )
 
@@ -84,14 +102,7 @@ def default_provider_registry() -> ModelRegistry:
             RegisteredModel(
                 id=media_model,
                 provider=os.getenv("AICF_MEDIA_PROVIDER_NAME", "local-media"),
-                adapter=LocalMediaModelAdapter(
-                    media_endpoint,
-                    _capabilities(
-                        os.getenv("AICF_MEDIA_PROVIDER_CAPABILITIES", "image,video,tts,music,sfx,lipsync,upscale,interpolation"),
-                        frozenset({"image", "video", "tts", "music", "sfx", "lipsync", "upscale", "interpolation"}),
-                    ),
-                    timeout_seconds=int(os.getenv("AICF_MEDIA_PROVIDER_TIMEOUT_SECONDS", "300")),
-                ),
+                adapter=LocalMediaModelAdapter(media_endpoint, _capabilities(os.getenv("AICF_MEDIA_PROVIDER_CAPABILITIES", "image,video,tts,music,sfx,lipsync,upscale,interpolation"), frozenset({"image", "video", "tts", "music", "sfx", "lipsync", "upscale", "interpolation"})), timeout_seconds=int(os.getenv("AICF_MEDIA_PROVIDER_TIMEOUT_SECONDS", "300"))),
                 priority=int(os.getenv("AICF_MEDIA_PROVIDER_PRIORITY", "50")),
             )
         )
