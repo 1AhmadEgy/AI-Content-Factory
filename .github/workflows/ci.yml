@@ -64,9 +64,12 @@ jobs:
           pip install -r requirements.txt
           pip install ruff
 
+      - name: Enforce real-only production policy
+        run: python scripts/production_guard.py .
+
       - name: Validate Python syntax
         run: |
-          python -m compileall -q backend/app backend/tests
+          python -m compileall -q backend/app backend/tests scripts
 
       - name: Run Ruff lint
         run: |
@@ -76,7 +79,7 @@ jobs:
       - name: Run backend tests
         run: |
           cd backend
-          PYTHONPATH=. pytest tests/ -v
+          PYTHONPATH=..:. pytest tests/ -v
 
       - name: Upload generated assets
         uses: actions/upload-artifact@v4
