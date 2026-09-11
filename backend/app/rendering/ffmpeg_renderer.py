@@ -164,42 +164,58 @@ class FfmpegRenderer(Renderer):
             return RenderResult(True, output_path=output)
 
         args = [self.options.ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-y", "-i", source]
-        extra_inputs: list[tuple[str, bool]] = []
-        for path in (intro, outro):
-            if path:
-                args += ["-i", path]
-                extra_inputs.append((path, self._probe_has_audio(path)))
+        extra_inputs: list[tuple[str, bool, str]] = []
+        if intro:
+            args += ["-i", intro]
+            extra_inputs.append((intro, self._probe_has_audio(intro), "intro"))
+        if outro:
+            args += ["-i", outro]
+            extra_inputs.append((outro, self._probe_has_audio(outro), "outro"))
         if watermark:
             args += ["-i", watermark]
         filters: list[str] = []
         filters.append(f"[0:v]scale={profile.width}:{profile.height}:force_original_aspect_ratio=decrease,pad={profile.width}:{profile.height}:(ow-iw)/2:(oh-ih)/2:color=black,format=yuv420p[corev]")
-        current_v = "corev"
-        current_a = "0:a"
         has_core_audio = self._probe_has_audio(source)
+        core_audio = "0:a"
         if not has_core_audio:
             filters.append("anullsrc=channel_layout=stereo:sample_rate=48000:d=3600[corea]")
-            current_a = "corea"
-        segment_v = [current_v]
-        segment_a = [current_a]
+            core_audio = "corea"
+
+        segment_v: list[str] = []
+        segment_a: list[str] = []
         input_index = 1
-        for path, has_audio in extra_inputs:
+        for path, has_audio, _kind in extra_inputs:
             label_v = f"brandv{input_index}"
             filters.append(f"[{input_index}:v]scale={profile.width}:{profile.height}:force_original_aspect_ratio=decrease,pad={profile.width}:{profile.height}:(ow-iw)/2:(oh-ih)/2:color=black,format=yuv420p[{label_v}]")
-            segment_v.append(label_v)
+            label_a = f"branda{input_index}"
             if has_audio:
-                label_a = f"branda{input_index}"
                 filters.append(f"[{input_index}:a]aresample=48000,asetpts=PTS-STARTPTS[{label_a}]")
             else:
-                label_a = f"brandas{input_index}"
                 filters.append(f"anullsrc=channel_layout=stereo:sample_rate=48000:d=3600[{label_a}]")
+            segment_v.append(label_v)
             segment_a.append(label_a)
             input_index += 1
-        if len(segment_v) > 1:
-            concat_inputs = "".join(f"[{v}][{a}]" for v, a in zip(segment_v, segment_a))
-            filters.append(f"{concat_inputs}concat=n={len(segment_v)}:v=1:a=1[brandedv][brandeda]")
+
+        ordered_v: list[str] = []
+        ordered_a: list[str] = []
+        if intro:
+            intro_pos = next(i for i, item in enumerate(extra_inputs) if item[2] == "intro")
+            ordered_v.append(segment_v[intro_pos])
+            ordered_a.append(segment_a[intro_pos])
+        ordered_v.append("corev")
+        ordered_a.append(core_audio)
+        if outro:
+            outro_pos = next(i for i, item in enumerate(extra_inputs) if item[2] == "outro")
+            ordered_v.append(segment_v[outro_pos])
+            ordered_a.append(segment_a[outro_pos])
+
+        if len(ordered_v) > 1:
+            concat_inputs = "".join(f"[{v}][{a}]" for v, a in zip(ordered_v, ordered_a))
+            filters.append(f"{concat_inputs}concat=n={len(ordered_v)}:v=1:a=1[brandedv][brandeda]")
             current_v, current_a = "brandedv", "brandeda"
         else:
-            current_v, current_a = segment_v[0], segment_a[0]
+            current_v, current_a = ordered_v[0], ordered_a[0]
+
         if watermark:
             opacity = min(1.0, max(0.0, float(branding.get("watermarkOpacity", 0.82))))
             filters.append(f"[{input_index}:v]format=rgba,colorchannelmixer=aa={opacity:g}[wm]")
