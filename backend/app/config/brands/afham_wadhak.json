@@ -1,0 +1,65 @@
+{
+  "id": "afham_wadhak",
+  "name": "افهم واضحك",
+  "latin_name": "AFHAM WADHAK",
+  "tagline": "وخد المفيد.",
+  "enabled_by_default": false,
+  "colors": {
+    "primary": "#FFD21F",
+    "background": "#111111",
+    "foreground": "#FFFFFF",
+    "accent": "#FF7A00"
+  },
+  "fonts": {
+    "arabic_headings": "Cairo ExtraBold",
+    "arabic_body": "Cairo Medium",
+    "arabic_emphasis": "Cairo Bold",
+    "latin": "Poppins"
+  },
+  "canvas": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "aspect_ratio": "9:16"
+  },
+  "intro": {
+    "enabled": true,
+    "duration_seconds": 2.5,
+    "path": "assets/branding/afham_wadhak/intro.mp4"
+  },
+  "outro": {
+    "enabled": true,
+    "duration_seconds": 2.5,
+    "path": "assets/branding/afham_wadhak/outro.mp4"
+  },
+  "watermark": {
+    "enabled": true,
+    "opacity": 0.7,
+    "position": "top_right",
+    "path": "assets/branding/afham_wadhak/watermark.png"
+  },
+  "subtitles": {
+    "enabled": true,
+    "style": "bold_large_shadow",
+    "highlight_color": "#FFD21F",
+    "font": "Cairo Bold"
+  },
+  "thumbnail": {
+    "enabled": true,
+    "path": "assets/branding/afham_wadhak/thumbnail_template.png"
+  },
+  "audio": {
+    "jingle_path": "assets/branding/afham_wadhak/jingle.mp3",
+    "voice_line": "افهم واضحك… وخد المفيد."
+  },
+  "assets": {
+    "logo": "assets/branding/afham_wadhak/logo.svg",
+    "logo_transparent": "assets/branding/afham_wadhak/logo_transparent.png",
+    "avatar": "assets/branding/afham_wadhak/avatar.png"
+  },
+  "publishing": {
+    "platforms": ["youtube", "tiktok", "instagram", "facebook", "snapchat"],
+    "website": "https://afhamwadhak.pages.dev",
+    "email": "afhamwadhak@gmail.com"
+  }
+}
