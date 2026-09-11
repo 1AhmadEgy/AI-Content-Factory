@@ -10,11 +10,13 @@ import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 
 object NetworkClient {
+    private const val NOT_CONFIGURED = "__NOT_CONFIGURED__"
+
     private val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
 
     private fun normalizedBaseUrl(): String {
         val configured = BuildConfig.AICF_API_BASE_URL.trim()
-        check(configured.isNotBlank()) {
+        check(configured.isNotBlank() && configured != NOT_CONFIGURED) {
             "AICF_API_BASE_URL is not configured. Configure the backend URL for this build."
         }
         return if (configured.endsWith('/')) configured else "$configured/"
@@ -23,7 +25,9 @@ object NetworkClient {
     private val authInterceptor = Interceptor { chain ->
         val builder = chain.request().newBuilder().header("Accept", "application/json")
         val token = BuildConfig.AICF_API_TOKEN.trim()
-        if (token.isNotBlank()) builder.header("Authorization", "Bearer $token")
+        if (token.isNotBlank() && token != NOT_CONFIGURED) {
+            builder.header("Authorization", "Bearer $token")
+        }
         chain.proceed(builder.build())
     }
 
