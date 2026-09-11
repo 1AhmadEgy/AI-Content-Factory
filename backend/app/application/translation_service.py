@@ -20,15 +20,41 @@ class TranslationService:
     def __init__(self, provider: Callable[[TranslationRequest], str] | None = None):
         self._provider = provider
 
-    def translate(self, request: TranslationRequest, *, manual_text: str | None = None, provider: str | None = None, model: str | None = None, version: int = 1) -> TranslationResult:
+    def translate(
+        self,
+        request: TranslationRequest,
+        *,
+        manual_text: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        version: int = 1,
+    ) -> TranslationResult:
         if not request.text.strip():
             raise ValueError("TRANSLATION_SOURCE_TEXT_EMPTY")
         if version < 1:
             raise ValueError("TRANSLATION_VERSION_INVALID")
+
+        provenance = {
+            "sourcePreserved": True,
+            "sourceVersion": request.source_version,
+            "sourceId": request.source_id,
+            "contentType": request.content_type,
+            "sourceLanguage": request.source_language,
+            "targetLanguage": request.target_language,
+            "translationVersion": version,
+        }
+
         if request.source_language == request.target_language:
             if manual_text is not None and manual_text != request.text:
                 raise ValueError("IDENTITY_TRANSLATION_MUST_MATCH_SOURCE")
-            return TranslationResult.create(request, request.text, provider="identity", model=model, version=version, metadata={"sourcePreserved": True})
+            return TranslationResult.create(
+                request,
+                request.text,
+                provider="identity",
+                model=model,
+                version=version,
+                metadata=provenance,
+            )
 
         if manual_text is not None:
             if not manual_text.strip():
@@ -44,7 +70,15 @@ class TranslationService:
             raise TranslationProviderUnavailable(_TRANSLATION_CAPABILITY)
 
         translated = self._validate_output(request, translated)
-        return TranslationResult.create(request, translated, provider=used_provider, model=model, version=version, manual=is_manual, metadata={"sourcePreserved": True, "sourceVersion": request.source_version, "sourceId": request.source_id, "contentType": request.content_type, "targetLanguage": request.target_language})
+        return TranslationResult.create(
+            request,
+            translated,
+            provider=used_provider,
+            model=model,
+            version=version,
+            manual=is_manual,
+            metadata=provenance,
+        )
 
     @staticmethod
     def _validate_output(request: TranslationRequest, translated: str) -> str:
