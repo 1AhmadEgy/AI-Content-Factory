@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import signal
 import subprocess
@@ -49,14 +50,24 @@ class FfmpegRenderer(Renderer):
 
     def validate(self, timeline: Timeline, profile: RenderProfile) -> list[str]:
         errors = timeline.validate()
+        duration_us = timeline.duration_us
+        fps = profile.fps
+        if duration_us <= 0:
+            errors.append("TIMELINE_DURATION_INVALID")
+        if not math.isfinite(float(duration_us)):
+            errors.append("TIMELINE_DURATION_NONFINITE")
+        if profile.width <= 0 or profile.height <= 0:
+            errors.append("RENDER_DIMENSIONS_INVALID")
+        if not math.isfinite(float(fps)) or fps <= 0:
+            errors.append("RENDER_FPS_INVALID")
+        if not math.isfinite(float(self.options.timeout_seconds)) or self.options.timeout_seconds <= 0:
+            errors.append("RENDER_TIMEOUT_INVALID")
+        if not math.isfinite(float(self.options.cancel_grace_seconds)) or self.options.cancel_grace_seconds < 0:
+            errors.append("RENDER_CANCEL_GRACE_INVALID")
         for track in timeline.tracks:
             for clip in track.clips:
                 if clip.asset_id not in self.assets:
                     errors.append(f"ASSET_NOT_FOUND:{clip.asset_id}")
-        if profile.width <= 0 or profile.height <= 0:
-            errors.append("RENDER_DIMENSIONS_INVALID")
-        if profile.fps <= 0:
-            errors.append("RENDER_FPS_INVALID")
         if not any(t.type == TrackType.VIDEO and t.clips for t in timeline.tracks):
             errors.append("TIMELINE_HAS_NO_VIDEO")
         return errors
@@ -94,11 +105,6 @@ class FfmpegRenderer(Renderer):
             video_labels.append(label)
 
         if video_labels:
-            # Timeline clips are positioned in absolute time. A chained overlay
-            # of finite clips is incorrect because the first main input ends and
-            # prevents later clips from becoming visible. Build a finite black
-            # canvas for the complete timeline and overlay each clip at its exact
-            # interval; z_index controls stacking order for overlaps.
             base = "vbase"
             duration = timeline.duration_us / 1_000_000
             filter_parts.append(f"color=c=black:s={profile.width}x{profile.height}:r={profile.fps:g}:d={duration:.6f}[{base}]")
@@ -153,8 +159,11 @@ class FfmpegRenderer(Renderer):
         staging.unlink(missing_ok=True)
         try:
             args = self._build_args(timeline, profile, str(staging))
-            proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
             with self._process_lock:
+                existing = self._processes.get(timeline.id)
+                if existing is not None and existing.poll() is None:
+                    return RenderResult(False, error="RENDER_ALREADY_RUNNING")
+                proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
                 self._processes[timeline.id] = proc
             try:
                 _, stderr = proc.communicate(timeout=max(1, self.options.timeout_seconds))
@@ -170,7 +179,9 @@ class FfmpegRenderer(Renderer):
             return RenderResult(False, error=str(exc))
         finally:
             with self._process_lock:
-                self._processes.pop(timeline.id, None)
+                current = self._processes.get(timeline.id)
+                if current is proc if "proc" in locals() else False:
+                    self._processes.pop(timeline.id, None)
             staging.unlink(missing_ok=True)
 
     def cancel(self, render_id: str) -> bool:
@@ -194,7 +205,6 @@ class FfmpegRenderer(Renderer):
         return True
 
     def cancel_all(self) -> int:
-        """Stop every active FFmpeg process and return the number signalled."""
         with self._process_lock:
             render_ids = list(self._processes)
         cancelled = 0
@@ -204,7 +214,6 @@ class FfmpegRenderer(Renderer):
         return cancelled
 
     def shutdown(self) -> None:
-        """Release renderer-owned subprocesses without exposing internal process state."""
         self.cancel_all()
 
     def probe(self, path: str) -> dict[str, object]:
