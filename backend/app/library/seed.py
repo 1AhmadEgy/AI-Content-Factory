@@ -53,17 +53,27 @@ def ensure_country_library_projects(repositories) -> dict[str, int]:
 
 
 def _seed_reusable_records(repositories, project_id: str, characters, locations) -> dict[str, int]:
+    """Seed reusable records with bounded database round-trips.
+
+    The old implementation performed one SELECT for every catalog item on every
+    startup. Library catalogs are static, so load each project's IDs once and
+    only issue INSERTs for genuinely missing records.
+    """
     character_repo = SQLiteCharacterRepository(repositories.store)
     location_repo = SQLiteLocationRepository(repositories.store)
+    existing_character_ids = {item.id for item in character_repo.list(project_id=project_id, limit=500)}
+    existing_location_ids = {item.id for item in location_repo.list(project_id=project_id, limit=500)}
     added_characters = 0
     added_locations = 0
     for item in characters:
-        if item.project_id == project_id and character_repo.get(item.id) is None:
+        if item.project_id == project_id and item.id not in existing_character_ids:
             character_repo.create(item)
+            existing_character_ids.add(item.id)
             added_characters += 1
     for item in locations:
-        if item.project_id == project_id and location_repo.get(item.id) is None:
+        if item.project_id == project_id and item.id not in existing_location_ids:
             location_repo.create(item)
+            existing_location_ids.add(item.id)
             added_locations += 1
     return {"characters": added_characters, "locations": added_locations}
 
