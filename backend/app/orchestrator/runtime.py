@@ -57,51 +57,16 @@ class OrchestratorRuntime:
 
         provider_worker = ProviderGenerationWorker(self.providers, self.storage, self.assets, self.provider_runs)
         provider_worker.initialize()
-        # Keep this list aligned with the actual job types that the provider registry
-        # can execute. Unsupported media types must fail as unavailable rather than
-        # being advertised by a generic production worker.
-        self.workers.register(
-            provider_worker,
-            capabilities={"STORY", "CHARACTER", "WORLD", "SCENE", "SHOT", "IMAGE", "TTS"},
-            worker_id="provider-generation",
-        )
+        self.workers.register(provider_worker, capabilities={"STORY", "CHARACTER", "WORLD", "SCENE", "SHOT", "IMAGE", "TTS"}, worker_id="provider-generation")
 
-        qc = QualityControlWorker(self.storage, self.assets)
-        qc.initialize()
-        self.workers.register(qc, capabilities={"QC"}, worker_id="quality-control")
-
-        best_take = BestTakeWorker(self.storage, self.assets)
-        best_take.initialize()
-        self.workers.register(best_take, capabilities={"BEST_TAKE"}, worker_id="best-take")
-
-        timeline = TimelineWorker(self.storage, self.assets)
-        timeline.initialize()
-        self.workers.register(timeline, capabilities={"TIMELINE"}, worker_id="timeline")
-
-        render = RenderWorker(
-            self.storage,
-            self.assets,
-            ffmpeg_binary=os.getenv("AICF_FFMPEG_BIN", "ffmpeg"),
-            ffprobe_binary=os.getenv("AICF_FFPROBE_BIN", "ffprobe"),
-        )
-        render.initialize()
-        self.workers.register(render, capabilities={"RENDER"}, worker_id="render")
-
-        media = MediaDocumentWorker(self.storage, self.assets)
-        media.initialize()
-        self.workers.register(media, capabilities={"SUBTITLE", "THUMBNAIL", "METADATA"}, worker_id="media-document")
-
-        language_pack = LanguagePackWorker(self.storage, self.assets)
-        language_pack.initialize()
-        self.workers.register(language_pack, capabilities={"LANGUAGE_PACK"}, worker_id="language-pack")
-
-        publisher = PublishWorker(self.storage, self.assets)
-        publisher.initialize()
-        self.workers.register(publisher, capabilities={"PUBLISH"}, worker_id="publish")
-
-        repurpose = RepurposeWorker(self.storage, self.assets)
-        repurpose.initialize()
-        self.workers.register(repurpose, capabilities={"REPURPOSE"}, worker_id="repurpose")
+        qc = QualityControlWorker(self.storage, self.assets); qc.initialize(); self.workers.register(qc, capabilities={"QC"}, worker_id="quality-control")
+        best_take = BestTakeWorker(self.storage, self.assets); best_take.initialize(); self.workers.register(best_take, capabilities={"BEST_TAKE"}, worker_id="best-take")
+        timeline = TimelineWorker(self.storage, self.assets); timeline.initialize(); self.workers.register(timeline, capabilities={"TIMELINE"}, worker_id="timeline")
+        render = RenderWorker(self.storage, self.assets, ffmpeg_binary=os.getenv("AICF_FFMPEG_BIN", "ffmpeg"), ffprobe_binary=os.getenv("AICF_FFPROBE_BIN", "ffprobe")); render.initialize(); self.workers.register(render, capabilities={"RENDER"}, worker_id="render")
+        media = MediaDocumentWorker(self.storage, self.assets); media.initialize(); self.workers.register(media, capabilities={"SUBTITLE", "THUMBNAIL", "METADATA"}, worker_id="media-document")
+        language_pack = LanguagePackWorker(self.storage, self.assets); language_pack.initialize(); self.workers.register(language_pack, capabilities={"LANGUAGE_PACK"}, worker_id="language-pack")
+        publisher = PublishWorker(self.storage, self.assets); publisher.initialize(); self.workers.register(publisher, capabilities={"PUBLISH"}, worker_id="publish")
+        repurpose = RepurposeWorker(self.storage, self.assets); repurpose.initialize(); self.workers.register(repurpose, capabilities={"REPURPOSE"}, worker_id="repurpose")
 
         self.story_engine = AIStoryEngine(self.providers)
         self.script_engine = AIScriptEngine(self.providers)
@@ -109,14 +74,7 @@ class OrchestratorRuntime:
         self.job_service = JobService(repositories.jobs)
         self.pipeline = ProductionPipelineOrchestrator(self.job_service, self.queue.enqueue)
         self.completion_gate = CompletionGate(self.assets, self.storage)
-        self.executor = JobExecutor(
-            repositories.jobs,
-            self.queue,
-            self.workers,
-            self.events.append,
-            self.pipeline.on_completed,
-            completion_gate=self.completion_gate,
-        )
+        self.executor = JobExecutor(repositories.jobs, self.queue, self.workers, self.events.append, self.pipeline.on_completed, completion_gate=self.completion_gate)
         self.country_library_seed = ensure_country_library_projects(repositories)
         self.library_seed = ensure_egypt_library(repositories)
         self.libya_library_seed = ensure_libya_library(repositories)
@@ -135,8 +93,12 @@ class OrchestratorRuntime:
     def plan_content(self, brief: ContentBrief, model_id: str | None = None) -> StoryPlan:
         self._resolve_library_scope(brief)
         project_id = brief.project_id
-        characters = tuple(c for cid in brief.character_ids if (c := self.characters.get(cid)) is not None and (project_id is None or c.project_id == brief.library_id))
-        locations = tuple(l for lid in brief.location_ids if (l := self.locations.get(lid)) is not None and (project_id is None or l.project_id == brief.library_id))
+        characters = tuple(c for cid in brief.character_ids if (c := self.characters.get(cid)) is not None and (project_id is None or c.project_id == project_id))
+        locations = tuple(l for lid in brief.location_ids if (l := self.locations.get(lid)) is not None and (project_id is None or l.project_id == project_id))
+        if brief.character_ids and not characters:
+            raise ValueError("CHARACTERS_NOT_FOUND_IN_PROJECT")
+        if brief.location_ids and not locations:
+            raise ValueError("LOCATIONS_NOT_FOUND_IN_PROJECT")
         story = self.story_engine.generate(brief, model_id, characters, locations)
         script = self.script_engine.generate(brief, story, model_id)
         return self.scene_planner.plan(brief, script, model_id)
