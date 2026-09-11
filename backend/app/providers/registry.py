@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
-from .builtin import MockModelAdapter
 from .contracts import ModelAdapter
+from .openai_adapter import OpenAIModelAdapter
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,7 +17,7 @@ class RegisteredModel:
 
 
 class ModelRegistry:
-    """Provider-agnostic model registry with deterministic routing."""
+    """Provider-agnostic registry. Only configured, real providers are routable."""
 
     def __init__(self) -> None:
         self._models: dict[str, RegisteredModel] = {}
@@ -49,12 +50,26 @@ class ModelRegistry:
 
 
 def default_provider_registry() -> ModelRegistry:
-    """Return a usable zero-cost registry for Mock Mode and local development."""
+    """Build the production registry from explicit environment configuration."""
     registry = ModelRegistry()
+    if not os.getenv("OPENAI_API_KEY"):
+        return registry
     registry.register(RegisteredModel(
-        id="mock-deterministic",
-        provider="mock",
-        adapter=MockModelAdapter(),
+        id=os.getenv("AICF_TEXT_MODEL", "gpt-5.6-luna"),
+        provider="openai",
+        adapter=OpenAIModelAdapter(os.getenv("AICF_TEXT_MODEL", "gpt-5.6-luna"), "TEXT"),
+        priority=10,
+    ))
+    registry.register(RegisteredModel(
+        id=os.getenv("AICF_IMAGE_MODEL", "gpt-image-2"),
+        provider="openai",
+        adapter=OpenAIModelAdapter(os.getenv("AICF_IMAGE_MODEL", "gpt-image-2"), "IMAGE"),
+        priority=10,
+    ))
+    registry.register(RegisteredModel(
+        id=os.getenv("AICF_TTS_MODEL", "gpt-4o-mini-tts"),
+        provider="openai",
+        adapter=OpenAIModelAdapter(os.getenv("AICF_TTS_MODEL", "gpt-4o-mini-tts"), "TTS"),
         priority=10,
     ))
     return registry
