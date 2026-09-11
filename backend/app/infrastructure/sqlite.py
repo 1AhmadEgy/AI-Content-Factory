@@ -48,8 +48,7 @@ class SQLiteStore:
 
     def initialize(self) -> None:
         with self._lock, self._connection:
-            self._connection.executescript(
-                """
+            self._connection.executescript("""
                 CREATE TABLE IF NOT EXISTS projects (
                     id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
                     settings_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -85,8 +84,7 @@ class SQLiteStore:
                     key TEXT PRIMARY KEY, operation TEXT NOT NULL, request_fingerprint TEXT NOT NULL,
                     resource_id TEXT NOT NULL, created_at TEXT NOT NULL
                 );
-                """
-            )
+            """)
             project_columns = {row["name"] for row in self._connection.execute("PRAGMA table_info(projects)").fetchall()}
             if "description" not in project_columns:
                 self._connection.execute("ALTER TABLE projects ADD COLUMN description TEXT NOT NULL DEFAULT ''")
@@ -206,7 +204,7 @@ class SQLiteJobRepository(JobRepository):
         self.store = store
 
     def _insert_job(self, connection: sqlite3.Connection, job: GenerationJob) -> None:
-        connection.execute("INSERT INTO jobs(id,parent_job_id,project_id,type,target_type,target_id,priority,status,progress,attempt,max_attempts,provider,model,input_json,output_json,error_code,error_message,created_at,started_at,completed_at,updated_at,lease_owner,lease_expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (job.id, job.parent_job_id, job.project_id, job.type.value, job.target_type, job.target_id, job.priority, job.status.value, job.progress, job.attempt, job.max_attempts, job.provider, job.model, _json(_job_input_to_dict(job.input)), _json(_job_output_to_dict(job.output)) if job.output else None, job.error_code, job.error_message, _dt(job.created_at), _dt(job.started_at), _dt(job.completed_at), _dt(job.updated_at), None, None))
+        connection.execute("INSERT INTO jobs(id,parent_job_id,project_id,type,target_type,target_id,priority,status,progress,attempt,max_attempts,provider,model,input_json,output_json,error_code,error_message,created_at,started_at,completed_at,updated_at,lease_owner,lease_expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (job.id, job.parent_job_id, job.project_id, job.type.value, job.target_type, job.target_id, job.priority, job.status.value, job.progress, job.attempt, job.max_attempts, job.provider, job.model, _json(_job_input_to_dict(job.input)), _json(_job_output_to_dict(job.output)) if job.output else None, job.error_code, job.error_message, _dt(job.created_at), _dt(job.started_at), _dt(job.completed_at), _dt(job.updated_at), None, None))
 
     def create(self, job: GenerationJob) -> GenerationJob:
         with self.store._lock, self.store.connection:
