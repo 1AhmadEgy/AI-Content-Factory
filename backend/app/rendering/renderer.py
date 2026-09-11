@@ -30,34 +30,3 @@ class Renderer(ABC):
 
     @abstractmethod
     def render(self, timeline: Timeline, profile: RenderProfile, output_path: str) -> RenderResult: ...
-
-
-class DeterministicMockRenderer(Renderer):
-    """Writes a deterministic render manifest instead of invoking FFmpeg."""
-
-    def validate(self, timeline: Timeline, profile: RenderProfile) -> list[str]:
-        errors = timeline.validate()
-        if profile.width <= 0 or profile.height <= 0:
-            errors.append("RENDER_DIMENSIONS_INVALID")
-        if profile.fps <= 0:
-            errors.append("RENDER_FPS_INVALID")
-        return errors
-
-    def render(self, timeline: Timeline, profile: RenderProfile, output_path: str) -> RenderResult:
-        errors = self.validate(timeline, profile)
-        if errors:
-            return RenderResult(False, error=";".join(errors))
-        from pathlib import Path
-        path = Path(output_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        manifest = (
-            f"AI_CONTENT_FACTORY_MOCK_RENDER\n"
-            f"timeline={timeline.id}\n"
-            f"duration_us={timeline.duration_us}\n"
-            f"profile={profile.name}\n"
-            f"resolution={profile.width}x{profile.height}\n"
-            f"fps={profile.fps}\n"
-            f"codec={profile.video_codec}/{profile.audio_codec}\n"
-        )
-        path.write_text(manifest, encoding="utf-8")
-        return RenderResult(True, output_path=str(path))
