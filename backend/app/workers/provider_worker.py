@@ -60,17 +60,11 @@ class ProviderGenerationWorker(Worker):
                 self.provider_runs.complete(internal_run_id, status="FAILED", error_code="PROVIDER_EXCEPTION", response_metadata={"exceptionType": type(exc).__name__})
             return JobExecutionResult(False, error_code="PROVIDER_EXCEPTION", error_message=str(exc), retryable=True)
 
-        provider_run_id = response.provider_run_id
+        provider_run_id = response.provider_run_id.strip() if isinstance(response.provider_run_id, str) and response.provider_run_id.strip() else None
         if not response.success:
             if self.provider_runs:
                 self.provider_runs.complete(internal_run_id, status="FAILED", error_code=response.error_code or "PROVIDER_FAILED", response_metadata=dict(response.metrics))
             return JobExecutionResult(False, provider_run_id=provider_run_id, error_code=response.error_code or "PROVIDER_FAILED", error_message=response.error_message or "Provider execution failed", retryable=True)
-
-        if not isinstance(provider_run_id, str) or not provider_run_id.strip():
-            if self.provider_runs:
-                self.provider_runs.complete(internal_run_id, status="FAILED", error_code="PROVIDER_RUN_ID_MISSING", response_metadata=dict(response.metrics))
-            return JobExecutionResult(False, error_code="PROVIDER_RUN_ID_MISSING", error_message="Provider reported success without a provider run id", retryable=True)
-        provider_run_id = provider_run_id.strip()
 
         asset_ids = list(response.output_asset_ids)
         if asset_ids:
@@ -85,18 +79,23 @@ class ProviderGenerationWorker(Worker):
             mime_error = self._validate_output_mime(job, response.output_mime_type)
             if mime_error:
                 return self._fail_provider_run(internal_run_id, provider_run_id, mime_error, "Provider returned media with an incompatible or missing MIME type")
-            asset_ids = [self._persist_media(job, model.provider, model.id, response, provider_run_id)]
+            asset_ids = [self._persist_media(job, model.provider, model.id, response, internal_run_id, provider_run_id)]
         elif response.output_text is not None and response.output_text.strip():
             payload = self._serialize_output(job, response.output_text, response.metrics)
             digest, path, size = self._store(payload)
-            asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"provider-asset:{job.id}:{digest}"))
-            self.assets.create(Asset(id=asset_id, project_id=job.project_id, type=self._asset_type(job), path=path, mime_type="application/json; charset=utf-8", size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, metadata={"provider": model.provider, "model": model.id, "providerRunId": provider_run_id}, license_status=LicenseStatus.VERIFIED)))
-            asset_ids = [asset_id]
+            metadata = {"provider": model.provider, "model": model.id, "internalRunId": internal_run_id}
+            if provider_run_id:
+                metadata["providerRunId"] = provider_run_id
+            self.assets.create(Asset(id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"provider-asset:{job.id}:{digest}")), project_id=job.project_id, type=self._asset_type(job), path=path, mime_type="application/json; charset=utf-8", size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, metadata=metadata, license_status=LicenseStatus.VERIFIED)))
+            asset_ids = [str(uuid.uuid5(uuid.NAMESPACE_URL, f"provider-asset:{job.id}:{digest}"))]
         else:
             return self._fail_provider_run(internal_run_id, provider_run_id, "PROVIDER_EMPTY_OUTPUT", "Provider reported success without an asset or output")
 
         if self.provider_runs:
-            self.provider_runs.complete(internal_run_id, status="COMPLETED", response_metadata={"assetIds": asset_ids, "providerRunId": provider_run_id, **dict(response.metrics)})
+            response_metadata = {"assetIds": asset_ids, "internalRunId": internal_run_id, **dict(response.metrics)}
+            if provider_run_id:
+                response_metadata["providerRunId"] = provider_run_id
+            self.provider_runs.complete(internal_run_id, status="COMPLETED", response_metadata=response_metadata)
         return JobExecutionResult(success=True, asset_ids=asset_ids, metrics=dict(response.metrics), provider_run_id=provider_run_id)
 
     def cancel(self, job_id: str) -> None:
@@ -105,7 +104,7 @@ class ProviderGenerationWorker(Worker):
     def shutdown(self) -> None:
         self._initialized = False
 
-    def _fail_provider_run(self, internal_run_id: str, provider_run_id: str, error_code: str, message: str) -> JobExecutionResult:
+    def _fail_provider_run(self, internal_run_id: str, provider_run_id: str | None, error_code: str, message: str) -> JobExecutionResult:
         if self.provider_runs:
             self.provider_runs.complete(internal_run_id, status="FAILED", error_code=error_code)
         return JobExecutionResult(False, provider_run_id=provider_run_id, error_code=error_code, error_message=message, retryable=True)
@@ -144,11 +143,13 @@ class ProviderGenerationWorker(Worker):
             return "PROVIDER_MIME_TYPE_MISMATCH"
         return None
 
-    def _persist_media(self, job: GenerationJob, provider: str, model: str, response, provider_run_id: str) -> str:
+    def _persist_media(self, job: GenerationJob, provider: str, model: str, response, internal_run_id: str, provider_run_id: str | None) -> str:
         data = response.output_bytes or b""
         digest, path, size = self._store(data)
+        metadata = {"provider": provider, "model": model, "internalRunId": internal_run_id, **dict(response.output_metadata)}
+        if provider_run_id:
+            metadata["providerRunId"] = provider_run_id
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"provider-media:{job.id}:{digest}"))
-        metadata = {"provider": provider, "model": model, "providerRunId": provider_run_id, **dict(response.output_metadata)}
         self.assets.create(Asset(id=asset_id, project_id=job.project_id, type=self._asset_type(job), path=path, mime_type=response.output_mime_type.strip(), size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, metadata=metadata, license_status=LicenseStatus.VERIFIED)))
         return asset_id
 
