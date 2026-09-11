@@ -24,6 +24,11 @@ interface FactoryApiService {
     @GET("api/v1/jobs/{job_id}/events") suspend fun getJobEvents(@Path("job_id") jobId: String, @Query("limit") limit: Int = 200): JobEventsFeed
     @GET("api/v1/jobs/{job_id}/provider-runs") suspend fun getProviderRuns(@Path("job_id") jobId: String, @Query("limit") limit: Int = 50): ProviderRunsFeed
 
+    @GET("api/v1/characters") suspend fun listCharacters(@Query("projectId") projectId: String? = null, @Query("limit") limit: Int = 100): CharacterListEnvelope
+    @GET("api/v1/characters/{character_id}") suspend fun getCharacter(@Path("character_id") characterId: String): CharacterEnvelope
+    @GET("api/v1/locations") suspend fun listLocations(@Query("projectId") projectId: String? = null, @Query("limit") limit: Int = 100): LocationListEnvelope
+    @POST("api/v1/shots/compose") suspend fun composeShot(@Body request: ComposeShotRequest): ComposeShotEnvelope
+
     @GET("api/v1/library/countries") suspend fun listCountryLibraries(): CountryLibrariesEnvelope
     @GET("api/v1/library/countries/{country_id}") suspend fun getCountryLibrary(@Path("country_id") countryId: String): CountryLibraryEnvelope
     @GET("api/v1/library/countries/{country_id}/content") suspend fun getCountryLibraryContent(@Path("country_id") countryId: String): CountryLibraryContentEnvelope
