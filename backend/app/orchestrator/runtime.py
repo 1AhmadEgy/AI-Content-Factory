@@ -66,7 +66,12 @@ class OrchestratorRuntime:
         timeline = TimelineWorker(self.storage, self.assets)
         timeline.initialize()
         self.workers.register(timeline, capabilities={"DOCUMENT"}, worker_id="timeline")
-        render = RenderWorker(self.storage, self.assets)
+        render = RenderWorker(
+            self.storage,
+            self.assets,
+            ffmpeg_binary=os.getenv("AICF_FFMPEG_BIN", "ffmpeg"),
+            ffprobe_binary=os.getenv("AICF_FFPROBE_BIN", "ffprobe"),
+        )
         render.initialize()
         self.workers.register(render, capabilities={"VIDEO"}, worker_id="render")
         media = MediaDocumentWorker(self.storage, self.assets)
