@@ -6,7 +6,6 @@ from typing import Any
 
 
 class ProviderKind(str, Enum):
-    MOCK = "mock"
     LOCAL = "local"
     CLOUD = "cloud"
 
@@ -64,7 +63,7 @@ class ProviderError(RuntimeError):
 
 
 class ProviderRegistry:
-    """In-memory registry used by the backend; persistence can be layered later."""
+    """In-memory registry of configured real providers."""
 
     def __init__(self, providers: list[ProviderSpec] | None = None) -> None:
         self._providers: dict[str, ProviderSpec] = {}
