@@ -41,3 +41,22 @@ def test_registry_routes_media_jobs_to_media_document_worker():
     assert registry.resolve_for_job(JobType.THUMBNAIL) == "media-document"
     assert registry.resolve_for_job(JobType.SUBTITLE) == "media-document"
     assert registry.resolve_for_job(JobType.METADATA) == "media-document"
+
+
+def test_registry_routes_specialized_jobs_to_their_exact_worker():
+    class HealthyWorker:
+        def __init__(self, worker_type):
+            self.worker_type = worker_type
+
+        def health_check(self):
+            return True
+
+    registry = WorkerRegistry()
+    for job_type, worker_id in (
+        (JobType.QC, "quality-control"),
+        (JobType.BEST_TAKE, "best-take"),
+        (JobType.TIMELINE, "timeline"),
+        (JobType.RENDER, "render"),
+    ):
+        registry.register(HealthyWorker(worker_id), capabilities={job_type.value}, worker_id=worker_id)
+        assert registry.resolve_for_job(job_type) == worker_id
