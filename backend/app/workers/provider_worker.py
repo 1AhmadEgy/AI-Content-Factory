@@ -21,7 +21,7 @@ class ProviderGenerationWorker(Worker):
     """Execute only real provider capabilities and accept only persisted outputs."""
 
     worker_type = "provider-generation"
-    _TEXT_JOB_TYPES = {JobType.STORY, JobType.SCRIPT, JobType.SCENE, JobType.SHOT, JobType.CHARACTER, JobType.WORLD}
+    _TEXT_JOB_TYPES = {JobType.STORY, JobType.SCENE, JobType.SHOT, JobType.CHARACTER, JobType.WORLD}
 
     def __init__(self, providers: ModelRegistry, storage: LocalAssetStorage, assets: AssetRepository, provider_runs: SQLiteProviderRunRepository | None = None) -> None:
         self.providers = providers
@@ -143,7 +143,7 @@ class ProviderGenerationWorker(Worker):
 
     @staticmethod
     def _required_capability(job_type: JobType) -> str:
-        return {JobType.IMAGE: "image", JobType.VIDEO: "video", JobType.TTS: "tts", JobType.LIPSYNC: "lipsync", JobType.MUSIC: "music", JobType.SFX: "sfx", JobType.STORY: "story", JobType.SCRIPT: "script", JobType.SCENE: "scene", JobType.SHOT: "shot", JobType.CHARACTER: "character", JobType.WORLD: "world"}.get(job_type, "generation")
+        return {JobType.IMAGE: "image", JobType.VIDEO: "video", JobType.TTS: "tts", JobType.LIPSYNC: "lipsync", JobType.MUSIC: "music", JobType.SFX: "sfx", JobType.STORY: "story", JobType.SCENE: "scene", JobType.SHOT: "shot", JobType.CHARACTER: "character", JobType.WORLD: "world"}.get(job_type, "generation")
 
     @staticmethod
     def _asset_type(job: GenerationJob) -> AssetType:
