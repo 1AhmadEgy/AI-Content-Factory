@@ -1,0 +1,14 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" rx="256" fill="#111111"/>
+  <circle cx="512" cy="480" r="250" fill="#FFD84D"/>
+  <circle cx="512" cy="480" r="250" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="14"/>
+  <circle cx="422" cy="430" r="26" fill="#111111"/>
+  <circle cx="602" cy="430" r="26" fill="#111111"/>
+  <path d="M405 530C435 585 470 612 512 612C554 612 589 585 619 530" stroke="#111111" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M676 326L706 296L742 314L734 356L695 364L676 326Z" fill="#4DB6FF"/>
+  <path d="M705 293L725 260L757 279L742 314" fill="#4DB6FF"/>
+  <path d="M768 284C785 270 808 269 824 282C840 295 846 318 839 337C833 353 816 365 796 365C791 365 786 364 781 362L759 383L764 355C754 345 748 331 748 316C748 305 752 293 768 284Z" fill="#FFFFFF" fill-opacity="0.92"/>
+  <path d="M783 312C790 304 802 304 809 312" stroke="#111111" stroke-width="10" stroke-linecap="round"/>
+  <rect x="220" y="748" width="584" height="124" rx="62" fill="#FFFFFF"/>
+  <text x="512" y="830" text-anchor="middle" font-family="Tajawal, Cairo, Arial, sans-serif" font-size="74" font-weight="800" fill="#111111">افهم واضحك</text>
+</svg>
