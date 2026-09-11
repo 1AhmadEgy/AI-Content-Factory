@@ -8,12 +8,13 @@ from ..application.ai_scene_planner import AIScenePlanner
 from ..application.ai_script_engine import AIScriptEngine
 from ..application.ai_story_engine import AIStoryEngine
 from ..domain.content import ContentBrief, StoryPlan
-from ..domain.jobs import JobStatus
+from ..domain.jobs import GenerationJob, JobStatus, JobType
 from ..infrastructure.asset_repository import SQLiteAssetRepository
 from ..infrastructure.character_repository import SQLiteCharacterRepository
 from ..infrastructure.location_repository import SQLiteLocationRepository
 from ..infrastructure.job_event_repository import SQLiteJobEventRepository
 from ..infrastructure.provider_run_repository import SQLiteProviderRunRepository
+from ..infrastructure.shot_composition_repository import SQLiteShotCompositionRepository
 from ..infrastructure.sqlite import SQLiteRepositories
 from ..infrastructure.sqlite_queue import SQLiteJobQueue
 from ..infrastructure.storage import LocalAssetStorage
@@ -49,6 +50,7 @@ class OrchestratorRuntime:
         self.locations = SQLiteLocationRepository(repositories.store)
         self.events = SQLiteJobEventRepository(repositories.store)
         self.provider_runs = SQLiteProviderRunRepository(repositories.store)
+        self.shot_composition = SQLiteShotCompositionRepository(repositories.store)
         self.queue = SQLiteJobQueue(repositories.store, repositories.jobs)
         root = storage_root or os.getenv("AICF_ASSET_ROOT", "./data/assets")
         self.storage = LocalAssetStorage(root)
@@ -74,10 +76,27 @@ class OrchestratorRuntime:
         self.job_service = JobService(repositories.jobs)
         self.pipeline = ProductionPipelineOrchestrator(self.job_service, self.queue.enqueue)
         self.completion_gate = CompletionGate(self.assets, self.storage)
-        self.executor = JobExecutor(repositories.jobs, self.queue, self.workers, self.events.append, self.pipeline.on_completed, completion_gate=self.completion_gate)
+        self.executor = JobExecutor(repositories.jobs, self.queue, self.workers, self.events.append, self._on_job_completed, completion_gate=self.completion_gate)
         self.country_library_seed = ensure_country_library_projects(repositories)
         self.library_seed = ensure_egypt_library(repositories)
         self.libya_library_seed = ensure_libya_library(repositories)
+
+    def _on_job_completed(self, job: GenerationJob) -> None:
+        """Persist provider outputs on their domain target, then advance the pipeline."""
+        if job.status is JobStatus.COMPLETED and job.output and job.output.asset_ids:
+            try:
+                if job.type is JobType.IMAGE and job.target_type == "shot":
+                    self.shot_composition.update_generation(
+                        job.target_id,
+                        status="completed",
+                        error="",
+                        image_asset_id=job.output.asset_ids[0],
+                    )
+                elif job.type is JobType.TTS and job.target_type == "shot_character":
+                    self.shot_composition.set_voice_audio_asset(job.target_id, job.output.asset_ids[0])
+            except Exception:
+                logger.exception("Failed to bind completed %s job %s to target %s/%s", job.type.value, job.id, job.target_type, job.target_id)
+        self.pipeline.on_completed(job)
 
     def _resolve_library_scope(self, brief: ContentBrief) -> tuple[str, str]:
         country_id = brief.country_id or "egypt"
