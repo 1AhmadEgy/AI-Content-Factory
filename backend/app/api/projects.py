@@ -12,6 +12,11 @@ from ..library.country_catalog import get_country_languages, get_country_library
 
 
 DEFAULT_COUNTRY_ID = "egypt"
+DEFAULT_BRANDING_SETTINGS = {
+    "enabled": True,
+    "brand": "afham-wadhak",
+    "watermarkOpacity": 0.82,
+}
 
 
 class CreateProjectRequest(BaseModel):
@@ -27,7 +32,7 @@ class UpdateProjectRequest(BaseModel):
 
 
 def _country_settings(settings: dict) -> dict:
-    """Normalize project localization settings without inventing country content."""
+    """Normalize project localization and optional per-project branding settings."""
     value = dict(settings or {})
     country_id = str(value.get("countryId") or DEFAULT_COUNTRY_ID).strip().lower()
     country = get_country_library(country_id)
@@ -46,6 +51,14 @@ def _country_settings(settings: dict) -> dict:
         raise HTTPException(status_code=400, detail="LANGUAGE_NOT_SUPPORTED_BY_COUNTRY")
 
     dialect = value.get("dialect") or country["locale"]
+    branding = dict(DEFAULT_BRANDING_SETTINGS)
+    branding.update(dict(value.get("branding") or {}))
+    if not 0.0 <= float(branding.get("watermarkOpacity", 0.82)) <= 1.0:
+        raise HTTPException(status_code=400, detail="INVALID_BRANDING_WATERMARK_OPACITY")
+    branding["enabled"] = bool(branding.get("enabled", True))
+    branding["brand"] = str(branding.get("brand") or "afham-wadhak")
+    branding["watermarkOpacity"] = float(branding.get("watermarkOpacity", 0.82))
+
     value.update(
         {
             "countryId": country_id,
@@ -53,6 +66,7 @@ def _country_settings(settings: dict) -> dict:
             "sourceLanguage": source,
             "targetLanguages": [str(item) for item in targets],
             "dialect": str(dialect),
+            "branding": branding,
             "translationPolicy": {
                 "preserveSource": True,
                 "manualOverridesWin": True,
