@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -9,7 +10,7 @@ from .contracts import ModelAdapter, ModelCapability, ProviderRequest, ProviderR
 
 
 class LocalMediaModelAdapter(ModelAdapter):
-    """Configurable local HTTP adapter for image/video/audio workers."""
+    """Configurable local HTTP adapter for real image/video/audio providers."""
 
     def __init__(self, endpoint: str, capabilities: frozenset[str], timeout_seconds: int = 300, headers: dict[str, str] | None = None) -> None:
         self.endpoint = endpoint.rstrip("/")
@@ -33,9 +34,11 @@ class LocalMediaModelAdapter(ModelAdapter):
                 body = response.read()
                 content_type = response.headers.get("Content-Type", "application/octet-stream").split(";", 1)[0].strip()
                 run_id = response.headers.get("X-Provider-Run-Id")
+            if not body:
+                return ProviderResponse(success=False, error_code="LOCAL_MEDIA_EMPTY_RESPONSE", error_message="Local media provider returned an empty response")
             if content_type == "application/json":
                 return self._json_response(body, run_id)
-            return ProviderResponse(success=True, output_bytes=body, output_mime_type=content_type, provider_run_id=run_id or "local-media", metrics={"local": 1.0, "binary": 1.0})
+            return ProviderResponse(success=True, output_bytes=body, output_mime_type=content_type, provider_run_id=run_id, metrics={"local": 1.0, "binary": 1.0})
         except HTTPError as exc:
             return ProviderResponse(success=False, error_code="LOCAL_MEDIA_HTTP_ERROR", error_message=f"HTTP {exc.code}: {exc.reason}")
         except (URLError, OSError, json.JSONDecodeError, ValueError) as exc:
@@ -49,12 +52,15 @@ class LocalMediaModelAdapter(ModelAdapter):
         if isinstance(encoded, str):
             try:
                 raw = base64.b64decode(encoded, validate=True)
-            except (ValueError, base64.binascii.Error) as exc:
+            except (ValueError, binascii.Error) as exc:
                 return ProviderResponse(success=False, error_code="LOCAL_MEDIA_INVALID_RESPONSE", error_message=str(exc))
-            return ProviderResponse(success=True, output_bytes=raw, output_mime_type=data.get("mime_type", data.get("mimeType", "application/octet-stream")), output_filename=data.get("filename"), output_metadata=data.get("metadata", {}), provider_run_id=provider_run_id or data.get("provider_run_id") or "local-media", metrics=data.get("metrics", {}))
-        if data.get("text") is not None:
-            return ProviderResponse(success=True, output_text=str(data["text"]), provider_run_id=provider_run_id or "local-media", metrics=data.get("metrics", {}))
-        return ProviderResponse(success=False, error_code="LOCAL_MEDIA_INVALID_RESPONSE", error_message="Expected base64 data or text in JSON response")
+            if not raw:
+                return ProviderResponse(success=False, error_code="LOCAL_MEDIA_EMPTY_OUTPUT", error_message="Local media provider returned empty output")
+            return ProviderResponse(success=True, output_bytes=raw, output_mime_type=data.get("mime_type", data.get("mimeType", "application/octet-stream")), output_filename=data.get("filename"), output_metadata=data.get("metadata", {}), provider_run_id=provider_run_id or data.get("provider_run_id"), metrics=data.get("metrics", {}))
+        text = data.get("text")
+        if isinstance(text, str) and text.strip():
+            return ProviderResponse(success=True, output_text=text, provider_run_id=provider_run_id or data.get("provider_run_id"), metrics=data.get("metrics", {}))
+        return ProviderResponse(success=False, error_code="LOCAL_MEDIA_INVALID_RESPONSE", error_message="Expected non-empty base64 data or text in JSON response")
 
     def cancel(self, provider_run_id: str) -> bool:
         return False
