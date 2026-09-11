@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Mapping
 
 
@@ -36,20 +37,14 @@ class PublishingAdapter(ABC):
         return self.publish(request)
 
 
-class DryRunAdapter(PublishingAdapter):
-    name = "dry-run"
-
-    def validate(self, request: PublishRequest) -> list[str]:
-        return [] if request.asset_path else ["ASSET_PATH_REQUIRED"]
-
-    def publish(self, request: PublishRequest) -> PublishResult:
-        errors = self.validate(request)
-        if errors:
-            return PublishResult(self.name, "FAILED", error=";".join(errors))
-        return PublishResult(self.name, "DRY_RUN", external_id=f"dry:{request.title}", payload={"scheduledAt": request.scheduled_at})
-
-
 class _PlatformAdapter(PublishingAdapter):
+    """Contract-only platform adapter.
+
+    A platform is never reported as published until a concrete OAuth/API
+    implementation is installed. This intentionally fails closed instead of
+    pretending that a local file was uploaded.
+    """
+
     platform: str
 
     @property
@@ -60,6 +55,8 @@ class _PlatformAdapter(PublishingAdapter):
         errors: list[str] = []
         if not request.asset_path:
             errors.append("ASSET_PATH_REQUIRED")
+        elif not Path(request.asset_path).is_file():
+            errors.append("ASSET_NOT_FOUND")
         if not request.title.strip():
             errors.append("TITLE_REQUIRED")
         return errors
@@ -68,7 +65,12 @@ class _PlatformAdapter(PublishingAdapter):
         errors = self.validate(request)
         if errors:
             return PublishResult(self.name, "FAILED", error=";".join(errors))
-        return PublishResult(self.name, "READY", external_id=None, payload={"assetPath": request.asset_path, "title": request.title, "description": request.description, "scheduledAt": request.scheduled_at, "metadata": dict(request.metadata or {})})
+        return PublishResult(
+            self.name,
+            "FAILED",
+            error=f"{self.name.upper()}_PUBLISH_API_NOT_CONFIGURED",
+            payload={"assetPath": request.asset_path, "title": request.title},
+        )
 
 
 class YouTubeAdapter(_PlatformAdapter):
@@ -89,7 +91,7 @@ class FacebookAdapter(_PlatformAdapter):
 
 class AdapterRegistry:
     def __init__(self, adapters: list[PublishingAdapter] | None = None):
-        defaults = [DryRunAdapter(), YouTubeAdapter(), TikTokAdapter(), InstagramAdapter(), FacebookAdapter()]
+        defaults = [YouTubeAdapter(), TikTokAdapter(), InstagramAdapter(), FacebookAdapter()]
         self._adapters = {a.name: a for a in (adapters or defaults)}
 
     def register(self, adapter: PublishingAdapter) -> None:
