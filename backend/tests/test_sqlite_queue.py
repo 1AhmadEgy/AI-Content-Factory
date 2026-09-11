@@ -2,7 +2,7 @@ from datetime import timedelta
 
 from backend.app.domain.jobs import GenerationJob, JobStatus, JobType, utc_now
 from backend.app.domain.projects import Project
-from backend.app.infrastructure.sqlite import SQLiteJobRepository, SQLiteRepositories
+from backend.app.infrastructure.sqlite import SQLiteRepositories
 from backend.app.infrastructure.sqlite_queue import SQLiteJobQueue
 
 
