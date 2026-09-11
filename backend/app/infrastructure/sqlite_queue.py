@@ -156,7 +156,7 @@ class SQLiteJobQueue(JobQueue):
         return row is not None
 
     def acknowledge(self, lease: JobLease, status: JobStatus) -> None:
-        if status not in {JobStatus.RETRYING, JobStatus.BLOCKED, JobStatus.COMPLETED, JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED}:
+        if status not in {JobStatus.RETRYING, JobStatus.BLOCKED, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}:
             raise ValueError("Acknowledge requires retry, blocked, or terminal state")
         now = datetime.now(timezone.utc)
         with self.store._lock:
@@ -169,7 +169,7 @@ class SQLiteJobQueue(JobQueue):
                 ).fetchone()
                 if lease_row is None:
                     raise KeyError("JOB_LEASE_NOT_FOUND")
-                terminal = {JobStatus.COMPLETED, JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED}
+                terminal = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}
                 completed_at = now.isoformat() if status in terminal else None
                 persisted_status = JobStatus.QUEUED if status is JobStatus.RETRYING else status
                 cursor = self.store.connection.execute(
