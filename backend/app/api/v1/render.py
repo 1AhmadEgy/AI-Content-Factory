@@ -13,7 +13,6 @@ from ...infrastructure.sqlite import SQLiteJobRepository
 from ...orchestrator.job_service import JobService
 from ...orchestrator.runtime import OrchestratorRuntime
 
-
 class RenderOutput(BaseModel):
     container: str = "mp4"
     videoCodec: str = "h264"
@@ -22,11 +21,9 @@ class RenderOutput(BaseModel):
     height: int = Field(default=1920, gt=0, le=7680)
     fps: int = Field(default=30, gt=0, le=120)
 
-
 class SubtitleOptions(BaseModel):
     enabled: bool = True
     burnIn: bool = True
-
 
 class RenderRequest(BaseModel):
     projectId: str
@@ -34,14 +31,12 @@ class RenderRequest(BaseModel):
     output: RenderOutput = Field(default_factory=RenderOutput)
     subtitles: SubtitleOptions = Field(default_factory=SubtitleOptions)
 
-
 def _fingerprint(body: RenderRequest) -> str:
     return hashlib.sha256(json.dumps(body.model_dump(mode="json"), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
-
 def build_router(runtime: OrchestratorRuntime, jobs: SQLiteJobRepository) -> APIRouter:
     router = APIRouter(prefix="/api/v1/render", tags=["render"])
-    service = JobService(jobs)
+    service = JobService(jobs, context_provider=runtime.context_snapshot)
 
     @router.post("", status_code=status.HTTP_202_ACCEPTED)
     def render(body: RenderRequest, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
@@ -55,17 +50,17 @@ def build_router(runtime: OrchestratorRuntime, jobs: SQLiteJobRepository) -> API
             if existing["request_fingerprint"] != fingerprint: raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
             job = jobs.get(existing["resource_id"])
             if job is None: raise HTTPException(status_code=409, detail="IDEMPOTENCY_RESOURCE_MISSING")
-            return {"data": {"jobId": job.id, "status": job.status.value}, "requestId": request.state.request_id, "idempotentReplay": True}
+            return {"data": {"jobId": job.id, "status": job.status.value, "contextVersion": job.input.parameters.get("contextVersion", 0)}, "requestId": request.state.request_id, "idempotentReplay": True}
         job = service.create(project_id=body.projectId, job_type=JobType.RENDER, target_type="timeline", target_id=body.timelineId, priority=40, provider="ffmpeg", model=None, input=JobInput(parameters={"output": body.output.model_dump(), "subtitles": body.subtitles.model_dump()}, reference_asset_ids=[body.timelineId]))
         if not jobs.store.claim_idempotency(idempotency_key, operation, fingerprint, job.id): raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
         runtime.queue.enqueue(job)
-        return {"data": {"jobId": job.id, "status": job.status.value}, "requestId": request.state.request_id}
+        return {"data": {"jobId": job.id, "status": job.status.value, "contextVersion": job.input.parameters.get("contextVersion", 0)}, "requestId": request.state.request_id}
 
     @router.get("/{render_job_id}")
     def get_render(render_job_id: str, request: Request) -> dict[str, Any]:
         job = jobs.get(render_job_id)
         if job is None or job.type is not JobType.RENDER: raise HTTPException(status_code=404, detail="RENDER_JOB_NOT_FOUND")
-        return {"data": {"jobId": job.id, "status": job.status.value, "progress": job.progress, "output": job.output.asset_ids if job.output else None, "error": job.error_code}, "requestId": request.state.request_id}
+        return {"data": {"jobId": job.id, "status": job.status.value, "progress": job.progress, "output": job.output.asset_ids if job.output else None, "error": job.error_code, "contextVersion": job.input.parameters.get("contextVersion", 0)}, "requestId": request.state.request_id}
 
     @router.post("/{render_job_id}/cancel")
     def cancel_render(render_job_id: str, request: Request) -> dict[str, Any]:
