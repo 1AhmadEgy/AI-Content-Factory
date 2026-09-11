@@ -51,16 +51,6 @@ class VideoComposer:
         safe_text = script_text.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
         opacity = float(self.config.get("watermark", {}).get("opacity", 0.35))
         opacity = max(0.0, min(1.0, opacity))
-        content_filter = (
-            "drawtext="
-            "fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:"
-            f"text='{safe_text}':fontcolor=white:fontsize=54:"
-            "line_spacing=12:box=1:boxcolor=0x111111@0.85:boxborderw=28:"
-            "x=(w-text_w)/2:y=(h-text_h)/2,"
-            f"movie='{watermark.as_posix()}'[wm];[in][wm]"
-            f"format=rgba,colorchannelmixer=aa={opacity}[wm2];[in][wm2]"
-            "overlay=W-w-36:H-h-36[out]"
-        )
 
         subprocess.run(
             [
