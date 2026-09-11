@@ -11,7 +11,7 @@ class LanguageMediaService:
         item = item or {}
         return {
             "sourceId": item.get("sourceId") or item.get("segmentId") or variant.get("sourceId"),
-            "sourceVersion": item.get("sourceVersion") or variant.get("sourceVersion"),
+            "sourceVersion": item.get("sourceVersion") or variant.get("sourceVersion") or variant.get("version"),
             "translationVersion": item.get("translationVersion") or variant.get("translationVersion") or variant.get("languagePackVersion"),
             "sourceLanguage": item.get("sourceLanguage") or variant.get("sourceLanguage"),
             "targetLanguage": item.get("targetLanguage") or variant.get("language") or variant.get("targetLanguage"),
@@ -56,7 +56,8 @@ class LanguageMediaService:
                 }
                 unit.update(LanguageMediaService._provenance(variant, line))
                 units.append(unit)
-            narration = scene.get("fields", {}).get("narration") if isinstance(scene.get("fields"), dict) else None
+            fields = scene.get("fields")
+            narration = fields.get("narration") if isinstance(fields, dict) else None
             if isinstance(narration, str) and narration.strip():
                 unit = {
                     "sceneNumber": scene_number,
