@@ -55,7 +55,10 @@ class JobScheduler:
                 break
             job, lease = claimed
             stats.claimed += 1
-            result = self.executor.execute_claimed(job, lease, worker_id=self.worker_id)
+            # Claim owns LEASED; queue.start owns the persisted LEASED -> RUNNING
+            # transition and the single attempt increment before worker execution.
+            running_job = self.queue.start(lease)
+            result = self.executor.execute_claimed(running_job, lease, worker_id=self.worker_id)
             if result.status.value == "COMPLETED":
                 stats.completed += 1
             elif result.status.value == "FAILED":
