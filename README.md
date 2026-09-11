@@ -1,148 +1,171 @@
 # 🤖 AI Content Factory
 
-AI Content Factory هو نظام لإنتاج المحتوى بشكل آلي، يبدأ من الفكرة أو القصة، ثم يحولها إلى مشاريع وحلقات ومشاهد ولقطات وأصول صوتية وبصرية، مع تنفيذ عمليات QC واختيار أفضل Take وتجميع الناتج النهائي.
+AI Content Factory هو نظام مفتوح المصدر لإدارة خط إنتاج المحتوى من المشروع والقصة وحتى المشاهد واللقطات والأصول وعمليات QC والتجميع النهائي والنشر.
 
----
+## الحالة الحالية
 
-## 📱 تحميل التطبيق
+هذا الفرع (`codex/advanced-repair-wave-1`) هو فرع الإصلاح النشط، وليس `main`.
 
-### ⬇️ تحميل APK مباشرة
+المشروع يتبع سياسة **Real-Only Runtime**: لا توجد نجاحات وهمية، ولا ملفات Media مصطنعة، ولا Dry-Run Publishing يعلن نجاحًا، ولا Provider وهمي مخفي.
 
-[![📱 تحميل APK](https://img.shields.io/badge/📱_تحميل_APK-تحميل_مباشر-success?style=for-the-badge)](https://github.com/1AhmadEgy/AI-Content-Factory/releases/latest/download/AI-Content-Factory.apk)
+## التشغيل المجاني المحلي
 
-> اضغط على الزر وسيبدأ تحميل أحدث ملف APK مباشرة.
+يوجد تشغيل محلي مجاني باستخدام Docker + Ollama + FFmpeg، بدون اشتراك AI مدفوع لمسار النصوص:
 
----
-
-## 🚀 آخر إصدار
-
-يتم إنشاء APK تلقائيًا بواسطة GitHub Actions عند تحديث فرع `main`.
-
-اسم الملف:
-
-```text
-AI-Content-Factory.apk
+```bash
+cp .env.example .env
+bash scripts/free-local-start.sh
 ```
 
-رابط التحميل المباشر:
+أو مباشرة:
 
-https://github.com/1AhmadEgy/AI-Content-Factory/releases/latest/download/AI-Content-Factory.apk
-
-## 🏗️ Architecture
-
-```text
-Android App
-     │
-     │ REST API
-     ▼
-  FastAPI
-     │
-     ├── Jobs
-     ├── Projects
-     ├── Assets
-     ├── Pipeline
-     ├── Scheduler
-     ├── Workers
-     └── Publishing
-            │
-            ▼
-       Media Engine
-            │
-            ▼
-       FFmpeg / QC
-            │
-            ▼
-        Final MP4
+```bash
+docker compose -f docker-compose.free.yml up -d --build
 ```
 
-## 📱 Android
+بعد التشغيل:
 
-التطبيق مبني باستخدام:
+```text
+API:     http://127.0.0.1:8000/api/v1/docs
+Health:  http://127.0.0.1:8000/api/v1/health
+Ready:   http://127.0.0.1:8000/api/v1/ready
+Ollama:  http://127.0.0.1:11434
+```
+
+التفاصيل: `docs/FREE_LOCAL_RUN.md`.
+
+### ماذا يعمل محليًا؟
+
+- FastAPI API
+- SQLite persistence للتشغيل المحلي
+- Ollama كنموذج نصي حقيقي
+- Worker + Scheduler
+- FFmpeg / FFprobe
+- Timeline / Render / QC
+- Asset hashing وprovenance
+- Android كـControl Center
+
+### ما الذي لا يتم تزويره؟
+
+توليد الصور/الفيديو/الصوت يحتاج **Media Provider حقيقي**. إذا لم يتم تكوينه، يفشل Job صراحة بدل إنشاء صورة أو فيديو وهمي.
+
+يمكن استخدام أي مزود محلي/ذاتي الاستضافة متوافق مع `LocalMediaModelAdapter` من خلال:
+
+```text
+AICF_MEDIA_PROVIDER_ENDPOINT
+AICF_MEDIA_PROVIDER_MODEL
+AICF_MEDIA_PROVIDER_CAPABILITIES
+```
+
+وهذا مقصود: المجانية لا تعني اختلاق مخرجات غير حقيقية.
+
+## Architecture
+
+```text
+Android Control Center
+        │
+        ▼
+     FastAPI
+        │
+        ├── Projects / Series / Episodes
+        ├── Jobs / Queue / Scheduler
+        ├── Workers / Providers
+        ├── Assets / Provenance
+        ├── QC / Best Take
+        ├── Timeline
+        ├── FFmpeg / FFprobe
+        └── Publishing adapters
+```
+
+## Android
 
 - Kotlin
 - Jetpack Compose
-- Android Gradle Plugin
 - Room
 - Retrofit
 - OkHttp
-- Kotlin Coroutines
+- Coroutines
 - Material 3
-
-### متطلبات البناء
-
 - JDK 17
 - Android SDK 36
-- Gradle Wrapper
 
-## ⚙️ GitHub Actions
+التطبيق لا ينفذ FFmpeg أو AI محليًا؛ دوره Control Center للـBackend.
 
-يتم بناء APK تلقائيًا عند:
+## Backend
 
-```text
-push → main
+الـBackend يستخدم FastAPI، ويحتوي على:
+
+- API v1
+- Jobs وOrchestrator
+- Persistent queue
+- Scheduler
+- Workers
+- Provider registry
+- Asset storage
+- Provenance
+- QC
+- Best Take
+- Timeline
+- FFmpeg rendering
+- Repurposing
+- Publishing abstraction
+
+## Real-only guarantees
+
+نجاح العملية لا يعتمد على انتهاء Timer أو وجود ملف فارغ. يجب أن يكون الناتج الحقيقي موجودًا ومخزنًا وقابلًا للتحقق، وتطبق بوابات QC المناسبة.
+
+Publishing لا يعتبر ناجحًا إلا عندما يعيد النظام الخارجي معرفًا خارجيًا حقيقيًا.
+
+## Production
+
+**لا يعتبر هذا الفرع Production Ready بعد.**
+
+الإنتاج يتطلب تنفيذ PostgreSQL runtime وauthorization متعدد المشاريع وidempotency واختبارات distributed recovery قبل السماح بتشغيل `AICF_ENV=production`. التطبيق يفشل مغلقًا إذا حاولت تشغيل Production قبل استكمال هذه المتطلبات.
+
+## الاختبارات
+
+Backend:
+
+```bash
+cd backend
+python -m pytest
 ```
 
-ويمكن تشغيل البناء يدويًا من:
-
-```text
-GitHub
-→ Actions
-→ Build Android APK
-→ Run workflow
-```
-
-بعد نجاح البناء يتم:
-
-1. إنشاء APK.
-2. تسميته `AI-Content-Factory.apk`.
-3. رفعه كـ GitHub Actions Artifact.
-4. إنشاء/تحديث Release باسم `latest`.
-5. توفير رابط تحميل مباشر من README.
-
-## 📦 Backend
-
-الـBackend مبني باستخدام FastAPI ويوفر API لإدارة:
-
-- Projects
-- Jobs
-- Assets
-- Batches
-- Scheduling
-- Rendering
-- Quality Control
-- Publishing
-- Media Processing
-
-## 🧪 الاختبارات
-
-قبل اعتبار المشروع جاهزًا للإنتاج، يوصى بتشغيل:
+Android:
 
 ```bash
 ./gradlew test
-```
-
-وبناء التطبيق:
-
-```bash
 ./gradlew :app:assembleDebug
 ```
 
-## 🔐 ملاحظات الأمان
+إذا كانت البيئة لا تستطيع الوصول إلى الإنترنت أو تنزيل dependencies، يجب اعتبار الاختبار **environment-blocked** وليس ناجحًا.
 
-لا تضع داخل Git:
+## APK
 
-- API Keys
-- Passwords
-- Keystores
-- Firebase credentials
-- Production secrets
+يتم بناء APK عبر GitHub Actions عند التحديثات المعتمدة. لا يعتبر APK الناتج من CI مفتاح توقيع Play Store إنتاجيًا؛ توقيع التوزيع الرسمي يجب أن يكون منفصلًا.
 
-استخدم GitHub Secrets عند الحاجة.
+## Security
 
-## 📄 الترخيص
+لا تضع في Git:
 
-راجع إعدادات الترخيص في المستودع قبل التوزيع التجاري.
+- API keys
+- passwords
+- production tokens
+- signing keys
+- provider credentials
 
-## 🔗 Repository
+استخدم متغيرات البيئة وGitHub Secrets عند الحاجة.
 
-urlGitHub Repositoryhttps://github.com/1AhmadEgy/AI-Content-Factory
+## الوثائق المهمة
+
+- `REAL_ONLY_RUNTIME_POLICY.md`
+- `ADVANCED_REPAIR_PLAN.md`
+- `CONTRACT_MIGRATION_GATE.md`
+- `DATABASE_SCHEMA_SPECIFICATION.md`
+- `API_SPECIFICATION.md`
+- `CONTRACTS_SPECIFICATION.md`
+- `docs/FREE_LOCAL_RUN.md`
+
+## Repository
+
+GitHub: https://github.com/1AhmadEgy/AI-Content-Factory
