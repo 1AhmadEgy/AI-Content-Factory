@@ -35,6 +35,8 @@ class TimelineWorker(Worker):
             asset = self.assets.get(asset_id)
             if asset is None:
                 return f"TIMELINE_ASSET_NOT_FOUND:{asset_id}"
+            if not isinstance(asset, Asset):
+                return f"TIMELINE_ASSET_INVALID:{asset_id}"
             if asset.project_id != job.project_id:
                 return f"TIMELINE_ASSET_PROJECT_MISMATCH:{asset_id}"
             if asset.status is not AssetStatus.READY:
@@ -59,7 +61,6 @@ class TimelineWorker(Worker):
     def execute(self, job: GenerationJob, context: WorkerContext) -> JobExecutionResult:
         if not self._initialized:
             return JobExecutionResult(False, error_code="WORKER_NOT_INITIALIZED", error_message="Worker is not initialized")
-
         language_render = bool(job.input.parameters.get("languageRender"))
         if language_render:
             video_ids = [str(x) for x in job.input.parameters.get("videoAssetIds", []) if str(x)]
@@ -71,19 +72,19 @@ class TimelineWorker(Worker):
                 return JobExecutionResult(False, error_code="TIMELINE_SOURCE_INVALID", error_message=error)
             if (error := self._validate_media_assets(job, audio_ids, {AssetType.AUDIO})) is not None:
                 return JobExecutionResult(False, error_code="TIMELINE_SOURCE_INVALID", error_message=error)
-            if subtitle_id:
-                subtitle = str(subtitle_id)
-                if (error := self._validate_media_assets(job, [subtitle], {AssetType.SUBTITLE})) is not None:
-                    return JobExecutionResult(False, error_code="TIMELINE_SOURCE_INVALID", error_message=error)
+            if subtitle_id and (error := self._validate_media_assets(job, [str(subtitle_id)], {AssetType.SUBTITLE})) is not None:
+                return JobExecutionResult(False, error_code="TIMELINE_SOURCE_INVALID", error_message=error)
             asset_ids = [*video_ids, *audio_ids] + ([str(subtitle_id)] if subtitle_id else [])
         else:
             video_ids = [str(x) for x in job.input.parameters.get("videoAssetIds", []) if str(x)]
             audio_ids = [str(x) for x in job.input.parameters.get("audioAssetIds", []) if str(x)]
             if not video_ids:
-                # Backward-compatible fallback for callers that predate explicit
-                # track lists: only actual playable video/image references qualify.
                 refs = [str(x) for x in job.input.reference_asset_ids if str(x)]
-                video_ids = [asset_id for asset_id in refs if (asset := self.assets.get(asset_id)) is not None and asset.type in {AssetType.VIDEO, AssetType.IMAGE}]
+                video_ids = []
+                for asset_id in refs:
+                    asset = self.assets.get(asset_id)
+                    if isinstance(asset, Asset) and asset.type in {AssetType.VIDEO, AssetType.IMAGE}:
+                        video_ids.append(asset_id)
             if not video_ids:
                 return JobExecutionResult(False, error_code="TIMELINE_NO_VIDEO", error_message="No playable video assets")
             if (error := self._validate_media_assets(job, video_ids, {AssetType.VIDEO, AssetType.IMAGE})) is not None:
@@ -91,14 +92,11 @@ class TimelineWorker(Worker):
             if (error := self._validate_media_assets(job, audio_ids, {AssetType.AUDIO})) is not None:
                 return JobExecutionResult(False, error_code="TIMELINE_SOURCE_INVALID", error_message=error)
             asset_ids = [*video_ids, *audio_ids]
-
         if not asset_ids:
             return JobExecutionResult(False, error_code="TIMELINE_NO_ASSETS", error_message="No source assets")
-
         duration_us = self._duration_us(job.input.parameters.get("durationUs", 1_000_000))
         if duration_us is None:
             return JobExecutionResult(False, error_code="TIMELINE_DURATION_INVALID", error_message="durationUs must be finite and positive")
-
         timeline = Timeline(id=f"timeline:{job.id}", project_id=job.project_id, duration_us=duration_us)
         video_track = TimelineTrack(id=f"video:{job.id}", type=TrackType.VIDEO)
         video_duration = max(duration_us // len(video_ids), 1)
@@ -107,43 +105,20 @@ class TimelineWorker(Worker):
             clip_duration = duration_us - start if index == len(video_ids) - 1 else video_duration
             video_track.clips.append(TimelineClip(id=f"clip:{job.id}:v:{index}", asset_id=asset_id, start_us=start, duration_us=clip_duration, z_index=index))
         timeline.tracks.append(video_track)
-
         if audio_ids:
-            audio_track_type = TrackType.DIALOGUE if language_render else TrackType.AUDIO
-            audio_track = TimelineTrack(id=f"audio:{job.id}", type=audio_track_type)
+            audio_track = TimelineTrack(id=f"audio:{job.id}", type=TrackType.DIALOGUE if language_render else TrackType.AUDIO)
             for index, asset_id in enumerate(audio_ids):
                 audio_track.clips.append(TimelineClip(id=f"clip:{job.id}:a:{index}", asset_id=asset_id, start_us=0, duration_us=duration_us, z_index=index))
             timeline.tracks.append(audio_track)
-
         errors = timeline.validate()
         if errors:
             return JobExecutionResult(False, error_code="TIMELINE_INVALID", error_message=errors[0])
-
-        manifest = {
-            "timelineId": timeline.id,
-            "projectId": timeline.project_id,
-            "durationUs": timeline.duration_us,
-            "timebase": timeline.timebase,
-            "languageRender": language_render,
-            "language": job.input.parameters.get("language"),
-            "locale": job.input.parameters.get("locale"),
-            "subtitleAssetId": job.input.parameters.get("subtitleAssetId"),
-            "tracks": [{
-                "id": t.id, "type": t.type.value,
-                "clips": [{"id": c.id, "assetId": c.asset_id, "startUs": c.start_us, "durationUs": c.duration_us, "sourceStartUs": c.source_start_us, "zIndex": c.z_index} for c in t.clips],
-            } for t in timeline.tracks],
-        }
+        manifest = {"timelineId": timeline.id, "projectId": timeline.project_id, "durationUs": timeline.duration_us, "timebase": timeline.timebase, "languageRender": language_render, "language": job.input.parameters.get("language"), "locale": job.input.parameters.get("locale"), "subtitleAssetId": job.input.parameters.get("subtitleAssetId"), "tracks": [{"id": t.id, "type": t.type.value, "clips": [{"id": c.id, "assetId": c.asset_id, "startUs": c.start_us, "durationUs": c.duration_us, "sourceStartUs": c.source_start_us, "zIndex": c.z_index} for c in t.clips]} for t in timeline.tracks]}
         payload = (json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
         digest = hashlib.sha256(payload).hexdigest()
         _, path, size = self.storage.put_bytes(payload)
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"timeline:{job.id}:{digest}"))
-        asset = Asset(
-            id=asset_id, project_id=job.project_id, type=AssetType.DOCUMENT,
-            path=path, mime_type="application/json; charset=utf-8", size_bytes=size,
-            sha256=digest, status=AssetStatus.READY,
-            provenance=build_provenance(job, source_asset_ids=asset_ids, metadata={"timelineId": timeline.id, "languageRender": language_render}, license_status=LicenseStatus.VERIFIED),
-        )
-        self.assets.create(asset)
+        self.assets.create(Asset(id=asset_id, project_id=job.project_id, type=AssetType.DOCUMENT, path=path, mime_type="application/json; charset=utf-8", size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, source_asset_ids=asset_ids, metadata={"timelineId": timeline.id, "languageRender": language_render}, license_status=LicenseStatus.VERIFIED)))
         return JobExecutionResult(True, [asset_id], {"durationUs": timeline.duration_us, "clipCount": sum(len(t.clips) for t in timeline.tracks), "languageRender": language_render}, f"timeline-{job.id}")
 
     def cancel(self, job_id: str) -> None:
