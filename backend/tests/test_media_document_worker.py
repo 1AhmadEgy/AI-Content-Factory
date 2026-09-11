@@ -1,8 +1,22 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 from app.domain.jobs import JobType
+from app.infrastructure.storage import LocalAssetStorage
 from app.workers.media_document_worker import MediaDocumentWorker
 from app.workers.registry import WorkerRegistry
+
+
+class AssetStore:
+    def __init__(self):
+        self.items = {}
+
+    def create(self, asset):
+        self.items[asset.id] = asset
+        return asset
+
+    def get(self, asset_id):
+        return self.items.get(asset_id)
 
 
 def _job(**parameters):
@@ -26,6 +40,17 @@ def test_metadata_output_is_deterministic_and_contains_publish_fields():
     assert '"title": "Launch"' in text
     assert '"language": "ar"' in text
     assert '"platforms": ["youtube"]' in text
+
+
+def test_document_worker_does_not_report_a_fake_provider_run_id(tmp_path: Path):
+    assets = AssetStore()
+    worker = MediaDocumentWorker(LocalAssetStorage(tmp_path), assets)
+    worker.initialize()
+    result = worker._document(_job(), kind=__import__("app.domain.assets", fromlist=["AssetType"]).AssetType.DOCUMENT, mime="application/json", payload=b"real-document")
+    assert result.success is True
+    assert result.provider_run_id is None
+    assert len(result.asset_ids) == 1
+    assert Path(assets.items[result.asset_ids[0]].path).read_bytes() == b"real-document"
 
 
 def test_registry_routes_media_jobs_to_media_document_worker():
