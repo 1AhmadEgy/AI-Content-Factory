@@ -1,7 +1,9 @@
+from types import SimpleNamespace
+
 from backend.app.domain.job_events import JobEvent
 from backend.app.domain.jobs import GenerationJob, JobOutput, JobStatus, JobType
 from backend.app.orchestrator.job_executor import JobExecutor
-from backend.app.orchestrator.queue import JobExecutionResult, JobLease, JobQueue, Worker, WorkerContext
+from backend.app.orchestrator.queue import JobExecutionResult, JobLease, JobQueue, Worker
 from backend.app.workers.registry import WorkerRegistry
 
 
@@ -22,13 +24,18 @@ class FakeQueue(JobQueue):
 
 
 class FakeWorker(Worker):
-    worker_type = "fake"
-    def __init__(self, result): self.result = result; self.initialized = True; self.cancelled = False
+    worker_type = "test-worker"
+    def __init__(self, result): self.result = result; self.initialized = True
     def initialize(self): self.initialized = True
     def health_check(self): return self.initialized
     def execute(self, job, context): return self.result
-    def cancel(self, job_id): self.cancelled = True
+    def cancel(self, job_id): pass
     def shutdown(self): self.initialized = False
+
+
+class AllowingGate:
+    def check(self, job):
+        return SimpleNamespace(allowed=True, code=None, message=None, qc_results=())
 
 
 def make_job(max_attempts=3):
@@ -42,17 +49,27 @@ def make_lease():
     return JobLease("job-1", "worker-1", "lease-1", "2099-01-01T00:00:00+00:00")
 
 
-def test_executor_persists_success_and_emits_events():
+def test_executor_requires_completion_gate():
+    job = make_job()
+    jobs, queue = FakeJobs(job), FakeQueue()
+    worker = FakeWorker(JobExecutionResult(True, ["asset-1"], {"score": 1.0}, "run-1"))
+    registry = WorkerRegistry(); registry.register(worker, {"IMAGE"}, worker_id="worker-1")
+    result = JobExecutor(jobs, queue, registry).execute_claimed(job, make_lease())
+    assert result.status is JobStatus.FAILED
+    assert result.job.error_code == "WORKER_EXCEPTION"
+
+
+def test_executor_persists_success_and_emits_events_with_gate():
     job = make_job()
     jobs, queue = FakeJobs(job), FakeQueue()
     worker = FakeWorker(JobExecutionResult(True, ["asset-1"], {"score": 1.0}, "run-1"))
     registry = WorkerRegistry(); registry.register(worker, {"IMAGE"}, worker_id="worker-1")
     events: list[JobEvent] = []
-    result = JobExecutor(jobs, queue, registry, events.append).execute_claimed(job, make_lease())
+    result = JobExecutor(jobs, queue, registry, events.append, completion_gate=AllowingGate()).execute_claimed(job, make_lease())
     assert result.status is JobStatus.COMPLETED
     assert jobs.job.output == JobOutput(["asset-1"], {"score": 1.0}, "run-1")
     assert queue.acknowledged == [JobStatus.COMPLETED]
-    assert [event.event_type for event in events] == ["JOB_STARTED", "JOB_PROGRESS", "JOB_COMPLETED"]
+    assert [event.event_type for event in events] == ["JOB_STARTED", "JOB_PROGRESS", "JOB_PROGRESS", "JOB_COMPLETED"]
 
 
 def test_executor_retries_retryable_failure_until_limit():
