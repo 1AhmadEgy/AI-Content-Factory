@@ -6,7 +6,7 @@ import uuid
 
 from ..domain.asset_repositories import AssetRepository
 from ..domain.assets import Asset, AssetStatus, AssetType, LicenseStatus
-from ..domain.jobs import GenerationJob
+from ..domain.jobs import GenerationJob, JobType
 from ..domain.provider_runs import ProviderRun
 from ..infrastructure.provider_run_repository import SQLiteProviderRunRepository
 from ..infrastructure.storage import LocalAssetStorage
@@ -18,7 +18,7 @@ from ..providers.media import media_mime
 
 
 class ProviderGenerationWorker(Worker):
-    """Execute generation jobs and persist provider outputs plus run telemetry."""
+    """Execute only provider capabilities that can produce the requested asset."""
 
     worker_type = "provider-generation"
 
@@ -41,9 +41,13 @@ class ProviderGenerationWorker(Worker):
             return JobExecutionResult(False, error_code="WORKER_NOT_INITIALIZED", error_message="Worker is not initialized")
         if context.cancellation_requested:
             return JobExecutionResult(False, error_code="CANCELLED", error_message="Cancellation requested")
-        model = self.providers.get(job.model) if job.model else self.providers.route("generation", job.type.value.lower())
+
+        capability = self._required_capability(job.type)
+        model = self.providers.get(job.model) if job.model else None
+        if model is None or capability not in model.adapter.capability().capabilities:
+            model = self.providers.route("generation", capability)
         if model is None:
-            return JobExecutionResult(False, error_code="MODEL_UNAVAILABLE", error_message=f"No model for {job.type.value}", retryable=True)
+            return JobExecutionResult(False, error_code="MODEL_CAPABILITY_UNAVAILABLE", error_message=f"No real provider configured for {capability}", retryable=False)
         if not model.enabled or not model.adapter.health_check():
             return JobExecutionResult(False, error_code="MODEL_UNHEALTHY", error_message=model.id, retryable=True)
 
@@ -51,7 +55,7 @@ class ProviderGenerationWorker(Worker):
         if self.provider_runs:
             self.provider_runs.create(ProviderRun(
                 id=run_id, job_id=job.id, provider=model.provider, model=model.id,
-                request_metadata={"jobType": job.type.value, "targetType": job.target_type, "targetId": job.target_id},
+                request_metadata={"jobType": job.type.value, "targetType": job.target_type, "targetId": job.target_id, "capability": capability},
                 status="RUNNING",
             ))
         try:
@@ -69,16 +73,29 @@ class ProviderGenerationWorker(Worker):
 
         asset_ids = list(response.output_asset_ids)
         if not asset_ids and response.output_bytes is not None:
+            if not response.output_bytes:
+                return self._fail_run(run_id, provider_run_id, "PROVIDER_EMPTY_MEDIA", "Provider returned an empty media payload")
             asset_ids = [self._persist_media(job, model.provider, model.id, response, provider_run_id)]
+
         if not asset_ids:
+            if job.type not in {JobType.STORY, JobType.SCRIPT, JobType.SCENE, JobType.SHOT, JobType.CHARACTER, JobType.WORLD}:
+                return self._fail_run(run_id, provider_run_id, "PROVIDER_MEDIA_OUTPUT_REQUIRED", f"{job.type.value} requires a real binary media output")
+            if not response.output_text or not response.output_text.strip():
+                return self._fail_run(run_id, provider_run_id, "PROVIDER_TEXT_OUTPUT_REQUIRED", "Provider returned no text output")
             payload = self._serialize_output(job, response.output_text, response.metrics)
             digest, path, size = self._store(payload)
             asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"provider-asset:{job.id}:{digest}"))
             self.assets.create(Asset(id=asset_id, project_id=job.project_id, type=self._asset_type(job), path=path, mime_type="application/json; charset=utf-8", size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, metadata={"provider": model.provider, "model": model.id, "providerRunId": provider_run_id}, license_status=LicenseStatus.VERIFIED)))
             asset_ids = [asset_id]
+
         if self.provider_runs:
             self.provider_runs.complete(run_id, status="COMPLETED", response_metadata={"assetIds": asset_ids, **dict(response.metrics)})
         return JobExecutionResult(success=True, asset_ids=asset_ids, metrics=dict(response.metrics), provider_run_id=provider_run_id)
+
+    def _fail_run(self, run_id: str, provider_run_id: str, code: str, message: str) -> JobExecutionResult:
+        if self.provider_runs:
+            self.provider_runs.complete(run_id, status="FAILED", error_code=code, response_metadata={})
+        return JobExecutionResult(False, provider_run_id=provider_run_id, error_code=code, error_message=message, retryable=False)
 
     def cancel(self, job_id: str) -> None:
         return None
@@ -102,6 +119,23 @@ class ProviderGenerationWorker(Worker):
     @staticmethod
     def _serialize_output(job: GenerationJob, output_text: str | None, metrics: dict[str, float]) -> bytes:
         return (json.dumps({"jobId": job.id, "jobType": job.type.value, "targetId": job.target_id, "output": output_text, "metrics": metrics}, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+
+    @staticmethod
+    def _required_capability(job_type: JobType) -> str:
+        return {
+            JobType.IMAGE: "image",
+            JobType.VIDEO: "video",
+            JobType.TTS: "tts",
+            JobType.LIPSYNC: "lipsync",
+            JobType.MUSIC: "music",
+            JobType.SFX: "sfx",
+            JobType.STORY: "story",
+            JobType.SCRIPT: "script",
+            JobType.SCENE: "scene",
+            JobType.SHOT: "shot",
+            JobType.CHARACTER: "character",
+            JobType.WORLD: "world",
+        }.get(job_type, "generation")
 
     @staticmethod
     def _asset_type(job: GenerationJob) -> AssetType:
