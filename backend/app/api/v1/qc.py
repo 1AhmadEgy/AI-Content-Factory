@@ -50,7 +50,7 @@ def build_router(runtime: OrchestratorRuntime, jobs: SQLiteJobRepository) -> API
         runtime.queue.enqueue(job)
         return {"data": {"jobId": job.id, "status": job.status.value, "contextVersion": job.input.parameters.get("contextVersion", 0)}, "requestId": request.state.request_id}
 
-    @router.post("/{qc_id}/approve")
+    @router.post("/qc/{qc_id}/approve")
     def approve(qc_id: str, request: Request) -> dict:
         row = store._get("qc_reviews", qc_id)
         if row is None:
@@ -61,7 +61,7 @@ def build_router(runtime: OrchestratorRuntime, jobs: SQLiteJobRepository) -> API
         saved = runtime.series_bible.record_qc_review(project_id, qc_id, row["asset_id"], "APPROVED", now)
         return {"data": {"id": qc_id, "status": "APPROVED"}, "contextVersion": saved["version"], "requestId": request.state.request_id}
 
-    @router.post("/{qc_id}/reject")
+    @router.post("/qc/{qc_id}/reject")
     def reject(qc_id: str, body: RejectRequest, request: Request) -> dict:
         row = store._get("qc_reviews", qc_id)
         if row is None:
