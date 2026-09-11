@@ -45,3 +45,38 @@ def test_series_bible_keeps_canonical_state_and_one_event_per_mutation():
         "episode.saved",
         "shot.saved",
     ]
+
+
+def test_qc_review_is_a_review_event_and_does_not_clear_latest_job():
+    repositories = SQLiteRepositories(":memory:")
+    repositories.projects.create(Project(id="project-1", name="Kids Series"))
+    bible = SeriesBibleService(ProjectContextStore(repositories.store))
+
+    bible.record_job(
+        "project-1",
+        {
+            "jobId": "job-qc-1",
+            "type": "QC",
+            "targetType": "asset",
+            "targetId": "asset-1",
+            "status": "SUCCEEDED",
+        },
+    )
+    saved = bible.record_qc_review(
+        "project-1",
+        "review-1",
+        "asset-1",
+        "APPROVED",
+        "2026-09-11T17:00:00+00:00",
+    )
+
+    snapshot = bible.snapshot("project-1")
+    assert saved["version"] == 2
+    assert snapshot["latest"]["jobId"] == "job-qc-1"
+    assert snapshot["latest"]["qcId"] == "review-1"
+    assert snapshot["qc"]["review-1"]["status"] == "APPROVED"
+    assert snapshot["storyState"]["latestQCReview"]["reviewId"] == "review-1"
+
+    events = bible.context.events("project-1", limit=10)
+    event_types = [event["eventType"] for event in reversed(events)]
+    assert event_types == ["generation.job", "qc.reviewed"]
