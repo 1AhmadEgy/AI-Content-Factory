@@ -118,6 +118,26 @@ def _validate_context_language(context: dict[str, Any]) -> None:
         raise HTTPException(400, "LANGUAGE_NOT_SUPPORTED_BY_COUNTRY")
 
 
+def _serialize_translation(result: Any) -> dict[str, Any]:
+    return {
+        "id": result.id,
+        "sourceLanguage": result.source_language,
+        "targetLanguage": result.target_language,
+        "sourceText": result.source_text,
+        "translatedText": result.translated_text,
+        "contentType": result.content_type,
+        "sourceId": result.source_id,
+        "sourceVersion": result.source_version,
+        "provider": result.provider,
+        "model": result.model,
+        "glossaryVersion": result.glossary_version,
+        "version": result.version,
+        "manual": result.manual,
+        "createdAt": result.created_at,
+        "metadata": result.metadata,
+    }
+
+
 def build_router(runtime) -> APIRouter:
     router = APIRouter(prefix="/api/v1/series", tags=["series"])
     repo = SQLiteSeriesContextRepository(runtime.repositories.store)
@@ -250,15 +270,20 @@ def build_router(runtime) -> APIRouter:
         )
 
         versions = dict(context.get("translationVersions") or {})
-        versions[str(body.translationVersion)] = {
+        version_key = str(body.translationVersion)
+        previous = dict(versions.get(version_key) or {})
+        versions[version_key] = {
+            **previous,
             "sourceLanguage": source_language,
             "targetLanguages": targets,
             "segmentCount": len(segments),
+            "resultCount": len(output["results"]),
+            "errorCount": len(output["errors"]),
         }
         context["translationVersions"] = versions
         repo.save(project_id, context)
         return {
-            "data": output["results"],
+            "data": [_serialize_translation(result) for result in output["results"]],
             "errors": output["errors"],
             "seriesId": project_id,
             "countryId": context.get("countryId"),
