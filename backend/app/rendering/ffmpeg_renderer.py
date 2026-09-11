@@ -91,7 +91,6 @@ class FfmpegRenderer(Renderer):
                 args += ["-i", path]
         if not inputs:
             raise ValueError("TIMELINE_HAS_NO_MEDIA")
-
         filter_parts: list[str] = []
         video_labels: list[str] = []
         for index, clip in enumerate(ordered_video):
@@ -99,11 +98,8 @@ class FfmpegRenderer(Renderer):
             dur = clip.duration_us / 1_000_000
             source_start = clip.source_start_us / 1_000_000
             label = f"v{index}"
-            filter_parts.append(
-                f"[{index}:v]trim=start={source_start}:duration={dur},setpts=PTS-STARTPTS,fps={profile.fps:g},scale={profile.width}:{profile.height}:force_original_aspect_ratio=decrease,pad={profile.width}:{profile.height}:(ow-iw)/2:(oh-ih)/2:color=black[{label}]"
-            )
+            filter_parts.append(f"[{index}:v]trim=start={source_start}:duration={dur},setpts=PTS-STARTPTS,fps={profile.fps:g},scale={profile.width}:{profile.height}:force_original_aspect_ratio=decrease,pad={profile.width}:{profile.height}:(ow-iw)/2:(oh-ih)/2:color=black[{label}]")
             video_labels.append(label)
-
         if video_labels:
             base = "vbase"
             duration = timeline.duration_us / 1_000_000
@@ -113,9 +109,7 @@ class FfmpegRenderer(Renderer):
                 start = clip.start_us / 1_000_000
                 end = clip.end_us / 1_000_000
                 out = f"vo{index}"
-                filter_parts.append(
-                    f"[{current}][{video_labels[index]}]overlay=eof_action=pass:shortest=0:enable='between(t,{start:.6f},{end:.6f})'[{out}]"
-                )
+                filter_parts.append(f"[{current}][{video_labels[index]}]overlay=eof_action=pass:shortest=0:enable='between(t,{start:.6f},{end:.6f})'[{out}]")
                 current = out
             final_video = current
             if self.options.subtitles_path:
@@ -123,7 +117,6 @@ class FfmpegRenderer(Renderer):
                 filter_parts.append(f"[{final_video}]subtitles='{subtitle_path}'[vsub]")
                 final_video = "vsub"
             filter_parts.append(f"[{final_video}]format=yuv420p[vout]")
-
         audio_labels: list[str] = []
         for offset, clip in enumerate(ordered_audio, start=len(ordered_video)):
             dur = clip.duration_us / 1_000_000
@@ -135,7 +128,6 @@ class FfmpegRenderer(Renderer):
         if audio_labels:
             joined = "".join(f"[{x}]" for x in audio_labels)
             filter_parts.append(f"{joined}amix=inputs={len(audio_labels)}:duration=longest:dropout_transition=0:normalize=0[aout]")
-
         args += ["-filter_complex", ";".join(filter_parts), "-map", "[vout]"]
         if audio_labels:
             args += ["-map", "[aout]"]
@@ -157,6 +149,8 @@ class FfmpegRenderer(Renderer):
         os.close(fd)
         staging = Path(staging_name)
         staging.unlink(missing_ok=True)
+        proc: subprocess.Popen[str] | None = None
+        registered = False
         try:
             args = self._build_args(timeline, profile, str(staging))
             with self._process_lock:
@@ -165,6 +159,7 @@ class FfmpegRenderer(Renderer):
                     return RenderResult(False, error="RENDER_ALREADY_RUNNING")
                 proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
                 self._processes[timeline.id] = proc
+                registered = True
             try:
                 _, stderr = proc.communicate(timeout=max(1, self.options.timeout_seconds))
             except subprocess.TimeoutExpired:
@@ -178,10 +173,10 @@ class FfmpegRenderer(Renderer):
         except (OSError, ValueError) as exc:
             return RenderResult(False, error=str(exc))
         finally:
-            with self._process_lock:
-                current = self._processes.get(timeline.id)
-                if current is proc if "proc" in locals() else False:
-                    self._processes.pop(timeline.id, None)
+            if registered and proc is not None:
+                with self._process_lock:
+                    if self._processes.get(timeline.id) is proc:
+                        self._processes.pop(timeline.id, None)
             staging.unlink(missing_ok=True)
 
     def cancel(self, render_id: str) -> bool:
