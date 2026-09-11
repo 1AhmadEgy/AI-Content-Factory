@@ -1,17 +1,16 @@
 import json
 
+import pytest
+
 from backend.app.application.ai_story_engine import AIStoryEngine
 from backend.app.domain.content import ContentBrief
-from backend.app.providers.builtin import LocalModelAdapter, MockModelAdapter
-from backend.app.providers.registry import ModelRegistry, RegisteredModel
+from backend.app.providers.builtin import LocalModelAdapter
+from backend.app.providers.registry import ModelRegistry
 
 
-def test_ai_story_engine_falls_back_to_deterministic_when_provider_has_no_text() -> None:
-    registry = ModelRegistry()
-    registry.register(RegisteredModel("mock", "mock", MockModelAdapter(), priority=1))
-    plan = AIStoryEngine(registry).generate(ContentBrief(topic="AI for beginners"))
-    assert plan.title == "AI for beginners"
-    assert len(plan.scenes) > 0
+def test_ai_story_engine_requires_real_provider() -> None:
+    with pytest.raises(RuntimeError, match="AI_PROVIDER_NOT_CONFIGURED:story"):
+        AIStoryEngine(ModelRegistry()).generate(ContentBrief(topic="AI for beginners"))
 
 
 def test_local_adapter_parses_openai_compatible_response(monkeypatch) -> None:
@@ -23,7 +22,9 @@ def test_local_adapter_parses_openai_compatible_response(monkeypatch) -> None:
 
     monkeypatch.setattr("backend.app.providers.builtin.urlopen", lambda *args, **kwargs: Response())
     adapter = LocalModelAdapter("http://localhost:11434", frozenset({"story"}))
-    result = adapter.execute(__import__("backend.app.providers.contracts", fromlist=["ProviderRequest"]).ProviderRequest(model="test", parameters={"prompt": "hi"}))
+    from backend.app.providers.contracts import ProviderRequest
+
+    result = adapter.execute(ProviderRequest(model="test", parameters={"prompt": "hi"}))
     assert result.success is True
     assert result.output_text == "hello"
     assert result.provider_run_id == "run-1"
