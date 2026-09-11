@@ -8,7 +8,23 @@ from .contracts import ModelAdapter, ModelCapability, ProviderRequest, ProviderR
 
 
 class HuggingFaceMediaAdapter(ModelAdapter):
-    """Real Hugging Face Inference Providers task endpoint for binary media."""
+    """Real Hugging Face Inference Providers task endpoint for binary media.
+
+    The adapter intentionally uses the task payload documented by Hugging Face
+    (`inputs` plus optional `parameters`) and never fabricates a provider run id.
+    Synchronous routed inference can legitimately return media without exposing
+    a request id to the caller, so provider_run_id is optional at this layer.
+    """
+
+    _CONTINUITY_KEYS = frozenset({
+        "prompt",
+        "character_ids",
+        "location_ids",
+        "country_id",
+        "library_id",
+        "continuity_rules",
+        "production_context",
+    })
 
     def __init__(self, token: str, model: str, task: str, capabilities: frozenset[str], timeout_seconds: int = 300) -> None:
         self.token = token
@@ -27,40 +43,44 @@ class HuggingFaceMediaAdapter(ModelAdapter):
         prompt = request.parameters.get("prompt")
         if not isinstance(prompt, str) or not prompt.strip():
             return ProviderResponse(False, error_code="HF_EMPTY_PROMPT", error_message="Media generation requires a non-empty prompt")
+
         payload: dict[str, object] = {"inputs": prompt}
         parameters = {
-            k: v
-            for k, v in request.parameters.items()
-            if k not in {"prompt", "character_ids", "location_ids", "country_id", "library_id", "continuity_rules", "production_context"}
+            key: value
+            for key, value in request.parameters.items()
+            if key not in self._CONTINUITY_KEYS
         }
-        if request.seed is not None:
+        if request.seed is not None and "seed" not in parameters:
             parameters["seed"] = request.seed
         if parameters:
             payload["parameters"] = parameters
+
         url = f"https://router.huggingface.co/hf-inference/models/{self.model}"
         try:
             req = Request(
                 url,
-                data=json.dumps(payload).encode(),
+                data=json.dumps(payload).encode("utf-8"),
                 headers={"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"},
                 method="POST",
             )
             with urlopen(req, timeout=self.timeout_seconds) as response:
                 body = response.read()
                 mime = response.headers.get("Content-Type", "application/octet-stream").split(";", 1)[0].lower()
-                # Inference Providers use a provider-generated request/response ID for billing/tracing.
-                # Accept the documented/provider variants; never manufacture one locally.
+                # Preserve a real provider/request id when the upstream exposes one.
+                # Never manufacture one locally when the synchronous response omits it.
                 run_id = (
                     response.headers.get("Inference-Id")
                     or response.headers.get("inference-id")
                     or response.headers.get("x-request-id")
                     or response.headers.get("x-amzn-requestid")
                 )
+
             if not body:
                 return ProviderResponse(False, error_code="HF_EMPTY_OUTPUT", error_message="Provider returned empty output")
+
             if mime == "application/json" or mime.endswith("+json"):
                 try:
-                    data = json.loads(body.decode())
+                    data = json.loads(body.decode("utf-8"))
                 except (UnicodeDecodeError, json.JSONDecodeError):
                     return ProviderResponse(False, error_code="HF_PROVIDER_ERROR", error_message="Provider returned invalid JSON")
                 message = data.get("error") if isinstance(data, dict) else None
@@ -70,8 +90,7 @@ class HuggingFaceMediaAdapter(ModelAdapter):
                     error_code="HF_PROVIDER_ERROR",
                     error_message=str(message or "Provider returned JSON instead of binary media"),
                 )
-            if not run_id:
-                return ProviderResponse(False, error_code="HF_RUN_ID_MISSING", error_message="Provider did not return a request id")
+
             return ProviderResponse(
                 True,
                 output_bytes=body,
