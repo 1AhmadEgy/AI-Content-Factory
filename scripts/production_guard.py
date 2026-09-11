@@ -19,7 +19,7 @@ FORBIDDEN_TOKENS = (
     "timer_based_completion",
 )
 
-EXCLUDED_PARTS = {"tests", "docs", ".git", "build", "dist", "__pycache__"}
+EXCLUDED_PARTS = {"tests", "docs", "scripts", ".git", "build", "dist", "__pycache__"}
 
 
 def iter_production_files(root: Path):
