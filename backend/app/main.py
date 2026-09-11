@@ -24,6 +24,7 @@ from .api.v1.qc import build_router as build_qc_router
 from .api.v1.render import build_router as build_render_router
 from .api.v1.scheduling import build_router as build_scheduling_router
 from .api.v1.series import build_router as build_series_router
+from .api.v1.shots import build_router as build_shots_router
 from .api.v1.system import build_router as build_system_router
 from .api.v1.translations import build_router as build_translation_router
 from .infrastructure.asset_repository import SQLiteAssetRepository
@@ -44,10 +45,18 @@ worker_id = os.getenv("AICF_WORKER_ID", "auto")
 worker_loop = WorkerLoop(orchestrator_runtime, worker_id=worker_id)
 
 
-def _worker_autostart_enabled() -> bool: return os.getenv("AICF_WORKER_AUTOSTART", "false").strip().lower() in {"1", "true", "yes", "on"}
-def _scheduler_autostart_enabled() -> bool: return os.getenv("AICF_SCHEDULER_AUTOSTART", "true").strip().lower() in {"1", "true", "yes", "on"}
+def _worker_autostart_enabled() -> bool:
+    return os.getenv("AICF_WORKER_AUTOSTART", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _scheduler_autostart_enabled() -> bool:
+    return os.getenv("AICF_SCHEDULER_AUTOSTART", "true").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _api_token() -> str | None:
-    token = os.getenv("AICF_API_TOKEN", "").strip(); return token or None
+    token = os.getenv("AICF_API_TOKEN", "").strip()
+    return token or None
+
 
 schedule_repository = SQLiteScheduleRepository(repositories.store)
 job_service = JobService(job_repository)
@@ -57,8 +66,27 @@ def _enqueue_scheduled(schedule):
     from .domain.jobs import JobInput, JobType
     payload = schedule.payload
     job_type = JobType(payload.get("type", schedule.operation).upper())
-    job = job_service.create(project_id=schedule.project_id, job_type=job_type, target_type=payload.get("targetType", "scheduled"), target_id=payload.get("targetId"), parent_job_id=payload.get("parentJobId"), priority=int(payload.get("priority", 100)), max_attempts=int(payload.get("maxAttempts", 3)), provider=payload.get("provider"), model=payload.get("model"), input=JobInput(parameters=payload.get("parameters", payload), reference_asset_ids=payload.get("referenceAssetIds", []), constraints=payload.get("constraints", {}), seed=payload.get("seed"), deterministic=bool(payload.get("deterministic", False))))
-    orchestrator_runtime.queue.enqueue(job); return job
+    job = job_service.create(
+        project_id=schedule.project_id,
+        job_type=job_type,
+        target_type=payload.get("targetType", "scheduled"),
+        target_id=payload.get("targetId"),
+        parent_job_id=payload.get("parentJobId"),
+        priority=int(payload.get("priority", 100)),
+        max_attempts=int(payload.get("maxAttempts", 3)),
+        provider=payload.get("provider"),
+        model=payload.get("model"),
+        input=JobInput(
+            parameters=payload.get("parameters", payload),
+            reference_asset_ids=payload.get("referenceAssetIds", []),
+            constraints=payload.get("constraints", {}),
+            seed=payload.get("seed"),
+            deterministic=bool(payload.get("deterministic", False)),
+        ),
+    )
+    orchestrator_runtime.queue.enqueue(job)
+    return job
+
 
 persistent_scheduler = PersistentScheduler(schedule_repository, _enqueue_scheduled)
 scheduler_loop = SchedulerLoop(persistent_scheduler, float(os.getenv("AICF_SCHEDULER_INTERVAL_SECONDS", "5")))
@@ -66,12 +94,18 @@ scheduler_loop = SchedulerLoop(persistent_scheduler, float(os.getenv("AICF_SCHED
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    if _worker_autostart_enabled(): worker_loop.start()
-    if _scheduler_autostart_enabled(): scheduler_loop.start()
-    try: yield
-    finally: scheduler_loop.stop(); worker_loop.stop()
+    if _worker_autostart_enabled():
+        worker_loop.start()
+    if _scheduler_autostart_enabled():
+        scheduler_loop.start()
+    try:
+        yield
+    finally:
+        scheduler_loop.stop()
+        worker_loop.stop()
 
-app = FastAPI(title="AI Content Factory API", version="0.8.0", docs_url="/api/v1/docs", redoc_url="/api/v1/redoc", openapi_url="/api/v1/openapi.json", lifespan=lifespan)
+
+app = FastAPI(title="AI Content Factory API", version="0.9.0", docs_url="/api/v1/docs", redoc_url="/api/v1/redoc", openapi_url="/api/v1/openapi.json", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -80,7 +114,9 @@ async def request_id_middleware(request: Request, call_next):
     request.state.request_id = request_id
     if _api_token() and request.url.path not in {"/api/v1/health", "/api/v1/ready", "/api/v1/readiness"} and request.headers.get("Authorization", "") != f"Bearer {_api_token()}":
         return JSONResponse(status_code=401, content={"error": {"code": "UNAUTHORIZED", "message": "Authentication required", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
-    response = await call_next(request); response.headers["X-Request-Id"] = request_id; return response
+    response = await call_next(request)
+    response.headers["X-Request-Id"] = request_id
+    return response
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -114,6 +150,7 @@ app.include_router(build_best_take_router(orchestrator_runtime, job_repository))
 app.include_router(build_render_router(orchestrator_runtime, job_repository))
 app.include_router(build_system_router(orchestrator_runtime))
 app.include_router(pipeline_router)
+app.include_router(build_shots_router(orchestrator_runtime))
 
 
 @app.get("/api/v1/health", tags=["system"])
@@ -142,4 +179,5 @@ def scheduler_status(request: Request):
 
 
 @app.get("/api/v1/readiness", include_in_schema=False)
-def readiness_alias(request: Request): return readiness(request)
+def readiness_alias(request: Request):
+    return readiness(request)
