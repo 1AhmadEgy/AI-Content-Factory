@@ -14,8 +14,10 @@ object NetworkClient {
 
     private fun normalizedBaseUrl(): String {
         val configured = BuildConfig.AICF_API_BASE_URL.trim()
-        val value = if (configured.isBlank()) "http://10.0.2.2:8000/" else configured
-        return if (value.endsWith('/')) value else "$value/"
+        check(configured.isNotBlank()) {
+            "AICF_API_BASE_URL is not configured. Configure the backend URL for this build."
+        }
+        return if (configured.endsWith('/')) configured else "$configured/"
     }
 
     private val authInterceptor = Interceptor { chain ->
