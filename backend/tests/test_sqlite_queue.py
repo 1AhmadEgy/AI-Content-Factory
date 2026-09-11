@@ -37,7 +37,7 @@ def test_claim_orders_by_priority_and_prevents_double_claim() -> None:
         repositories.close()
 
 
-def test_expired_lease_returns_job_to_retrying() -> None:
+def test_expired_lease_returns_job_to_runnable_queue() -> None:
     repositories = SQLiteRepositories(":memory:")
     try:
         repositories.projects.create(Project(id="project-1", name="Demo"))
@@ -56,7 +56,10 @@ def test_expired_lease_returns_job_to_retrying() -> None:
         assert queue.release_expired() == 1
         restored = repositories.jobs.get("job-1")
         assert restored is not None
-        assert restored.status is JobStatus.RETRYING
+        assert restored.status is JobStatus.QUEUED
         assert restored.error_code == "LEASE_EXPIRED"
+        reclaimed = queue.claim_next("worker-b")
+        assert reclaimed is not None
+        assert reclaimed[0].id == "job-1"
     finally:
         repositories.close()
