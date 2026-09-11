@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from ...domain.assets import AssetStatus, AssetType
 from ...domain.jobs import JobInput, JobType
 from ...infrastructure.sqlite import SQLiteJobRepository
+from ...infrastructure.series_context_repository import SQLiteSeriesContextRepository
 from ...orchestrator.job_service import JobService
 from ...orchestrator.runtime import OrchestratorRuntime
 
@@ -30,11 +31,13 @@ class SubtitleOptions(BaseModel):
 
 class BrandingOptions(BaseModel):
     enabled: bool = True
+    applyToNewEpisodes: bool = True
     brand: str = "afham-wadhak"
     introAssetId: str | None = None
     outroAssetId: str | None = None
     watermarkAssetId: str | None = None
     watermarkOpacity: float = Field(default=0.82, ge=0.0, le=1.0)
+    version: int = Field(default=1, ge=1)
 
 
 class RenderRequest(BaseModel):
@@ -42,8 +45,8 @@ class RenderRequest(BaseModel):
     timelineId: str
     output: RenderOutput = Field(default_factory=RenderOutput)
     subtitles: SubtitleOptions = Field(default_factory=SubtitleOptions)
-    # None means: use the project's branding setting. An explicit value here
-    # is a per-render override and does not change the project setting.
+    # None means: use the persistent series branding setting. An explicit value
+    # here is a per-render override and does not change the series setting.
     branding: BrandingOptions | None = None
 
 
@@ -53,25 +56,34 @@ def _fingerprint(body: RenderRequest, effective_branding: BrandingOptions) -> st
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-def _resolve_branding(project, request_branding: BrandingOptions | None) -> BrandingOptions:
+def _resolve_branding(project, series_context_repo: SQLiteSeriesContextRepository, request_branding: BrandingOptions | None, project_id: str) -> BrandingOptions:
     if request_branding is not None:
         return request_branding
 
+    # Series-level policy wins over project defaults. Asset IDs can fall back
+    # to the existing project configuration so enabling the series switch does
+    # not require re-entering already configured brand assets.
     settings = project.settings or {}
-    configured = settings.get("branding") or {}
+    project_config = dict(settings.get("branding") or {})
+    series_context = series_context_repo.get(project_id) or {}
+    configured = dict(project_config)
+    configured.update(series_context.get("branding") or {})
     return BrandingOptions(
-        enabled=bool(configured.get("enabled", True)),
+        enabled=bool(configured.get("enabled", False)),
+        applyToNewEpisodes=bool(configured.get("applyToNewEpisodes", True)),
         brand=str(configured.get("brand") or "afham-wadhak"),
-        introAssetId=configured.get("introAssetId"),
-        outroAssetId=configured.get("outroAssetId"),
-        watermarkAssetId=configured.get("watermarkAssetId"),
-        watermarkOpacity=float(configured.get("watermarkOpacity", 0.82)),
+        introAssetId=configured.get("introAssetId") or project_config.get("introAssetId"),
+        outroAssetId=configured.get("outroAssetId") or project_config.get("outroAssetId"),
+        watermarkAssetId=configured.get("watermarkAssetId") or project_config.get("watermarkAssetId"),
+        watermarkOpacity=float(configured.get("watermarkOpacity", project_config.get("watermarkOpacity", 0.82))),
+        version=int(configured.get("version", 1)),
     )
 
 
 def build_router(runtime: OrchestratorRuntime, jobs: SQLiteJobRepository) -> APIRouter:
     router = APIRouter(prefix="/api/v1/render", tags=["render"])
     service = JobService(jobs)
+    series_context_repo = SQLiteSeriesContextRepository(runtime.repositories.store)
 
     @router.post("", status_code=status.HTTP_202_ACCEPTED)
     def render(body: RenderRequest, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
@@ -86,7 +98,7 @@ def build_router(runtime: OrchestratorRuntime, jobs: SQLiteJobRepository) -> API
         if timeline_asset.type is not AssetType.DOCUMENT or timeline_asset.status is not AssetStatus.READY:
             raise HTTPException(status_code=422, detail="TIMELINE_NOT_READY")
 
-        effective_branding = _resolve_branding(project, body.branding)
+        effective_branding = _resolve_branding(project, series_context_repo, body.branding, body.projectId)
         operation = "POST:/api/v1/render"
         fingerprint = _fingerprint(body, effective_branding)
         existing = jobs.store.get_idempotency(idempotency_key, operation)
