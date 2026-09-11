@@ -28,7 +28,13 @@ class AIGenerationPlanner:
     def tts(self, brief: ContentBrief, scene: ScenePlan) -> GenerationSpec:
         return GenerationSpec(JobType.TTS, scene.narration, parameters={"language": brief.language, "scene": scene.number})
 
-    def audio(self, brief: ContentBrief, scene: ScenePlan, kind: JobType) -> GenerationSpec:
+    def audio(self, brief: ContentBrief, scene: ScenePlan, kind: JobType | str) -> GenerationSpec:
+        if isinstance(kind, str):
+            normalized = kind.strip().upper()
+            try:
+                kind = JobType(normalized)
+            except ValueError as exc:
+                raise ValueError(f"Unsupported audio kind: {kind}") from exc
         if kind not in {JobType.MUSIC, JobType.SFX}:
             raise ValueError(f"Unsupported audio kind: {kind}")
         text = f"Create {kind.value.lower()} for scene {scene.number}: {scene.visual}. Style: {brief.style}."
