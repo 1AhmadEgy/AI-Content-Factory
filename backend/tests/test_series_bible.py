@@ -4,7 +4,7 @@ from app.services.project_context import ProjectContextStore
 from app.services.series_bible import SeriesBibleService
 
 
-def test_series_bible_keeps_canonical_state_and_event_history():
+def test_series_bible_keeps_canonical_state_and_one_event_per_mutation():
     repositories = SQLiteRepositories(":memory:")
     repositories.projects.create(Project(id="project-1", name="Kids Series"))
     bible = SeriesBibleService(ProjectContextStore(repositories.store))
@@ -32,11 +32,16 @@ def test_series_bible_keeps_canonical_state_and_event_history():
     assert snapshot["episodes"]["episode-1"]["title"] == "النظافة في المدرسة"
     assert snapshot["latest"]["shotId"] == "shot-1"
     assert snapshot["rules"] == ["age appropriate", "light comedy", "stable character identities"]
+    assert snapshot["contextVersion"] == 5
 
     events = bible.context.events("project-1", limit=50)
-    event_types = {event["eventType"] for event in events}
-    assert "series.bible.initialized" in event_types
-    assert "character.saved" in event_types
-    assert "location.saved" in event_types
-    assert "episode.saved" in event_types
-    assert "shot.saved" in event_types
+    assert len(events) == 5
+    event_types = [event["eventType"] for event in reversed(events)]
+    assert event_types == [
+        "series.bible.initialized",
+        "character.saved",
+        "character.saved",
+        "location.saved",
+        "episode.saved",
+        "shot.saved",
+    ]
