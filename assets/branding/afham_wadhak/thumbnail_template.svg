@@ -1,0 +1,17 @@
+<svg width="1280" height="720" viewBox="0 0 1280 720" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1280" height="720" fill="#111111"/>
+  <rect x="0" y="0" width="1280" height="720" fill="url(#paint0_radial)"/>
+  <circle cx="220" cy="360" r="170" fill="#FFD84D"/>
+  <circle cx="160" cy="320" r="18" fill="#111111"/>
+  <circle cx="280" cy="320" r="18" fill="#111111"/>
+  <path d="M152 390C176 426 198 444 220 444C242 444 264 426 288 390" stroke="#111111" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="430" y="150" width="740" height="420" rx="44" fill="#FFFFFF" fill-opacity="0.06" stroke="#FFD84D" stroke-opacity="0.35" stroke-width="4"/>
+  <text x="800" y="330" text-anchor="middle" font-family="Tajawal, Cairo, Arial, sans-serif" font-size="88" font-weight="800" fill="#FFFFFF">عنوان قصير</text>
+  <text x="800" y="415" text-anchor="middle" font-family="Cairo, Arial, sans-serif" font-size="46" font-weight="400" fill="#FFD84D">شرح خفيف وممتع</text>
+  <defs>
+    <radialGradient id="paint0_radial" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(640 360) rotate(90) scale(360 640)">
+      <stop stop-color="#4DB6FF" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#111111" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+</svg>
