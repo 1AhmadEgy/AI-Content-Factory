@@ -10,7 +10,7 @@ from .job_service import JobService
 
 
 class ContentPipelineOrchestrator:
-    """Expand jobs through the offline-first production lifecycle with sibling aggregation."""
+    """Expand jobs through the production lifecycle with immutable continuity context."""
 
     def __init__(self, job_service: JobService, enqueue, generation_planner: AIGenerationPlanner | None = None) -> None:
         self.job_service = job_service
@@ -31,10 +31,33 @@ class ContentPipelineOrchestrator:
         if job.type is JobType.RENDER: return self._create_final_qc_job(job)
         return []
 
+    @staticmethod
+    def _brief_from_data(data: dict[str, object]) -> ContentBrief:
+        return ContentBrief(
+            topic=str(data.get("topic", "")), language=str(data.get("language", "en")),
+            duration_seconds=int(data.get("durationSeconds", 60)), style=str(data.get("style", "cinematic")),
+            audience=str(data.get("audience", "general")), platform=str(data.get("platform", "youtube")),
+            aspect_ratio=str(data.get("aspectRatio", "16:9")),
+            character_ids=tuple(str(x) for x in (data.get("characterIds") or data.get("character_ids") or []) if str(x)),
+            location_ids=tuple(str(x) for x in (data.get("locationIds") or data.get("location_ids") or []) if str(x)),
+            continuity_rules=tuple(str(x) for x in (data.get("continuityRules") or data.get("continuity_rules") or []) if str(x)),
+            country_id=str(data.get("countryId") or data.get("country_id") or "egypt"),
+            library_id=str(data.get("libraryId") or data.get("library_id") or "local-library-egypt"),
+            dialect=str(data.get("dialect")) if data.get("dialect") is not None else None,
+            glossary=dict(data.get("glossary") or {}),
+            production_context=dict(data.get("productionContext") or data.get("production_context") or {}),
+            project_id=str(data.get("projectId")) if data.get("projectId") is not None else None,
+        )
+
+    @staticmethod
+    def _brief_payload(job: GenerationJob) -> dict[str, object]:
+        keys = ("topic", "language", "durationSeconds", "style", "audience", "platform", "aspectRatio", "characterIds", "locationIds", "continuityRules", "countryId", "libraryId", "dialect", "glossary", "productionContext", "projectId")
+        return {k: job.input.parameters[k] for k in keys if k in job.input.parameters}
+
     def _create_scene_jobs(self, job: GenerationJob) -> list[GenerationJob]:
         plan = job.input.parameters.get("plan")
         scenes = plan.get("scenes", []) if isinstance(plan, dict) else []
-        brief = {k: job.input.parameters[k] for k in ("topic", "language", "durationSeconds", "style", "audience", "platform", "aspectRatio") if k in job.input.parameters}
+        brief = self._brief_payload(job)
         return [self._enqueue(job, JobType.SCENE, "scene", f"{job.id}:scene:{int(scene.get('number', i))}", {"scene": scene, "brief": brief, "storyJobId": job.id, "sceneNumber": int(scene.get("number", i))}, 1) for i, scene in enumerate(scenes, 1) if isinstance(scene, dict)]
 
     def _create_shot_jobs(self, job: GenerationJob) -> list[GenerationJob]:
@@ -47,7 +70,7 @@ class ContentPipelineOrchestrator:
         scene_data = job.input.parameters.get("scene")
         brief_data = job.input.parameters.get("brief", {})
         if not isinstance(scene_data, dict) or not isinstance(brief_data, dict): return []
-        brief = ContentBrief(topic=str(brief_data.get("topic", "")), language=str(brief_data.get("language", "en")), duration_seconds=int(brief_data.get("durationSeconds", 60)), style=str(brief_data.get("style", "cinematic")), audience=str(brief_data.get("audience", "general")), platform=str(brief_data.get("platform", "youtube")), aspect_ratio=str(brief_data.get("aspectRatio", "16:9")))
+        brief = self._brief_from_data(brief_data)
         scene = ScenePlan(number=int(scene_data.get("number", 1)), title=str(scene_data.get("title", "Scene")), duration_seconds=float(scene_data.get("durationSeconds", scene_data.get("duration_seconds", 5))), visual=str(scene_data.get("visual", "")), narration=str(scene_data.get("narration", "")), shots=[])
         created = []
         for spec in (self.generation_planner.tts(brief, scene), self.generation_planner.audio(brief, scene, "music"), self.generation_planner.audio(brief, scene, "sfx")):
@@ -60,9 +83,14 @@ class ContentPipelineOrchestrator:
         if not isinstance(shot_data, dict) or not isinstance(scene_data, dict): return []
         brief_data = job.input.parameters.get("brief", {})
         if not isinstance(brief_data, dict): brief_data = {}
-        brief = ContentBrief(topic=str(brief_data.get("topic", "")), language=str(brief_data.get("language", "en")), duration_seconds=int(brief_data.get("durationSeconds", 60)), style=str(brief_data.get("style", "cinematic")), audience=str(brief_data.get("audience", "general")), platform=str(brief_data.get("platform", "youtube")), aspect_ratio=str(brief_data.get("aspectRatio", "16:9")))
+        brief = self._brief_from_data(brief_data)
         scene = ScenePlan(number=int(scene_data.get("number", 1)), title=str(scene_data.get("title", "Scene")), duration_seconds=float(scene_data.get("durationSeconds", 5)), visual=str(scene_data.get("visual", "")), narration=str(scene_data.get("narration", "")), shots=[])
-        shot = ShotPlan(number=int(shot_data.get("number", 1)), prompt=str(shot_data.get("prompt", "")), duration_seconds=float(shot_data.get("durationSeconds", 5)), camera=str(shot_data.get("camera", "medium")), lighting=str(shot_data.get("lighting", "natural")), style=str(shot_data.get("style", brief.style)))
+        character_ids = tuple(str(x) for x in (shot_data.get("characterIds") or shot_data.get("character_ids") or []) if str(x))
+        location_ids = tuple(str(x) for x in (shot_data.get("locationIds") or shot_data.get("location_ids") or []) if str(x))
+        if not character_ids and not location_ids:
+            character_ids = brief.character_ids
+            location_ids = brief.location_ids
+        shot = ShotPlan(number=int(shot_data.get("number", 1)), prompt=str(shot_data.get("prompt", "")), duration_seconds=float(shot_data.get("durationSeconds", 5)), camera=str(shot_data.get("camera", "medium")), lighting=str(shot_data.get("lighting", "natural")), style=str(shot_data.get("style", brief.style)), character_ids=character_ids, location_ids=location_ids)
         count = max(1, min(int(job.input.parameters.get("takeCount", 4)), 8))
         created = []
         for take in range(1, count + 1):
