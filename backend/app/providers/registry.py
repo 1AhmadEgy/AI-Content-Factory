@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from .builtin import GeminiModelAdapter, LocalMediaModelAdapter, LocalModelAdapter, OpenAICompatibleCloudAdapter
 from .contracts import ModelAdapter
+from .huggingface_media import HuggingFaceMediaAdapter
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,50 +62,30 @@ def default_provider_registry() -> ModelRegistry:
     text_endpoint = os.getenv("AICF_TEXT_PROVIDER_ENDPOINT", "").strip()
     text_model = os.getenv("AICF_TEXT_PROVIDER_MODEL", "").strip()
     if text_endpoint and text_model and text_model != "your-text-model":
-        registry.register(
-            RegisteredModel(
-                id=text_model,
-                provider=os.getenv("AICF_TEXT_PROVIDER_NAME", "local-text"),
-                adapter=LocalModelAdapter(text_endpoint, _capabilities(os.getenv("AICF_TEXT_PROVIDER_CAPABILITIES", "story,script,scene,shot"), frozenset({"story", "script", "scene", "shot"})), timeout_seconds=int(os.getenv("AICF_TEXT_PROVIDER_TIMEOUT_SECONDS", "120"))),
-                priority=int(os.getenv("AICF_TEXT_PROVIDER_PRIORITY", "50")),
-            )
-        )
+        registry.register(RegisteredModel(id=text_model, provider=os.getenv("AICF_TEXT_PROVIDER_NAME", "local-text"), adapter=LocalModelAdapter(text_endpoint, _capabilities(os.getenv("AICF_TEXT_PROVIDER_CAPABILITIES", "story,script,scene,shot"), frozenset({"story", "script", "scene", "shot"})), timeout_seconds=int(os.getenv("AICF_TEXT_PROVIDER_TIMEOUT_SECONDS", "120"))), priority=int(os.getenv("AICF_TEXT_PROVIDER_PRIORITY", "50"))))
 
     gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
     gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
     if gemini_key and gemini_model:
-        registry.register(
-            RegisteredModel(
-                id=f"gemini:{gemini_model}",
-                provider="gemini",
-                adapter=GeminiModelAdapter(gemini_key, gemini_model, _capabilities(os.getenv("GEMINI_CAPABILITIES", "story,script,scene,shot,character,world,text"), frozenset({"story", "script", "scene", "shot", "character", "world", "text"})), timeout_seconds=int(os.getenv("GEMINI_TIMEOUT_SECONDS", "120"))),
-                priority=int(os.getenv("GEMINI_PRIORITY", "40")),
-            )
-        )
+        registry.register(RegisteredModel(id=f"gemini:{gemini_model}", provider="gemini", adapter=GeminiModelAdapter(gemini_key, gemini_model, _capabilities(os.getenv("GEMINI_CAPABILITIES", "story,script,scene,shot,character,world,text"), frozenset({"story", "script", "scene", "shot", "character", "world", "text"})), timeout_seconds=int(os.getenv("GEMINI_TIMEOUT_SECONDS", "120"))), priority=int(os.getenv("GEMINI_PRIORITY", "40"))))
 
     hf_token = os.getenv("HF_TOKEN", "").strip()
     hf_model = os.getenv("HF_MODEL", "").strip()
     hf_endpoint = os.getenv("HF_ENDPOINT", "https://router.huggingface.co").strip()
     if hf_token and hf_model and hf_endpoint:
-        registry.register(
-            RegisteredModel(
-                id=f"huggingface:{hf_model}",
-                provider="huggingface",
-                adapter=OpenAICompatibleCloudAdapter(hf_endpoint, hf_token, _capabilities(os.getenv("HF_CAPABILITIES", "story,script,scene,shot,character,world,text"), frozenset({"story", "script", "scene", "shot", "character", "world", "text"})), timeout_seconds=int(os.getenv("HF_TIMEOUT_SECONDS", "120"))),
-                priority=int(os.getenv("HF_PRIORITY", "60")),
-            )
-        )
+        registry.register(RegisteredModel(id=f"huggingface:{hf_model}", provider="huggingface", adapter=OpenAICompatibleCloudAdapter(hf_endpoint, hf_token, _capabilities(os.getenv("HF_CAPABILITIES", "story,script,scene,shot,character,world,text"), frozenset({"story", "script", "scene", "shot", "character", "world", "text"})), timeout_seconds=int(os.getenv("HF_TIMEOUT_SECONDS", "120"))), priority=int(os.getenv("HF_PRIORITY", "60"))))
+
+    hf_media_token = os.getenv("HF_MEDIA_TOKEN", "").strip() or hf_token
+    hf_media_model = os.getenv("HF_MEDIA_MODEL", "").strip()
+    hf_media_task = os.getenv("HF_MEDIA_TASK", "text-to-image").strip()
+    if hf_media_token and hf_media_model:
+        capability = {"text-to-image": "image", "text-to-video": "video", "text-to-speech": "tts"}.get(hf_media_task)
+        if capability:
+            registry.register(RegisteredModel(id=f"huggingface-media:{hf_media_model}", provider="huggingface-inference", adapter=HuggingFaceMediaAdapter(hf_media_token, hf_media_model, hf_media_task, frozenset({capability}), timeout_seconds=int(os.getenv("HF_MEDIA_TIMEOUT_SECONDS", "300"))), priority=int(os.getenv("HF_MEDIA_PRIORITY", "70"))))
 
     media_endpoint = os.getenv("AICF_MEDIA_PROVIDER_ENDPOINT", "").strip()
     media_model = os.getenv("AICF_MEDIA_PROVIDER_MODEL", "").strip()
     if media_endpoint and media_model:
-        registry.register(
-            RegisteredModel(
-                id=media_model,
-                provider=os.getenv("AICF_MEDIA_PROVIDER_NAME", "local-media"),
-                adapter=LocalMediaModelAdapter(media_endpoint, _capabilities(os.getenv("AICF_MEDIA_PROVIDER_CAPABILITIES", "image,video,tts,music,sfx,lipsync,upscale,interpolation"), frozenset({"image", "video", "tts", "music", "sfx", "lipsync", "upscale", "interpolation"})), timeout_seconds=int(os.getenv("AICF_MEDIA_PROVIDER_TIMEOUT_SECONDS", "300"))),
-                priority=int(os.getenv("AICF_MEDIA_PROVIDER_PRIORITY", "50")),
-            )
-        )
+        registry.register(RegisteredModel(id=media_model, provider=os.getenv("AICF_MEDIA_PROVIDER_NAME", "local-media"), adapter=LocalMediaModelAdapter(media_endpoint, _capabilities(os.getenv("AICF_MEDIA_PROVIDER_CAPABILITIES", "image,video,tts,music,sfx,lipsync,upscale,interpolation"), frozenset({"image", "video", "tts", "music", "sfx", "lipsync", "upscale", "interpolation"})), timeout_seconds=int(os.getenv("AICF_MEDIA_PROVIDER_TIMEOUT_SECONDS", "300"))), priority=int(os.getenv("AICF_MEDIA_PROVIDER_PRIORITY", "50"))))
 
     return registry
