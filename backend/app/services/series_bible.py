@@ -33,6 +33,8 @@ class SeriesBibleService:
         bible.setdefault("scenes", {})
         bible.setdefault("shots", {})
         bible.setdefault("assets", {})
+        bible.setdefault("qc", {})
+        bible.setdefault("publishing", {})
         bible.setdefault("continuity", {})
         bible.setdefault("latest", {})
         bible["contextVersion"] = current.get("version", 0)
@@ -92,6 +94,14 @@ class SeriesBibleService:
         bible = self.snapshot(project_id)
         bible["storyState"]["latestJob"] = deepcopy(job)
         bible["latest"]["jobId"] = job.get("jobId")
+        job_type = str(job.get("type", "")).upper()
+        target_id = job.get("targetId")
+        if job_type == "QC" and target_id:
+            bible["qc"][str(target_id)] = deepcopy(job)
+            bible["latest"]["qcId"] = str(target_id)
+        elif job_type == "PUBLISH" and target_id:
+            bible["publishing"][str(target_id)] = deepcopy(job)
+            bible["latest"]["publishedAssetId"] = str(target_id)
         return self._save(project_id, bible, "generation.job", job, "job", job.get("jobId"))
 
     def update_continuity(self, project_id: str, continuity: dict[str, Any]) -> dict[str, Any]:
