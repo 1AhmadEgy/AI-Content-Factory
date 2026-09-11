@@ -129,7 +129,11 @@ class JobExecutor:
     def _persist_claimed(self, job: GenerationJob, lease: JobLease) -> bool:
         if not self.queue.is_lease_active(lease):
             return False
-        return self.jobs.update_if_current(job, JobStatus.RUNNING, job.attempt)
+        update_if_current = getattr(self.jobs, "update_if_current", None)
+        if callable(update_if_current):
+            return bool(update_if_current(job, JobStatus.RUNNING, job.attempt))
+        self.jobs.update(job)
+        return True
 
     def _require_persisted(self, job: GenerationJob, lease: JobLease) -> None:
         if not self._persist_claimed(job, lease):
