@@ -46,7 +46,7 @@ def _fingerprint(request: StartFactoryRequest) -> str:
 
 
 def build_router(projects: SQLiteProjectRepository, jobs: SQLiteJobRepository, runtime: OrchestratorRuntime) -> APIRouter:
-    job_service = JobService(jobs)
+    job_service = JobService(jobs, context_provider=runtime.context_snapshot)
 
     @router.post("/plan")
     def plan_factory(request: BriefRequest, http_request: Request) -> dict[str, Any]:
@@ -79,10 +79,10 @@ def build_router(projects: SQLiteProjectRepository, jobs: SQLiteJobRepository, r
             existing_job = jobs.get(result.existing_resource_id)
             if existing_job is None:
                 raise HTTPException(status_code=409, detail="IDEMPOTENCY_RESOURCE_MISSING")
-            return {"data": {"projectId": project_id, "jobId": existing_job.id, "stage": existing_job.type.value, "status": existing_job.status.value}, "requestId": http_request.state.request_id, "idempotentReplay": True}
+            return {"data": {"projectId": project_id, "jobId": existing_job.id, "stage": existing_job.type.value, "status": existing_job.status.value, "contextVersion": existing_job.input.parameters.get("contextVersion", 0)}, "requestId": http_request.state.request_id, "idempotentReplay": True}
         if result.job is None:
             raise HTTPException(status_code=500, detail="JOB_CREATION_FAILED")
         runtime.queue.enqueue(result.job)
-        return {"data": {"projectId": project_id, "jobId": result.job.id, "stage": "STORY", "status": result.job.status.value, "plan": _serialize_plan(plan)}, "requestId": http_request.state.request_id}
+        return {"data": {"projectId": project_id, "jobId": result.job.id, "stage": "STORY", "status": result.job.status.value, "contextVersion": result.job.input.parameters.get("contextVersion", 0), "plan": _serialize_plan(plan)}, "requestId": http_request.state.request_id}
 
     return router
