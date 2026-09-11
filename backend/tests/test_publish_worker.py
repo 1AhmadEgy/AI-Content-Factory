@@ -20,7 +20,21 @@ class _Assets:
 
 
 def _job(platforms):
-    return SimpleNamespace(id="job-1", project_id="project-1", type=SimpleNamespace(value="PUBLISH"), input=SimpleNamespace(reference_asset_ids=["asset-1"], parameters={"platforms": platforms, "title": "Test", "description": "Description"}))
+    return SimpleNamespace(
+        id="job-1",
+        project_id="project-1",
+        provider=None,
+        model=None,
+        parent_job_id=None,
+        target_type=None,
+        target_id=None,
+        type=SimpleNamespace(value="PUBLISH"),
+        input=SimpleNamespace(
+            reference_asset_ids=["asset-1"],
+            parameters={"platforms": platforms, "title": "Test", "description": "Description"},
+            seed=None,
+        ),
+    )
 
 
 def test_default_registry_has_no_unconfigured_publishing_provider(monkeypatch):
