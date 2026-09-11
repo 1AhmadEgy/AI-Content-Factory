@@ -37,10 +37,46 @@ data class TranslationBatchRequest(
 )
 
 @JsonClass(generateAdapter = true)
+data class SeriesTranslationSegment(
+    val id: String,
+    val text: String,
+    val contentType: String = "dialogue",
+    val version: Int = 1,
+    val context: Map<String, Any?> = emptyMap(),
+    val preserveTerms: List<String> = emptyList(),
+)
+
+@JsonClass(generateAdapter = true)
+data class SeriesTranslationRequest(
+    val segments: List<SeriesTranslationSegment>,
+    val targetLanguages: List<String>? = null,
+    val glossary: Map<String, String>? = null,
+    val provider: String? = null,
+    val model: String? = null,
+    val translationVersion: Int = 1,
+    val manualTexts: Map<String, Map<String, String>> = emptyMap(),
+)
+
+@JsonClass(generateAdapter = true)
 data class TranslationEnvelope(val data: Translation, val requestId: String? = null, val idempotent: Boolean = false)
 
 @JsonClass(generateAdapter = true)
 data class TranslationBatchEnvelope(val data: List<Translation> = emptyList(), val errors: List<Map<String, String>> = emptyList(), val requestId: String? = null)
+
+@JsonClass(generateAdapter = true)
+data class SeriesTranslationEnvelope(
+    val data: List<Translation> = emptyList(),
+    val errors: List<Map<String, String>> = emptyList(),
+    val seriesId: String? = null,
+    val countryId: String? = null,
+    val libraryId: String? = null,
+    val sourceLanguage: String? = null,
+    val targetLanguages: List<String> = emptyList(),
+    val dialect: String? = null,
+    val translationVersion: Int = 1,
+    val sourcePreserved: Boolean = true,
+    val requestId: String? = null,
+)
 
 @JsonClass(generateAdapter = true)
 data class TranslationsEnvelope(val data: List<Translation> = emptyList(), val requestId: String? = null)
@@ -54,6 +90,7 @@ data class Translation(
     val translatedText: String,
     val contentType: String,
     val sourceId: String? = null,
+    val sourceVersion: Int = 1,
     val provider: String = "local",
     val model: String? = null,
     val glossaryVersion: Int = 1,
