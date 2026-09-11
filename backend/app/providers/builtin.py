@@ -8,11 +8,14 @@ from .contracts import ModelAdapter, ModelCapability, ProviderRequest, ProviderR
 
 
 class LocalModelAdapter(ModelAdapter):
-    """OpenAI-compatible local HTTP adapter for Ollama, LM Studio and similar servers."""
+    """OpenAI-compatible local HTTP adapter for text generation only."""
+
+    _SUPPORTED_CAPABILITIES = frozenset({"text", "story", "script", "scene", "shot", "character", "world"})
 
     def __init__(self, endpoint: str, capabilities: frozenset[str] | None = None, timeout_seconds: int = 120) -> None:
         self.endpoint = endpoint.rstrip("/")
-        self._capabilities = capabilities or frozenset()
+        requested = capabilities or frozenset()
+        self._capabilities = requested & self._SUPPORTED_CAPABILITIES
         self.timeout_seconds = timeout_seconds
 
     def capability(self) -> ModelCapability:
@@ -33,6 +36,8 @@ class LocalModelAdapter(ModelAdapter):
             with urlopen(req, timeout=self.timeout_seconds) as response:
                 data = json.loads(response.read().decode("utf-8"))
             text = data["choices"][0]["message"]["content"]
+            if not isinstance(text, str) or not text.strip():
+                return ProviderResponse(success=False, error_code="LOCAL_EMPTY_TEXT", error_message="Local provider returned no text")
             return ProviderResponse(success=True, output_text=text, provider_run_id=str(data.get("id") or "local"), metrics={"local": 1.0})
         except (KeyError, IndexError, json.JSONDecodeError, OSError, URLError) as exc:
             return ProviderResponse(success=False, error_code="LOCAL_PROVIDER_ERROR", error_message=str(exc))
