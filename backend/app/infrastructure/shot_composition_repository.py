@@ -101,8 +101,8 @@ class SQLiteShotCompositionRepository:
                     """INSERT INTO shot_characters
                     (id,shot_id,character_id,position_order,action,emotion,dialogue,pose,expression_override,is_speaking,voice_audio_asset_id,extra_data_json,created_at)
                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (link.id, link.shot_id, link.character_id, link.position_order, link.action, link.emotion,
-                     link.dialogue, link.pose, link.expression_override, int(link.is_speaking), link.voice_audio_asset_id,
+                    (link.id, link.shot_id, link.character_id, link.position_order, link.action, link.emotion, link.dialogue,
+                     link.pose, link.expression_override, int(link.is_speaking), link.voice_audio_asset_id,
                      json.dumps(link.extra_data or {}, ensure_ascii=False), _now()),
                 )
 
@@ -133,6 +133,15 @@ class SQLiteShotCompositionRepository:
         with self.store._lock:
             return self.store.connection.execute("SELECT * FROM shot_locations WHERE shot_id=?", (shot_id,)).fetchone()
 
+    def set_voice_audio_asset(self, link_id: str, asset_id: str) -> None:
+        with self.store._lock, self.store.connection:
+            cur = self.store.connection.execute(
+                "UPDATE shot_characters SET voice_audio_asset_id=? WHERE id=?",
+                (asset_id, link_id),
+            )
+            if cur.rowcount != 1:
+                raise KeyError("SHOT_CHARACTER_LINK_NOT_FOUND")
+
     def update_generation(self, shot_id: str, *, prompt: str | None = None, negative_prompt: str | None = None,
                           status: str | None = None, error: str | None = None, image_asset_id: str | None = None,
                           continuity_hash: str | None = None, camera_angle: str | None = None, mood: str | None = None,
@@ -146,9 +155,11 @@ class SQLiteShotCompositionRepository:
         }
         for column, value in mapping.items():
             if value is not None:
-                fields.append(f"{column}=?"); values.append(value)
+                fields.append(f"{column}=?")
+                values.append(value)
         if visual_style is not None:
-            fields.append("visual_style_json=?"); values.append(json.dumps(visual_style, ensure_ascii=False))
+            fields.append("visual_style_json=?")
+            values.append(json.dumps(visual_style, ensure_ascii=False))
         if not fields:
             return
         values.append(shot_id)
