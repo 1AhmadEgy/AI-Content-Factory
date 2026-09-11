@@ -18,26 +18,17 @@ class ContentPipelineOrchestrator:
         self.generation_planner = generation_planner or AIGenerationPlanner()
 
     def on_completed(self, job: GenerationJob) -> list[GenerationJob]:
-        if job.type is JobType.STORY:
-            return self._create_scene_jobs(job)
-        if job.type is JobType.SCENE:
-            return self._create_shot_jobs(job) + self._create_audio_jobs(job)
-        if job.type is JobType.SHOT:
-            return self._create_generation_jobs(job)
-        if job.type in {JobType.IMAGE, JobType.VIDEO, JobType.TTS, JobType.LIPSYNC, JobType.MUSIC, JobType.SFX}:
-            return self._create_qc_job(job)
+        if job.type is JobType.STORY: return self._create_scene_jobs(job)
+        if job.type is JobType.SCENE: return self._create_shot_jobs(job) + self._create_audio_jobs(job)
+        if job.type is JobType.SHOT: return self._create_generation_jobs(job)
+        if job.type in {JobType.IMAGE, JobType.VIDEO, JobType.TTS, JobType.LIPSYNC, JobType.MUSIC, JobType.SFX}: return self._create_qc_job(job)
         if job.type is JobType.QC:
-            if job.input.parameters.get("finalQc"):
-                return self._create_delivery_jobs(job)
-            if job.input.parameters.get("auxiliary"):
-                return self._maybe_create_timeline_for_scene(job)
+            if job.input.parameters.get("finalQc"): return self._create_delivery_jobs(job)
+            if job.input.parameters.get("auxiliary"): return self._maybe_create_timeline_for_scene(job)
             return self._maybe_create_best_take(job)
-        if job.type is JobType.BEST_TAKE:
-            return self._maybe_create_timeline_for_scene(job)
-        if job.type is JobType.TIMELINE:
-            return self._create_render_job(job)
-        if job.type is JobType.RENDER:
-            return self._create_final_qc_job(job)
+        if job.type is JobType.BEST_TAKE: return self._maybe_create_timeline_for_scene(job)
+        if job.type is JobType.TIMELINE: return self._create_render_job(job)
+        if job.type is JobType.RENDER: return self._create_final_qc_job(job)
         return []
 
     def _create_scene_jobs(self, job: GenerationJob) -> list[GenerationJob]:
@@ -55,8 +46,7 @@ class ContentPipelineOrchestrator:
     def _create_audio_jobs(self, job: GenerationJob) -> list[GenerationJob]:
         scene_data = job.input.parameters.get("scene")
         brief_data = job.input.parameters.get("brief", {})
-        if not isinstance(scene_data, dict) or not isinstance(brief_data, dict):
-            return []
+        if not isinstance(scene_data, dict) or not isinstance(brief_data, dict): return []
         brief = ContentBrief(topic=str(brief_data.get("topic", "")), language=str(brief_data.get("language", "en")), duration_seconds=int(brief_data.get("durationSeconds", 60)), style=str(brief_data.get("style", "cinematic")), audience=str(brief_data.get("audience", "general")), platform=str(brief_data.get("platform", "youtube")), aspect_ratio=str(brief_data.get("aspectRatio", "16:9")))
         scene = ScenePlan(number=int(scene_data.get("number", 1)), title=str(scene_data.get("title", "Scene")), duration_seconds=float(scene_data.get("durationSeconds", scene_data.get("duration_seconds", 5))), visual=str(scene_data.get("visual", "")), narration=str(scene_data.get("narration", "")), shots=[])
         created = []
@@ -88,11 +78,9 @@ class ContentPipelineOrchestrator:
         return [self._enqueue(job, JobType.QC, "qc", f"{job.id}:qc", params, 4, list(job.output.asset_ids))]
 
     def _maybe_create_best_take(self, qc_job: GenerationJob) -> list[GenerationJob]:
-        source_id = str(qc_job.input.parameters.get("sourceJobId", ""))
-        source = self.job_service.repository.get(source_id) if source_id else None
+        source_id = str(qc_job.input.parameters.get("sourceJobId", "")); source = self.job_service.repository.get(source_id) if source_id else None
         if source is None: return []
-        shot_id = str(source.input.parameters.get("shotJobId", ""))
-        shot = self.job_service.repository.get(shot_id) if shot_id else None
+        shot_id = str(source.input.parameters.get("shotJobId", "")); shot = self.job_service.repository.get(shot_id) if shot_id else None
         if shot is None: return []
         generations = [j for j in self.job_service.repository.list_by_parent(shot.id) if j.type in {JobType.IMAGE, JobType.VIDEO}]
         expected = int(shot.input.parameters.get("takeCount", 1)) * 2
@@ -109,47 +97,30 @@ class ContentPipelineOrchestrator:
     def _maybe_create_timeline_for_scene(self, completed_job: GenerationJob) -> list[GenerationJob]:
         scene_id = str(completed_job.input.parameters.get("sceneJobId", ""))
         if not scene_id and completed_job.type is JobType.BEST_TAKE:
-            shot = self.job_service.repository.get(str(completed_job.input.parameters.get("shotJobId", "")))
-            scene_id = str(shot.parent_job_id) if shot else ""
+            shot = self.job_service.repository.get(str(completed_job.input.parameters.get("shotJobId", ""))); scene_id = str(shot.parent_job_id) if shot else ""
         scene = self.job_service.repository.get(scene_id) if scene_id else None
         if scene is None: return []
         shots = [j for j in self.job_service.repository.list_by_parent(scene.id) if j.type is JobType.SHOT]
         best = [j for shot in shots for j in self.job_service.repository.list_by_parent(shot.id) if j.type is JobType.BEST_TAKE and j.status is JobStatus.COMPLETED and j.output and j.output.asset_ids]
         if not shots or len(best) < len(shots): return []
-
         audio_jobs = [j for j in self.job_service.repository.list_by_parent(scene.id) if j.type in {JobType.TTS, JobType.MUSIC, JobType.SFX}]
         if len(audio_jobs) < 3: return []
         audio_qcs = [qc for audio in audio_jobs for qc in self.job_service.repository.list_by_parent(audio.id) if qc.type is JobType.QC and qc.status is JobStatus.COMPLETED and qc.output and qc.output.asset_ids]
         if len(audio_qcs) < len(audio_jobs): return []
-
-        video_ids: list[str] = []
+        video_ids = []
         for best_job in best:
             selected = best_job.output.metrics.get("selectedAssetId") if best_job.output else None
-            if not isinstance(selected, str) or not selected:
-                return []
+            if not isinstance(selected, str) or not selected: return []
             video_ids.append(selected)
-
-        # QC outputs are manifests/reports, not playable media. The timeline must
-        # reference the original generation outputs after their QC jobs complete.
-        audio_ids: list[str] = []
+        audio_ids = []
         for audio_job in audio_jobs:
-            if not audio_job.output or not audio_job.output.asset_ids:
-                return []
+            if not audio_job.output or not audio_job.output.asset_ids: return []
             audio_ids.extend(audio_job.output.asset_ids)
-
-        try:
-            duration_us = int(float(scene.input.parameters.get("scene", {}).get("durationSeconds", 5)) * 1_000_000)
-        except (TypeError, ValueError, OverflowError):
-            return []
+        try: duration_us = int(float(scene.input.parameters.get("scene", {}).get("durationSeconds", 5)) * 1_000_000)
+        except (TypeError, ValueError, OverflowError): return []
         if duration_us <= 0: return []
-        refs = [*video_ids, *audio_ids]
-        parameters = {
-            "durationUs": duration_us,
-            "sceneJobId": scene.id,
-            "videoAssetIds": video_ids,
-            "audioAssetIds": audio_ids,
-        }
-        return [self._enqueue(scene, JobType.TIMELINE, "timeline", f"{scene.id}:timeline", parameters, 6, refs)]
+        parameters = {"durationUs": duration_us, "sceneJobId": scene.id, "videoAssetIds": video_ids, "audioAssetIds": audio_ids}
+        return [self._enqueue(scene, JobType.TIMELINE, "timeline", f"{scene.id}:timeline", parameters, 6, [*video_ids, *audio_ids])]
 
     def _create_render_job(self, job: GenerationJob) -> list[GenerationJob]:
         if not job.output or not job.output.asset_ids: return []
@@ -166,53 +137,20 @@ class ContentPipelineOrchestrator:
         return [self._enqueue(job, t, target, f"{job.id}:{target}", common, 1, ids) for t, target in ((JobType.SUBTITLE, "subtitle"), (JobType.THUMBNAIL, "thumbnail"), (JobType.METADATA, "metadata"), (JobType.PUBLISH, "publish"), (JobType.REPURPOSE, "repurpose"))]
 
     def _enqueue(self, parent: GenerationJob, job_type: JobType, target_type: str, target_id: str, parameters: dict[str, object], priority_offset: int, reference_asset_ids: list[str] | None = None) -> GenerationJob:
-        input_data = JobInput(
-            parameters=parameters,
-            reference_asset_ids=list(reference_asset_ids or []),
-            deterministic=parent.input.deterministic,
-        )
+        input_data = JobInput(parameters=parameters, reference_asset_ids=list(reference_asset_ids or []), deterministic=parent.input.deterministic)
         priority = max(parent.priority - priority_offset, 0)
-        fingerprint_payload = {
-            "parentJobId": parent.id,
-            "projectId": parent.project_id,
-            "jobType": job_type.value,
-            "targetType": target_type,
-            "targetId": target_id,
-            "priority": priority,
-            "provider": parent.provider,
-            "model": parent.model,
-            "input": {
-                "parameters": parameters,
-                "referenceAssetIds": input_data.reference_asset_ids,
-                "deterministic": input_data.deterministic,
-            },
-        }
-        fingerprint = hashlib.sha256(
-            json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-        ).hexdigest()
+        fingerprint_payload = {"parentJobId": parent.id, "projectId": parent.project_id, "jobType": job_type.value, "targetType": target_type, "targetId": target_id, "priority": priority, "provider": parent.provider, "model": parent.model, "input": {"parameters": parameters, "referenceAssetIds": input_data.reference_asset_ids, "deterministic": input_data.deterministic}}
+        fingerprint = hashlib.sha256(json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
         key = f"pipeline:{parent.id}:{job_type.value}:{target_id}"
-        result = self.job_service.create_with_idempotency(
-            key=key,
-            operation="pipeline_enqueue",
-            fingerprint=fingerprint,
-            project_id=parent.project_id,
-            job_type=job_type,
-            target_type=target_type,
-            target_id=target_id,
-            parent_job_id=parent.id,
-            input=input_data,
-            priority=priority,
-            max_attempts=3,
-            provider=parent.provider,
-            model=parent.model,
-        )
-        if result.conflict:
-            raise ValueError(f"PIPELINE_IDEMPOTENCY_CONFLICT: {key}")
+        if not hasattr(self.job_service, "create_with_idempotency"):
+            created = self.job_service.create(project_id=parent.project_id, job_type=job_type, target_type=target_type, target_id=target_id, parent_job_id=parent.id, input=input_data, priority=priority, max_attempts=3, provider=parent.provider, model=parent.model)
+            self.enqueue(created)
+            return created
+        result = self.job_service.create_with_idempotency(key=key, operation="pipeline_enqueue", fingerprint=fingerprint, project_id=parent.project_id, job_type=job_type, target_type=target_type, target_id=target_id, parent_job_id=parent.id, input=input_data, priority=priority, max_attempts=3, provider=parent.provider, model=parent.model)
+        if result.conflict: raise ValueError(f"PIPELINE_IDEMPOTENCY_CONFLICT: {key}")
         if result.job is not None:
-            self.enqueue(result.job)
-            return result.job
+            self.enqueue(result.job); return result.job
         if result.existing_resource_id:
             existing = self.job_service.repository.get(result.existing_resource_id)
-            if existing is not None:
-                return existing
+            if existing is not None: return existing
         raise RuntimeError(f"PIPELINE_IDEMPOTENCY_RESOURCE_MISSING: {key}")
