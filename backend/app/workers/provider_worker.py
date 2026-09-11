@@ -13,8 +13,8 @@ from ..infrastructure.storage import LocalAssetStorage
 from ..orchestrator.provenance import build_provenance
 from ..orchestrator.queue import JobExecutionResult, Worker, WorkerContext
 from ..providers.contracts import ProviderRequest
-from ..providers.registry import ModelRegistry
 from ..providers.media import media_mime
+from ..providers.registry import ModelRegistry
 
 
 class ProviderGenerationWorker(Worker):
@@ -47,10 +47,10 @@ class ProviderGenerationWorker(Worker):
         if not model.enabled or not model.adapter.health_check():
             return JobExecutionResult(False, error_code="MODEL_UNHEALTHY", error_message=model.id, retryable=True)
 
-        run_id = str(uuid.uuid4())
+        internal_run_id = str(uuid.uuid4())
         if self.provider_runs:
             self.provider_runs.create(ProviderRun(
-                id=run_id, job_id=job.id, provider=model.provider, model=model.id,
+                id=internal_run_id, job_id=job.id, provider=model.provider, model=model.id,
                 request_metadata={"jobType": job.type.value, "targetType": job.target_type, "targetId": job.target_id},
                 status="RUNNING",
             ))
@@ -58,14 +58,20 @@ class ProviderGenerationWorker(Worker):
             response = model.adapter.execute(ProviderRequest(model=model.id, parameters=dict(job.input.parameters), seed=job.input.seed))
         except Exception as exc:
             if self.provider_runs:
-                self.provider_runs.complete(run_id, status="FAILED", error_code="PROVIDER_EXCEPTION", response_metadata={"exceptionType": type(exc).__name__})
-            return JobExecutionResult(False, provider_run_id=run_id, error_code="PROVIDER_EXCEPTION", error_message=str(exc), retryable=True)
+                self.provider_runs.complete(internal_run_id, status="FAILED", error_code="PROVIDER_EXCEPTION", response_metadata={"exceptionType": type(exc).__name__})
+            return JobExecutionResult(False, error_code="PROVIDER_EXCEPTION", error_message=str(exc), retryable=True)
 
-        provider_run_id = response.provider_run_id or run_id
+        provider_run_id = response.provider_run_id
         if not response.success:
             if self.provider_runs:
-                self.provider_runs.complete(run_id, status="FAILED", error_code=response.error_code or "PROVIDER_FAILED", response_metadata=dict(response.metrics))
+                self.provider_runs.complete(internal_run_id, status="FAILED", error_code=response.error_code or "PROVIDER_FAILED", response_metadata=dict(response.metrics))
             return JobExecutionResult(False, provider_run_id=provider_run_id, error_code=response.error_code or "PROVIDER_FAILED", error_message=response.error_message or "Provider execution failed", retryable=True)
+
+        if not isinstance(provider_run_id, str) or not provider_run_id.strip():
+            if self.provider_runs:
+                self.provider_runs.complete(internal_run_id, status="FAILED", error_code="PROVIDER_RUN_ID_MISSING", response_metadata=dict(response.metrics))
+            return JobExecutionResult(False, error_code="PROVIDER_RUN_ID_MISSING", error_message="Provider reported success without a provider run id", retryable=True)
+        provider_run_id = provider_run_id.strip()
 
         asset_ids = list(response.output_asset_ids)
         if not asset_ids and response.output_bytes is not None:
@@ -78,10 +84,10 @@ class ProviderGenerationWorker(Worker):
             asset_ids = [asset_id]
         if not asset_ids:
             if self.provider_runs:
-                self.provider_runs.complete(run_id, status="FAILED", error_code="PROVIDER_EMPTY_OUTPUT", response_metadata=dict(response.metrics))
+                self.provider_runs.complete(internal_run_id, status="FAILED", error_code="PROVIDER_EMPTY_OUTPUT", response_metadata=dict(response.metrics))
             return JobExecutionResult(False, provider_run_id=provider_run_id, error_code="PROVIDER_EMPTY_OUTPUT", error_message="Provider reported success without an asset or output", retryable=True)
         if self.provider_runs:
-            self.provider_runs.complete(run_id, status="COMPLETED", response_metadata={"assetIds": asset_ids, **dict(response.metrics)})
+            self.provider_runs.complete(internal_run_id, status="COMPLETED", response_metadata={"assetIds": asset_ids, "providerRunId": provider_run_id, **dict(response.metrics)})
         return JobExecutionResult(success=True, asset_ids=asset_ids, metrics=dict(response.metrics), provider_run_id=provider_run_id)
 
     def cancel(self, job_id: str) -> None:
