@@ -21,7 +21,7 @@ data class CharacterUi(
     val visualStyle: Map<String, Any?>,
 )
 
-private fun CharacterDto.toUi() = CharacterUi(id, projectId, name, description, appearance, voice, visualStyle)
+fun CharacterDto.toUi() = CharacterUi(id, projectId, name, description, appearance, voice, visualStyle)
 
 class CharacterRepository {
     private val api = NetworkClient.apiService
