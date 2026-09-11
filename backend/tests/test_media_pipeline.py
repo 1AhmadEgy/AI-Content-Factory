@@ -1,9 +1,10 @@
 from pathlib import Path
 
 from app.domain.timeline import Timeline
+from app.rendering.ffmpeg_renderer import FfmpegRenderer
 from app.rendering.media_artifacts import SubtitleCue, write_srt
 from app.rendering.media_qc import FinalMediaQC
-from app.rendering.renderer import DeterministicMockRenderer, RenderProfile
+from app.rendering.renderer import RenderProfile
 from app.rendering.repurpose import variants_for
 from app.security.media_security import safe_child
 
@@ -28,7 +29,7 @@ def test_path_traversal_is_blocked(tmp_path: Path):
         raise AssertionError("traversal was not blocked")
 
 
-def test_mock_renderer_still_validates_timeline(tmp_path: Path):
+def test_real_renderer_validates_required_video_track():
     timeline = Timeline("t1", "p1", 1_000_000)
-    result = DeterministicMockRenderer().render(timeline, RenderProfile(), str(tmp_path / "out.mp4"))
-    assert result.success
+    errors = FfmpegRenderer({}).validate(timeline, RenderProfile())
+    assert "TIMELINE_HAS_NO_VIDEO" in errors
