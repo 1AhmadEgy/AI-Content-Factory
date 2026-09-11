@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+
 @dataclass(frozen=True, slots=True)
 class LocationProfile:
     id: str
@@ -29,4 +30,24 @@ class LocationProfile:
     updated_at: datetime | None = None
 
     def snapshot(self) -> dict[str, Any]:
-        return {"id": self.id, "projectId": self.project_id, "name": self.name, "aliases": list(self.aliases), "description": self.description, "geography": self.geography, "architecture": self.architecture, "environment": self.environment, "visualStyle": self.visual_style, "lighting": self.lighting, "weather": self.weather, "timeOfDay": self.time_of_day, "props": list(self.props), "rules": list(self.rules), "negativeConstraints": list(self.negative_constraints), "referenceAssetIds": list(self.reference_asset_ids), "providerLocationId": self.provider_location_id, "metadata": self.metadata, "version": self.version}
+        return {
+            "id": self.id,
+            "projectId": self.project_id,
+            "name": self.name,
+            "aliases": list(self.aliases),
+            "description": self.description,
+            "geography": self.geography,
+            "architecture": self.architecture,
+            "environment": self.environment,
+            "visualStyle": self.visual_style,
+            "lighting": self.lighting,
+            "weather": self.weather,
+            "timeOfDay": self.time_of_day,
+            "props": list(self.props),
+            "rules": list(self.rules),
+            "negativeConstraints": list(self.negative_constraints),
+            "referenceAssetIds": list(self.reference_asset_ids),
+            "providerLocationId": self.provider_location_id,
+            "metadata": self.metadata,
+            "version": self.version,
+        }
