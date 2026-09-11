@@ -99,12 +99,7 @@ class OrchestratorRuntime:
             except Exception:
                 logger.exception("Failed to bind completed %s job %s to target %s/%s", job.type.value, job.id, job.target_type, job.target_id)
         if job.project_id:
-            event = {
-                "jobId": job.id, "type": job.type.value, "targetType": job.target_type, "targetId": job.target_id,
-                "status": job.status.value, "assetIds": list(job.output.asset_ids) if job.output else [],
-                "errorCode": job.error_code, "errorMessage": job.error_message,
-                "contextVersion": job.input.parameters.get("contextVersion", 0),
-            }
+            event = {"jobId": job.id, "type": job.type.value, "targetType": job.target_type, "targetId": job.target_id, "status": job.status.value, "assetIds": list(job.output.asset_ids) if job.output else [], "errorCode": job.error_code, "errorMessage": job.error_message, "contextVersion": job.input.parameters.get("contextVersion", 0)}
             try:
                 self.series_bible.record_job(job.project_id, event)
                 for asset_id in event["assetIds"]:
@@ -144,11 +139,7 @@ class OrchestratorRuntime:
         enriched_context["contextVersion"] = context["version"]
         effective_brief = replace(brief, production_context=enriched_context)
         if project_id:
-            self.context.append_event(project_id, "content.plan.requested", {
-                "topic": brief.topic, "characterIds": list(brief.character_ids), "locationIds": list(brief.location_ids),
-                "language": brief.language, "durationSeconds": brief.duration_seconds, "style": brief.style,
-                "contextVersion": context["version"],
-            }, entity_type="content_plan", entity_id=project_id)
+            self.context.append_event(project_id, "content.plan.requested", {"topic": brief.topic, "characterIds": list(brief.character_ids), "locationIds": list(brief.location_ids), "language": brief.language, "durationSeconds": brief.duration_seconds, "style": brief.style, "contextVersion": context["version"]}, entity_type="content_plan", entity_id=project_id)
         story = self.story_engine.generate(effective_brief, model_id, characters, locations)
         script = self.script_engine.generate(effective_brief, story, model_id)
         return self.scene_planner.plan(effective_brief, script, model_id)
