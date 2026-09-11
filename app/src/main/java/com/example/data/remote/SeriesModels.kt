@@ -30,4 +30,4 @@ data class SeriesContextPatchRequest(val context: Map<String, Any?>)
 data class EpisodeSnapshotEnvelope(val data: Map<String, Any?>, val requestId: String? = null)
 
 @JsonClass(generateAdapter = true)
-data class SeriesSnapshotsEnvelope(val data: List<Map<String, Any?>>)
+data class SeriesSnapshotsEnvelope(val data: List<Map<String, Any?>>, val requestId: String? = null)
