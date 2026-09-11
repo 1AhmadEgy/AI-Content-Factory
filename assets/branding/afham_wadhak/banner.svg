@@ -1,0 +1,13 @@
+<svg width="2560" height="1440" viewBox="0 0 2560 1440" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="2560" height="1440" fill="#111111"/>
+  <circle cx="420" cy="240" r="180" fill="#FFD84D" fill-opacity="0.12"/>
+  <circle cx="2140" cy="1180" r="240" fill="#4DB6FF" fill-opacity="0.10"/>
+  <circle cx="2140" cy="280" r="120" fill="#FFD84D" fill-opacity="0.10"/>
+  <rect x="507" y="508" width="1546" height="423" rx="48" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="4" stroke-dasharray="16 16"/>
+  <circle cx="820" cy="720" r="170" fill="#FFD84D"/>
+  <circle cx="760" cy="680" r="18" fill="#111111"/>
+  <circle cx="880" cy="680" r="18" fill="#111111"/>
+  <path d="M748 748C770 784 790 802 820 802C850 802 870 784 892 748" stroke="#111111" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="1280" y="675" text-anchor="middle" font-family="Tajawal, Cairo, Arial, sans-serif" font-size="104" font-weight="800" fill="#FFFFFF">افهم واضحك</text>
+  <text x="1280" y="790" text-anchor="middle" font-family="Cairo, Arial, sans-serif" font-size="52" font-weight="400" fill="#FFD84D">افهم ببساطة وابتسم</text>
+</svg>
