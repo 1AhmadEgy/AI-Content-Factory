@@ -3,7 +3,6 @@ from pathlib import Path
 from app.domain.timeline import Timeline
 from app.rendering.ffmpeg_renderer import FfmpegRenderer
 from app.rendering.media_artifacts import SubtitleCue, write_srt
-from app.rendering.media_qc import FinalMediaQC
 from app.rendering.renderer import RenderProfile
 from app.rendering.repurpose import variants_for
 from app.security.media_security import safe_child
