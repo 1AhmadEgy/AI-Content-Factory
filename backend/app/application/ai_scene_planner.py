@@ -9,7 +9,11 @@ from .ai_json import parse_json_array, parse_json_object
 
 
 class AIScenePlanner:
-    """AI scene and shot planner with strict schema preservation."""
+    """AI scene and shot planner with strict schema preservation.
+
+    Provider failure is explicit; returning the original plan would falsely
+    imply that the requested AI planning step completed.
+    """
 
     def __init__(self, registry: ModelRegistry) -> None:
         self.registry = registry
@@ -17,41 +21,51 @@ class AIScenePlanner:
     def plan(self, brief: ContentBrief, story: StoryPlan, model_id: str | None = None) -> StoryPlan:
         model = self.registry.get(model_id) if model_id else self.registry.route("generation", "scene")
         if model is None:
-            return story
-        prompt = ("Act as a professional scene director. Return ONLY valid JSON with a scenes array. "
-                  "Improve scene titles, visual direction and narration while preserving scene numbers, durations and shot counts. "
-                  f"Language={brief.language}; Style={brief.style}; AspectRatio={brief.aspect_ratio}; Story={json.dumps(_story_dict(story), ensure_ascii=False)}")
-        response = model.adapter.execute(ProviderRequest(model=model.id, parameters={"prompt": prompt, "temperature": 0.5, "response_format": "json"}))
+            raise RuntimeError("AI_PROVIDER_UNAVAILABLE: no scene-capable provider is configured")
+        prompt = (
+            "Act as a professional scene director. Return ONLY valid JSON with a scenes array. "
+            "Improve scene titles, visual direction and narration while preserving scene numbers, durations and shot counts. "
+            f"Language={brief.language}; Style={brief.style}; AspectRatio={brief.aspect_ratio}; Story={json.dumps(_story_dict(story), ensure_ascii=False)}"
+        )
+        response = model.adapter.execute(
+            ProviderRequest(model=model.id, parameters={"prompt": prompt, "temperature": 0.5, "response_format": "json"})
+        )
         if not response.success or not response.output_text:
-            return story
+            raise RuntimeError(f"AI_SCENE_PLANNING_FAILED: {response.error_code or 'EMPTY_RESPONSE'}")
         data = parse_json_object(response.output_text)
         if data is None or not isinstance(data.get("scenes"), list) or len(data["scenes"]) != len(story.scenes):
-            return story
+            raise RuntimeError("AI_SCENE_PLANNING_FAILED: INVALID_SCHEMA")
         scenes: list[ScenePlan] = []
         for index, raw in enumerate(data["scenes"]):
             if not isinstance(raw, dict):
-                return story
+                raise RuntimeError("AI_SCENE_PLANNING_FAILED: INVALID_SCENE")
             base = story.scenes[index]
             scenes.append(ScenePlan(base.number, str(raw.get("title", base.title)), base.duration_seconds, str(raw.get("visual", base.visual)), str(raw.get("narration", base.narration)), base.shots))
         return StoryPlan(str(data.get("title", story.title)), str(data.get("logline", story.logline)), str(data.get("synopsis", story.synopsis)), tuple(scenes))
 
     def plan_shots(self, brief: ContentBrief, scene: ScenePlan, model_id: str | None = None) -> tuple[ShotPlan, ...]:
         model = self.registry.get(model_id) if model_id else self.registry.route("generation", "shot")
-        if model is None or not scene.shots:
-            return scene.shots
-        prompt = ("Act as a cinematographer. Return ONLY a JSON array. Improve every shot prompt for visual generation. "
-                  "Preserve shot numbers and durations. Include number,prompt,duration_seconds,camera,lighting,style. "
-                  f"Language={brief.language}; AspectRatio={brief.aspect_ratio}; Scene={json.dumps(_scene_dict(scene), ensure_ascii=False)}")
-        response = model.adapter.execute(ProviderRequest(model=model.id, parameters={"prompt": prompt, "temperature": 0.6, "response_format": "json"}))
+        if model is None:
+            raise RuntimeError("AI_PROVIDER_UNAVAILABLE: no shot-capable provider is configured")
+        if not scene.shots:
+            raise RuntimeError("AI_SHOT_PLANNING_FAILED: scene has no shots")
+        prompt = (
+            "Act as a cinematographer. Return ONLY a JSON array. Improve every shot prompt for visual generation. "
+            "Preserve shot numbers and durations. Include number,prompt,duration_seconds,camera,lighting,style. "
+            f"Language={brief.language}; AspectRatio={brief.aspect_ratio}; Scene={json.dumps(_scene_dict(scene), ensure_ascii=False)}"
+        )
+        response = model.adapter.execute(
+            ProviderRequest(model=model.id, parameters={"prompt": prompt, "temperature": 0.6, "response_format": "json"})
+        )
         if not response.success or not response.output_text:
-            return scene.shots
+            raise RuntimeError(f"AI_SHOT_PLANNING_FAILED: {response.error_code or 'EMPTY_RESPONSE'}")
         raw_shots = parse_json_array(response.output_text)
         if raw_shots is None or len(raw_shots) != len(scene.shots):
-            return scene.shots
+            raise RuntimeError("AI_SHOT_PLANNING_FAILED: INVALID_SCHEMA")
         result: list[ShotPlan] = []
         for index, raw in enumerate(raw_shots):
             if not isinstance(raw, dict):
-                return scene.shots
+                raise RuntimeError("AI_SHOT_PLANNING_FAILED: INVALID_SHOT")
             base = scene.shots[index]
             result.append(ShotPlan(base.number, str(raw.get("prompt", base.prompt)), base.duration_seconds, str(raw.get("camera", base.camera)), str(raw.get("lighting", base.lighting)), str(raw.get("style", base.style))))
         return tuple(result)
