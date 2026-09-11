@@ -91,6 +91,6 @@ def test_executor_does_not_retry_non_retryable_failure():
     jobs, queue = FakeJobs(job), FakeQueue()
     worker = FakeWorker(JobExecutionResult(False, error_code="INVALID_INPUT", error_message="bad", retryable=False))
     registry = WorkerRegistry(); registry.register(worker, worker_id="worker-1")
-    result = JobExecutor(jobs, queue, registry, events.append).execute_claimed(job, make_lease())
+    result = JobExecutor(jobs, queue, registry).execute_claimed(job, make_lease())
     assert result.status is JobStatus.FAILED
     assert queue.acknowledged == [JobStatus.FAILED]
