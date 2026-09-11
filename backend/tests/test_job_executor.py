@@ -1,7 +1,7 @@
 from backend.app.domain.job_events import JobEvent
 from backend.app.domain.jobs import GenerationJob, JobOutput, JobStatus, JobType
 from backend.app.orchestrator.job_executor import JobExecutor
-from backend.app.orchestrator.queue import JobExecutionResult, JobLease, JobQueue, Worker, WorkerContext
+from backend.app.orchestrator.queue import JobExecutionResult, JobLease, JobQueue, Worker
 from backend.app.workers.registry import WorkerRegistry
 
 
