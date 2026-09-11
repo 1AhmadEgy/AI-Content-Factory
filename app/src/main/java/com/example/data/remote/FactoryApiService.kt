@@ -41,6 +41,7 @@ interface FactoryApiService {
     @POST("api/v1/series/projects/{project_id}/apply-template") suspend fun applySeriesTemplate(@Path("project_id") projectId: String, @Body request: ApplySeriesTemplateRequest): SeriesContextEnvelope
     @GET("api/v1/series/projects/{project_id}/context") suspend fun getSeriesContext(@Path("project_id") projectId: String): SeriesContextEnvelope
     @PATCH("api/v1/series/projects/{project_id}/context") suspend fun patchSeriesContext(@Path("project_id") projectId: String, @Body request: SeriesContextPatchRequest): SeriesContextEnvelope
+    @POST("api/v1/series/projects/{project_id}/translate") suspend fun translateSeries(@Path("project_id") projectId: String, @Body request: SeriesTranslationRequest): SeriesTranslationEnvelope
     @POST("api/v1/series/projects/{project_id}/episodes/{episode_id}/snapshot") suspend fun snapshotEpisodeContext(@Path("project_id") projectId: String, @Path("episode_id") episodeId: String): EpisodeSnapshotEnvelope
     @GET("api/v1/series/projects/{project_id}/snapshots") suspend fun listSeriesSnapshots(@Path("project_id") projectId: String): SeriesSnapshotsEnvelope
 
