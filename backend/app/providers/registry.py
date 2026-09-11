@@ -35,6 +35,8 @@ class ModelRegistry:
         candidates = [m for m in candidates if m.adapter.capability().category == category]
         if capability:
             candidates = [m for m in candidates if capability in m.adapter.capability().capabilities]
+            if not candidates and capability in {"story", "script", "scene", "shot", "character", "world"}:
+                candidates = [m for m in self._models.values() if m.enabled and m.adapter.health_check() and "text" in m.adapter.capability().capabilities]
         return min(candidates, key=lambda m: (m.priority, m.id), default=None)
 
     def ids(self) -> list[str]:
@@ -54,22 +56,10 @@ def default_provider_registry() -> ModelRegistry:
     registry = ModelRegistry()
     if not os.getenv("OPENAI_API_KEY"):
         return registry
-    registry.register(RegisteredModel(
-        id=os.getenv("AICF_TEXT_MODEL", "gpt-5.6-luna"),
-        provider="openai",
-        adapter=OpenAIModelAdapter(os.getenv("AICF_TEXT_MODEL", "gpt-5.6-luna"), "TEXT"),
-        priority=10,
-    ))
-    registry.register(RegisteredModel(
-        id=os.getenv("AICF_IMAGE_MODEL", "gpt-image-2"),
-        provider="openai",
-        adapter=OpenAIModelAdapter(os.getenv("AICF_IMAGE_MODEL", "gpt-image-2"), "IMAGE"),
-        priority=10,
-    ))
-    registry.register(RegisteredModel(
-        id=os.getenv("AICF_TTS_MODEL", "gpt-4o-mini-tts"),
-        provider="openai",
-        adapter=OpenAIModelAdapter(os.getenv("AICF_TTS_MODEL", "gpt-4o-mini-tts"), "TTS"),
-        priority=10,
-    ))
+    text_model = os.getenv("AICF_TEXT_MODEL", "gpt-5.6-luna")
+    image_model = os.getenv("AICF_IMAGE_MODEL", "gpt-image-2")
+    tts_model = os.getenv("AICF_TTS_MODEL", "gpt-4o-mini-tts")
+    registry.register(RegisteredModel(text_model, "openai", OpenAIModelAdapter(text_model, "TEXT"), priority=10))
+    registry.register(RegisteredModel(image_model, "openai", OpenAIModelAdapter(image_model, "IMAGE"), priority=10))
+    registry.register(RegisteredModel(tts_model, "openai", OpenAIModelAdapter(tts_model, "TTS"), priority=10))
     return registry
