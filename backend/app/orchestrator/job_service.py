@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from copy import deepcopy
 from uuid import uuid4
 
 from ..domain.jobs import GenerationJob, JobInput, JobStatus, JobType, utc_now
@@ -6,8 +10,9 @@ from .job_state import transition
 
 
 class JobService:
-    def __init__(self, repository: JobRepository) -> None:
+    def __init__(self, repository: JobRepository, context_provider: Callable[[str], dict] | None = None) -> None:
         self.repository = repository
+        self.context_provider = context_provider
 
     def create(
         self,
@@ -23,20 +28,11 @@ class JobService:
         provider: str | None = None,
         model: str | None = None,
     ) -> GenerationJob:
-        return self.repository.create(
-            self._new_job(
-                project_id=project_id,
-                job_type=job_type,
-                target_type=target_type,
-                target_id=target_id,
-                parent_job_id=parent_job_id,
-                input=input,
-                priority=priority,
-                max_attempts=max_attempts,
-                provider=provider,
-                model=model,
-            )
-        )
+        return self.repository.create(self._new_job(
+            project_id=project_id, job_type=job_type, target_type=target_type, target_id=target_id,
+            parent_job_id=parent_job_id, input=input, priority=priority, max_attempts=max_attempts,
+            provider=provider, model=model,
+        ))
 
     def create_with_idempotency(
         self,
@@ -55,25 +51,12 @@ class JobService:
         provider: str | None = None,
         model: str | None = None,
     ) -> IdempotencyResult:
-        """Create a job through the repository's atomic idempotency boundary."""
         job = self._new_job(
-            project_id=project_id,
-            job_type=job_type,
-            target_type=target_type,
-            target_id=target_id,
-            parent_job_id=parent_job_id,
-            input=input,
-            priority=priority,
-            max_attempts=max_attempts,
-            provider=provider,
-            model=model,
+            project_id=project_id, job_type=job_type, target_type=target_type, target_id=target_id,
+            parent_job_id=parent_job_id, input=input, priority=priority, max_attempts=max_attempts,
+            provider=provider, model=model,
         )
-        result = self.repository.create_with_idempotency(
-            job,
-            key=key,
-            operation=operation,
-            fingerprint=fingerprint,
-        )
+        result = self.repository.create_with_idempotency(job, key=key, operation=operation, fingerprint=fingerprint)
         if result is None:
             raise RuntimeError("IDEMPOTENCY_NOT_SUPPORTED")
         return result
@@ -129,6 +112,21 @@ class JobService:
             raise RuntimeError("JOB_STATE_CONFLICT")
         return job
 
+    def _capture_context(self, project_id: str, input: JobInput | None) -> JobInput:
+        base = input or JobInput()
+        parameters = deepcopy(base.parameters)
+        if self.context_provider is not None and project_id:
+            snapshot = deepcopy(self.context_provider(project_id))
+            parameters.setdefault("contextSnapshot", snapshot)
+            parameters.setdefault("contextVersion", snapshot.get("contextVersion", snapshot.get("version", 0)))
+        return JobInput(
+            parameters=parameters,
+            reference_asset_ids=list(base.reference_asset_ids),
+            constraints=deepcopy(base.constraints),
+            seed=base.seed,
+            deterministic=base.deterministic,
+        )
+
     def _new_job(
         self,
         *,
@@ -146,17 +144,10 @@ class JobService:
         if max_attempts < 1:
             raise ValueError("max_attempts must be >= 1")
         job = GenerationJob(
-            id=str(uuid4()),
-            project_id=project_id,
-            type=job_type,
-            target_type=target_type,
-            target_id=target_id,
-            parent_job_id=parent_job_id,
-            input=input or JobInput(),
-            priority=priority,
-            max_attempts=max_attempts,
-            provider=provider,
-            model=model,
+            id=str(uuid4()), project_id=project_id, type=job_type, target_type=target_type,
+            target_id=target_id, parent_job_id=parent_job_id,
+            input=self._capture_context(project_id, input), priority=priority,
+            max_attempts=max_attempts, provider=provider, model=model,
         )
         return transition(job, JobStatus.QUEUED)
 
