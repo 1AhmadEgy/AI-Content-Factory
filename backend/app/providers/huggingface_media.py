@@ -28,30 +28,60 @@ class HuggingFaceMediaAdapter(ModelAdapter):
         if not isinstance(prompt, str) or not prompt.strip():
             return ProviderResponse(False, error_code="HF_EMPTY_PROMPT", error_message="Media generation requires a non-empty prompt")
         payload: dict[str, object] = {"inputs": prompt}
-        parameters = {k: v for k, v in request.parameters.items() if k not in {"prompt", "character_ids", "location_ids", "country_id", "library_id", "continuity_rules", "production_context"}}
+        parameters = {
+            k: v
+            for k, v in request.parameters.items()
+            if k not in {"prompt", "character_ids", "location_ids", "country_id", "library_id", "continuity_rules", "production_context"}
+        }
         if request.seed is not None:
             parameters["seed"] = request.seed
         if parameters:
             payload["parameters"] = parameters
         url = f"https://router.huggingface.co/hf-inference/models/{self.model}"
         try:
-            req = Request(url, data=json.dumps(payload).encode(), headers={"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}, method="POST")
+            req = Request(
+                url,
+                data=json.dumps(payload).encode(),
+                headers={"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"},
+                method="POST",
+            )
             with urlopen(req, timeout=self.timeout_seconds) as response:
                 body = response.read()
-                mime = response.headers.get("Content-Type", "application/octet-stream").split(";", 1)[0]
-                run_id = response.headers.get("x-request-id") or response.headers.get("x-amzn-requestid")
+                mime = response.headers.get("Content-Type", "application/octet-stream").split(";", 1)[0].lower()
+                # Inference Providers use a provider-generated request/response ID for billing/tracing.
+                # Accept the documented/provider variants; never manufacture one locally.
+                run_id = (
+                    response.headers.get("Inference-Id")
+                    or response.headers.get("inference-id")
+                    or response.headers.get("x-request-id")
+                    or response.headers.get("x-amzn-requestid")
+                )
             if not body:
                 return ProviderResponse(False, error_code="HF_EMPTY_OUTPUT", error_message="Provider returned empty output")
-            if mime == "application/json":
-                data = json.loads(body.decode())
+            if mime == "application/json" or mime.endswith("+json"):
+                try:
+                    data = json.loads(body.decode())
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return ProviderResponse(False, error_code="HF_PROVIDER_ERROR", error_message="Provider returned invalid JSON")
                 message = data.get("error") if isinstance(data, dict) else None
-                return ProviderResponse(False, provider_run_id=run_id, error_code="HF_PROVIDER_ERROR", error_message=str(message or "Provider returned JSON instead of binary media"))
+                return ProviderResponse(
+                    False,
+                    provider_run_id=run_id,
+                    error_code="HF_PROVIDER_ERROR",
+                    error_message=str(message or "Provider returned JSON instead of binary media"),
+                )
             if not run_id:
                 return ProviderResponse(False, error_code="HF_RUN_ID_MISSING", error_message="Provider did not return a request id")
-            return ProviderResponse(True, output_bytes=body, output_mime_type=mime, provider_run_id=run_id, output_metadata={"task": self.task})
+            return ProviderResponse(
+                True,
+                output_bytes=body,
+                output_mime_type=mime,
+                provider_run_id=run_id,
+                output_metadata={"task": self.task, "model": self.model},
+            )
         except HTTPError as exc:
             return ProviderResponse(False, error_code="HF_HTTP_ERROR", error_message=f"HTTP {exc.code}: {exc.reason}")
-        except (URLError, OSError, ValueError, json.JSONDecodeError) as exc:
+        except (URLError, OSError, ValueError) as exc:
             return ProviderResponse(False, error_code="HF_PROVIDER_ERROR", error_message=str(exc))
 
     def cancel(self, provider_run_id: str) -> bool:
