@@ -122,7 +122,6 @@ class MediaDocumentWorker(Worker):
             if text:
                 cues = [{"text": text, "start": 0, "end": job.input.parameters.get("end", "00:00:05.000")}]
         lines = ["WEBVTT", ""]
-        output_index = 1
         for cue in cues:
             text = str(cue.get("text", "")).strip()
             if not text:
@@ -131,8 +130,7 @@ class MediaDocumentWorker(Worker):
             end = cls._vtt_time(cue.get("end", cue.get("endTime")), "00:00:05.000")
             if cls._vtt_seconds(end) <= cls._vtt_seconds(start):
                 raise ValueError("INVALID_SUBTITLE_TIMING")
-            lines.extend([str(output_index), f"{start} --> {end}", text, ""])
-            output_index += 1
+            lines.extend([f"{start} --> {end}", text, ""])
         header = f"NOTE language={language}\n\n" if language else ""
         return (header + "\n".join(lines)).encode("utf-8")
 
@@ -144,8 +142,6 @@ class MediaDocumentWorker(Worker):
     def _run_process(self, job_id: str, args: list[str]) -> tuple[subprocess.CompletedProcess[str] | None, bool]:
         proc: subprocess.Popen[str] | None = None
         try:
-            # Registration and spawn are serialized with cancel() so cancellation
-            # cannot miss a process during the tiny spawn-to-registration window.
             with self._process_lock:
                 proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
                 self._processes[job_id] = proc
