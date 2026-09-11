@@ -63,7 +63,7 @@ def _api_token() -> str | None:
 
 
 schedule_repository = SQLiteScheduleRepository(repositories.store)
-job_service = JobService(job_repository)
+job_service = JobService(job_repository, context_provider=orchestrator_runtime.context_snapshot)
 
 
 def _enqueue_scheduled(schedule):
