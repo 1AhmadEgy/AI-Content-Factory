@@ -14,6 +14,7 @@ from ..orchestrator.provenance import build_provenance
 from ..orchestrator.queue import JobExecutionResult, Worker, WorkerContext
 from ..rendering.ffmpeg_renderer import FfmpegRenderOptions, FfmpegRenderer
 from ..rendering.renderer import RenderProfile
+from ..services.brand_video_renderer import BrandVideoRenderer
 
 
 class RenderWorker(Worker):
@@ -101,35 +102,40 @@ class RenderWorker(Worker):
 
         renderer = FfmpegRenderer(asset_paths, FfmpegRenderOptions(ffmpeg_bin=self.ffmpeg_binary, ffprobe_bin=self.ffprobe_binary, overwrite=True, subtitles_path=subtitle_path))
         self._renderers[job.id] = renderer
-        # FfmpegRenderer keys its active process by timeline.id. Normalize the
-        # in-memory timeline id to the owning render job so cancel(job.id) always
-        # reaches the actual FFmpeg process.
         timeline.id = job.id
-        output = self.storage.root / "staging" / f"render-{job.id}-{uuid.uuid4().hex}.mp4"
+        rendered_output = self.storage.root / "staging" / f"render-{job.id}-{uuid.uuid4().hex}.mp4"
+        branded_output = self.storage.root / "staging" / f"brand-{job.id}-{uuid.uuid4().hex}.mp4"
+        brand_id = str(job.input.parameters.get("brandId", "afham_wadhak"))
         try:
-            output.parent.mkdir(parents=True, exist_ok=True)
+            rendered_output.parent.mkdir(parents=True, exist_ok=True)
             self._progress(context, 0.30, "rendering")
-            result = renderer.render(timeline, profile, str(output))
+            result = renderer.render(timeline, profile, str(rendered_output))
             if not result.success or not result.output_path:
                 return JobExecutionResult(False, error_code="FFMPEG_RENDER_FAILED", error_message=result.error or "FFmpeg render failed", retryable=True)
+
+            self._progress(context, 0.72, "applying_brand")
+            brand_renderer = BrandVideoRenderer(brand_id)
+            brand_renderer.apply(result.output_path, branded_output, width, height, fps)
             self._progress(context, 0.82, "audio_mix_complete")
-            probe = renderer.probe(result.output_path)
+
+            probe = renderer.probe(str(branded_output))
             errors = self._validate_probe(probe, width, height)
             if errors:
                 return JobExecutionResult(False, error_code="FINAL_QC_FAILED", error_message=";".join(errors), retryable=False)
             self._progress(context, 0.90, "ffprobe_qc_passed")
-            digest, path, size = self.storage.put_file(result.output_path)
+            digest, path, size = self.storage.put_file(str(branded_output))
         except (OSError, RuntimeError, ValueError) as exc:
             return JobExecutionResult(False, error_code="RENDER_IO_ERROR", error_message=str(exc), retryable=True)
         finally:
             self._renderers.pop(job.id, None)
-            output.unlink(missing_ok=True)
+            rendered_output.unlink(missing_ok=True)
+            branded_output.unlink(missing_ok=True)
 
         self._progress(context, 0.96, "provenance")
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"render:{job.id}:{digest}"))
-        asset = Asset(id=asset_id, project_id=job.project_id, type=AssetType.VIDEO, path=path, mime_type="video/mp4", size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, source_asset_ids=[timeline_asset.id, *asset_paths.keys()], metadata={"width": width, "height": height, "fps": fps, "durationUs": timeline.duration_us, "engine": "ffmpeg", "finalQc": "passed", "language": job.input.parameters.get("language"), "locale": job.input.parameters.get("locale"), "languagePackVersion": job.input.parameters.get("languagePackVersion"), "languageRender": bool(job.input.parameters.get("languageRender"))}, license_status=LicenseStatus.VERIFIED))
+        asset = Asset(id=asset_id, project_id=job.project_id, type=AssetType.VIDEO, path=path, mime_type="video/mp4", size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, source_asset_ids=[timeline_asset.id, *asset_paths.keys()], metadata={"width": width, "height": height, "fps": fps, "durationUs": timeline.duration_us, "engine": "ffmpeg", "brandId": brand_id, "brandName": brand_renderer.config.get("brand_name_en", brand_id), "finalQc": "passed", "language": job.input.parameters.get("language"), "locale": job.input.parameters.get("locale"), "languagePackVersion": job.input.parameters.get("languagePackVersion"), "languageRender": bool(job.input.parameters.get("languageRender"))}, license_status=LicenseStatus.VERIFIED))
         self.assets.create(asset)
-        return JobExecutionResult(True, [asset_id], {"width": width, "height": height, "fps": fps, "durationUs": timeline.duration_us, "finalQc": "passed", "engine": "ffmpeg", "languageRender": bool(job.input.parameters.get("languageRender")), "language": job.input.parameters.get("language")}, f"ffmpeg-{job.id}")
+        return JobExecutionResult(True, [asset_id], {"width": width, "height": height, "fps": fps, "durationUs": timeline.duration_us, "finalQc": "passed", "engine": "ffmpeg", "brandId": brand_id, "brandName": brand_renderer.config.get("brand_name_en", brand_id), "languageRender": bool(job.input.parameters.get("languageRender")), "language": job.input.parameters.get("language")}, f"ffmpeg-{job.id}")
 
     @staticmethod
     def _timeline_from_manifest(manifest: dict[str, object], project_id: str, timeline_id: str) -> Timeline:
