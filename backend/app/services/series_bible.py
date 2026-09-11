@@ -21,22 +21,14 @@ class SeriesBibleService:
     def snapshot(self, project_id: str) -> dict[str, Any]:
         current = self.context.get(project_id)
         bible = deepcopy(current.get("context") or {})
-        bible.setdefault("series", {})
-        bible.setdefault("world", {})
-        bible.setdefault("rules", [])
-        bible.setdefault("characters", {})
-        bible.setdefault("locations", {})
-        bible.setdefault("recurringProps", {})
-        bible.setdefault("relationships", {})
-        bible.setdefault("storyState", {})
-        bible.setdefault("episodes", {})
-        bible.setdefault("scenes", {})
-        bible.setdefault("shots", {})
-        bible.setdefault("assets", {})
-        bible.setdefault("qc", {})
-        bible.setdefault("publishing", {})
-        bible.setdefault("continuity", {})
-        bible.setdefault("latest", {})
+        for key, default in {
+            "series": {}, "world": {}, "rules": [], "characters": {},
+            "locations": {}, "recurringProps": {}, "relationships": {},
+            "storyState": {}, "episodes": {}, "scenes": {}, "shots": {},
+            "assets": {}, "qc": {}, "timeline": {}, "rendering": {},
+            "publishing": {}, "continuity": {}, "latest": {},
+        }.items():
+            bible.setdefault(key, default)
         bible["contextVersion"] = current.get("version", 0)
         return bible
 
@@ -90,6 +82,16 @@ class SeriesBibleService:
         bible["latest"]["assetId"] = asset_id
         return self._save(project_id, bible, "asset.saved", data, "asset", asset_id)
 
+    def record_qc_review(self, project_id: str, review_id: str, asset_id: str, status: str, reviewed_at: str, reason: str | None = None) -> dict[str, Any]:
+        bible = self.snapshot(project_id)
+        review = {"reviewId": review_id, "assetId": asset_id, "status": status, "reviewedAt": reviewed_at}
+        if reason is not None:
+            review["reason"] = reason
+        bible["qc"][review_id] = deepcopy(review)
+        bible["storyState"]["latestQCReview"] = deepcopy(review)
+        bible["latest"]["qcId"] = review_id
+        return self._save(project_id, bible, "qc.reviewed", review, "qc_review", review_id)
+
     def record_job(self, project_id: str, job: dict[str, Any]) -> dict[str, Any]:
         bible = self.snapshot(project_id)
         bible["storyState"]["latestJob"] = deepcopy(job)
@@ -99,40 +101,16 @@ class SeriesBibleService:
         if job_type == "QC" and target_id:
             bible["qc"][str(target_id)] = deepcopy(job)
             bible["latest"]["qcId"] = str(target_id)
+        elif job_type == "TIMELINE" and target_id:
+            bible["timeline"][str(target_id)] = deepcopy(job)
+            bible["latest"]["timelineId"] = str(target_id)
+        elif job_type == "RENDER" and target_id:
+            bible["rendering"][str(target_id)] = deepcopy(job)
+            bible["latest"]["renderJobId"] = str(job.get("jobId") or target_id)
         elif job_type == "PUBLISH" and target_id:
             bible["publishing"][str(target_id)] = deepcopy(job)
             bible["latest"]["publishedAssetId"] = str(target_id)
         return self._save(project_id, bible, "generation.job", job, "job", job.get("jobId"))
-
-    def record_qc_review(
-        self,
-        project_id: str,
-        review_id: str,
-        asset_id: str,
-        status: str,
-        reviewed_at: str,
-        reason: str | None = None,
-    ) -> dict[str, Any]:
-        """Persist a human/explicit QC decision as a review, not as a job.
-
-        QC execution jobs and review decisions are different lifecycle events:
-        keeping them separate prevents review mutations from overwriting the
-        canonical latest job id with ``None`` and preserves the actual review
-        identifier for audit and continuity consumers.
-        """
-        bible = self.snapshot(project_id)
-        review = {
-            "reviewId": review_id,
-            "assetId": asset_id,
-            "status": status,
-            "reviewedAt": reviewed_at,
-        }
-        if reason is not None:
-            review["reason"] = reason
-        bible["qc"][review_id] = deepcopy(review)
-        bible["storyState"]["latestQCReview"] = deepcopy(review)
-        bible["latest"]["qcId"] = review_id
-        return self._save(project_id, bible, "qc.reviewed", review, "qc_review", review_id)
 
     def update_continuity(self, project_id: str, continuity: dict[str, Any]) -> dict[str, Any]:
         bible = self.snapshot(project_id)
