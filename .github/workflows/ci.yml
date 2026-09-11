@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 env:
   REGISTRY: ghcr.io
@@ -37,10 +36,25 @@ jobs:
 
       - name: Build brand assets
         run: |
-          chmod +x build_brand_assets.sh
-          chmod +x build_video_assets.sh
+          chmod +x build_brand_assets.sh build_video_assets.sh
           ./build_brand_assets.sh
           ./build_video_assets.sh
+
+      - name: Validate brand configuration
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("backend/app/config/brands/afham_wadhak.json")
+          c = json.loads(p.read_text(encoding="utf-8"))
+          assert c["brand_id"] == "afham_wadhak"
+          assert c["brand_name_ar"] == "افهم واضحك"
+          assert c["tagline_ar"] == "افهم ببساطة وابتسم"
+          assert c["color_palette"]["secondary"] == "#FFD84D"
+          assert c["color_palette"]["accent"] == "#4DB6FF"
+          assert c["watermark"]["position"] == "bottom_right"
+          print("Afham Wadhak brand configuration: OK")
+          PY
 
       - name: Install backend dependencies
         run: |
@@ -68,8 +82,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: afham-wadhak-assets
-          path: |
-            assets/branding/afham_wadhak/
+          path: assets/branding/afham_wadhak/
           if-no-files-found: error
           retention-days: 7
 
@@ -78,10 +91,24 @@ jobs:
     runs-on: ubuntu-24.04
     needs: test
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Install media build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y inkscape ffmpeg
+
+      - name: Build canonical brand assets
+        run: |
+          chmod +x build_brand_assets.sh build_video_assets.sh
+          ./build_brand_assets.sh
+          ./build_video_assets.sh
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -110,7 +137,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: ./backend
+          context: .
           file: ./backend/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
