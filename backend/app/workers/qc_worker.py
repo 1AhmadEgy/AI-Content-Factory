@@ -45,6 +45,7 @@ class QualityControlWorker(Worker):
             checks.append({
                 "assetId": asset_id,
                 "exists": asset is not None,
+                "projectMatch": bool(asset and asset.project_id == job.project_id),
                 "ready": bool(asset and asset.status is AssetStatus.READY),
                 "pathExists": path_exists,
                 "nonEmpty": non_empty,
@@ -53,7 +54,7 @@ class QualityControlWorker(Worker):
             })
         valid = [
             c for c in checks
-            if c["exists"] and c["ready"] and c["pathExists"] and c["nonEmpty"] and c["checksum"] and c["licenseVerified"]
+            if c["exists"] and c["projectMatch"] and c["ready"] and c["pathExists"] and c["nonEmpty"] and c["checksum"] and c["licenseVerified"]
         ]
         score = round(100.0 * len(valid) / len(checks), 2)
         passed = score == 100.0
