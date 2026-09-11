@@ -83,6 +83,9 @@ class ProviderGenerationWorker(Worker):
         elif response.output_bytes is not None:
             if not response.output_bytes:
                 return self._fail_provider_run(internal_run_id, provider_run_id, "PROVIDER_EMPTY_OUTPUT", "Provider returned empty binary output")
+            mime_error = self._validate_output_mime(job, response.output_mime_type)
+            if mime_error:
+                return self._fail_provider_run(internal_run_id, provider_run_id, mime_error, "Provider returned media with an incompatible or missing MIME type")
             asset_ids = [self._persist_media(job, model.provider, model.id, response, provider_run_id)]
         elif response.output_text is not None and response.output_text.strip():
             payload = self._serialize_output(job, response.output_text, response.metrics)
@@ -124,6 +127,22 @@ class ProviderGenerationWorker(Worker):
                 return "PROVIDER_ASSET_LICENSE_UNVERIFIED", asset_id, "Provider asset does not have verified licensing provenance"
             if not self.storage.verify(asset):
                 return "PROVIDER_ASSET_INTEGRITY_FAILED", asset_id, "Provider asset failed storage integrity verification"
+        return None
+
+    @staticmethod
+    def _validate_output_mime(job: GenerationJob, mime_type: str | None) -> str | None:
+        if not isinstance(mime_type, str) or not mime_type.strip():
+            return "PROVIDER_MIME_TYPE_MISSING"
+        mime = mime_type.split(";", 1)[0].strip().lower()
+        expected = ProviderGenerationWorker._asset_type(job)
+        if expected is AssetType.IMAGE and not mime.startswith("image/"):
+            return "PROVIDER_MIME_TYPE_MISMATCH"
+        if expected is AssetType.VIDEO and not mime.startswith("video/"):
+            return "PROVIDER_MIME_TYPE_MISMATCH"
+        if expected is AssetType.AUDIO and not mime.startswith("audio/"):
+            return "PROVIDER_MIME_TYPE_MISMATCH"
+        if expected is AssetType.SUBTITLE and not (mime.startswith("text/") or mime == "application/x-subrip"):
+            return "PROVIDER_MIME_TYPE_MISMATCH"
         return None
 
     def _persist_media(self, job: GenerationJob, provider: str, model: str, response, provider_run_id: str) -> str:
