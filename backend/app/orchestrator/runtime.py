@@ -57,11 +57,7 @@ class OrchestratorRuntime:
 
         provider_worker = ProviderGenerationWorker(self.providers, self.storage, self.assets, self.provider_runs)
         provider_worker.initialize()
-        self.workers.register(
-            provider_worker,
-            capabilities={"STORY", "CHARACTER", "WORLD", "SCENE", "SHOT", "IMAGE", "VIDEO", "TTS", "LIPSYNC", "MUSIC", "SFX", "UPSCALE", "INTERPOLATION"},
-            worker_id="provider-generation",
-        )
+        self.workers.register(provider_worker, capabilities={"STORY", "CHARACTER", "WORLD", "SCENE", "SHOT", "IMAGE", "VIDEO", "TTS", "LIPSYNC", "MUSIC", "SFX", "UPSCALE", "INTERPOLATION"}, worker_id="provider-generation")
 
         qc = QualityControlWorker(self.storage, self.assets)
         qc.initialize()
@@ -112,17 +108,19 @@ class OrchestratorRuntime:
 
     def plan_content(self, brief: ContentBrief, model_id: str | None = None) -> StoryPlan:
         self._resolve_library_scope(brief)
-        project_id = brief.project_id
+        project_id = brief.project_id or brief.library_id
         characters = tuple(
             c for cid in brief.character_ids
-            if (c := self.characters.get(cid)) is not None
-            and (project_id is None or c.project_id == brief.library_id)
+            if (c := self.characters.get(cid)) is not None and c.project_id == project_id
         )
         locations = tuple(
             l for lid in brief.location_ids
-            if (l := self.locations.get(lid)) is not None
-            and (project_id is None or l.project_id == brief.library_id)
+            if (l := self.locations.get(lid)) is not None and l.project_id == project_id
         )
+        if len(characters) != len(brief.character_ids):
+            raise ValueError("CHARACTER_SCOPE_VIOLATION")
+        if len(locations) != len(brief.location_ids):
+            raise ValueError("LOCATION_SCOPE_VIOLATION")
         story = self.story_engine.generate(brief, model_id, characters, locations)
         script = self.script_engine.generate(brief, story, model_id)
         return self.scene_planner.plan(brief, script, model_id)
@@ -156,7 +154,7 @@ class OrchestratorRuntime:
             try:
                 worker_id = self.workers.resolve_for_job(job.type)
                 self.workers.get(worker_id).cancel(job.id)
-            except Exception:  # noqa: BLE001 - durable cancellation must not depend on worker shutdown
+            except Exception:
                 logger.exception("Best-effort worker cancellation failed for job %s", job.id)
         return self.job_service.cancel(job_id)
 
