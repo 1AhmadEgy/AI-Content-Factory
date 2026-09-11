@@ -38,7 +38,7 @@ class LocalMediaModelAdapter(ModelAdapter):
                 return ProviderResponse(success=False, error_code="LOCAL_MEDIA_EMPTY_RESPONSE", error_message="Local media provider returned an empty response")
             if content_type == "application/json":
                 return self._json_response(body, run_id)
-            return ProviderResponse(success=True, output_bytes=body, output_mime_type=content_type, provider_run_id=run_id, metrics={"local": 1.0, "binary": 1.0})
+            return ProviderResponse(success=True, output_bytes=body, output_mime_type=content_type, provider_run_id=run_id)
         except HTTPError as exc:
             return ProviderResponse(success=False, error_code="LOCAL_MEDIA_HTTP_ERROR", error_message=f"HTTP {exc.code}: {exc.reason}")
         except (URLError, OSError, json.JSONDecodeError, ValueError) as exc:
