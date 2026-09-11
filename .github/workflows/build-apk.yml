@@ -1,95 +1,80 @@
-name: Build & Release APK
+name: Build Android APK
 
 on:
   push:
-    branches: ['main']
-    tags: ['v*']
+    branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
+env:
+  APK_NAME: AI-Content-Factory.apk
+
 jobs:
-  test-backend:
-    runs-on: ubuntu-latest
+  build:
+    name: Lint, test and build APK
+    runs-on: ubuntu-24.04
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Install media build tools
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg librsvg2-bin
-
-      - name: Build Afham Wadhak branding assets
-        run: bash scripts/build_afham_wadhak_assets.sh
-
-      - uses: actions/setup-python@v5
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
         with:
-          python-version: '3.11'
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
 
-      - name: Install dependencies
-        run: |
-          cd backend
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Run backend tests
-        run: |
-          cd backend
-          PYTHONPATH=. python -m pytest tests/ -v
-
-      - name: Run full branded video integration test
-        run: |
-          PYTHONPATH=backend python - <<'PY'
-          from app.services.video_composer import VideoComposer
-          composer = VideoComposer(brand_id="afham_wadhak")
-          composer.build_video(
-              script_text="هل تعرف لماذا يحدث هذا؟ لأن العقل يعشق المعلومات المبسطة!",
-              audio_file="assets/branding/afham_wadhak/jingle.mp3",
-              output_path="output/afham_wadhak_test.mp4",
-          )
-          PY
-          ffprobe -v error -show_entries format=duration -show_entries stream=codec_name,width,height,r_frame_rate -of json output/afham_wadhak_test.mp4
-
-      - name: Build backend Docker image
-        run: docker build -t ai-content-factory-backend:latest ./backend
-
-      - name: Upload branding assets and test video
-        uses: actions/upload-artifact@v4
+      - name: Cache Gradle wrapper and modules
+        uses: actions/cache@v4
         with:
-          name: afham-wadhak-branding-assets
           path: |
-            assets/branding/afham_wadhak/
-            output/afham_wadhak_test.mp4
-          retention-days: 30
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', 'gradle.properties', 'settings.gradle*') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
 
-  build-apk:
-    needs: test-backend
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
 
-      - uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
+      - name: Run Kotlin/Android lint
+        run: ./gradlew lint
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.3.1'
+      - name: Run unit tests
+        run: ./gradlew test
 
-      - name: Build Debug APK
-        run: gradle :app:assembleDebug --no-daemon
+      - name: Build release APK
+        run: ./gradlew :app:assembleRelease
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/AI-Content-Factory.apk
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk "dist/${APK_NAME}"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AI-Content-Factory-apk
-          path: app/build/outputs/apk/debug/AI-Content-Factory.apk
-          retention-days: 30
+          name: AI-Content-Factory-APK
+          path: dist/${{ env.APK_NAME }}
+          if-no-files-found: error
+          retention-days: 14
 
-      - name: Upload to Release
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Create or update latest release
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/debug/AI-Content-Factory.apk
-          generate_release_notes: true
+          tag_name: latest
+          name: latest
+          target_commitish: ${{ github.sha }}
+          prerelease: false
+          draft: false
+          files: dist/${{ env.APK_NAME }}
+          body: |
+            Automated build from GitHub Actions.
+            - APK: AI-Content-Factory.apk
+            - Branch: main
+            - Status: latest build
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
