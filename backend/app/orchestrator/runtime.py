@@ -23,6 +23,7 @@ from ..library.country_catalog import get_country_library
 from ..library.seed import ensure_country_library_projects, ensure_egypt_library, ensure_libya_library
 from ..providers.registry import default_provider_registry
 from ..services.project_context import ProjectContextStore
+from ..services.series_bible import SeriesBibleService
 from ..workers.best_take_worker import BestTakeWorker
 from ..workers.language_pack_worker import LanguagePackWorker
 from ..workers.media_document_worker import MediaDocumentWorker
@@ -48,6 +49,7 @@ class OrchestratorRuntime:
     def __init__(self, repositories: SQLiteRepositories, storage_root: str | Path | None = None) -> None:
         self.repositories = repositories
         self.context = ProjectContextStore(repositories.store)
+        self.series_bible = SeriesBibleService(self.context)
         self.assets = SQLiteAssetRepository(repositories.store)
         self.characters = SQLiteCharacterRepository(repositories.store)
         self.locations = SQLiteLocationRepository(repositories.store)
@@ -84,7 +86,7 @@ class OrchestratorRuntime:
         self.libya_library_seed = ensure_libya_library(repositories)
 
     def _on_job_completed(self, job: GenerationJob) -> None:
-        """Persist provider outputs and record production events in durable series memory."""
+        """Persist provider outputs and materialize every completed generation in the bible."""
         if job.status is JobStatus.COMPLETED and job.output and job.output.asset_ids:
             try:
                 if job.type is JobType.IMAGE and job.target_type == "shot":
@@ -94,12 +96,17 @@ class OrchestratorRuntime:
             except Exception:
                 logger.exception("Failed to bind completed %s job %s to target %s/%s", job.type.value, job.id, job.target_type, job.target_id)
         if job.project_id:
+            event = {
+                "jobId": job.id, "type": job.type.value, "targetType": job.target_type, "targetId": job.target_id,
+                "status": job.status.value, "assetIds": list(job.output.asset_ids) if job.output else [],
+                "errorCode": job.error_code, "errorMessage": job.error_message,
+            }
             try:
-                self.context.append_event(job.project_id, "job.completed" if job.status is JobStatus.COMPLETED else "job.finished", {
-                    "jobId": job.id, "type": job.type.value, "targetType": job.target_type, "targetId": job.target_id,
-                    "status": job.status.value, "assetIds": list(job.output.asset_ids) if job.output else [],
-                    "errorCode": job.error_code, "errorMessage": job.error_message,
-                }, entity_type="job", entity_id=job.id)
+                self.series_bible.record_job(job.project_id, event)
+            except Exception:
+                logger.exception("Failed to materialize job %s in series bible", job.id)
+            try:
+                self.context.append_event(job.project_id, "job.completed" if job.status is JobStatus.COMPLETED else "job.finished", event, entity_type="job", entity_id=job.id)
             except Exception:
                 logger.exception("Failed to append project context event for job %s", job.id)
         self.pipeline.on_completed(job)
@@ -127,12 +134,14 @@ class OrchestratorRuntime:
         context = self.context.get(project_id) if project_id else {"version": 0, "context": {}}
         enriched_context = dict(brief.production_context)
         enriched_context["persistentSeriesContext"] = context["context"]
+        enriched_context["seriesBible"] = self.series_bible.snapshot(project_id) if project_id else {}
         enriched_context["contextVersion"] = context["version"]
         effective_brief = replace(brief, production_context=enriched_context)
         if project_id:
             self.context.append_event(project_id, "content.plan.requested", {
                 "topic": brief.topic, "characterIds": list(brief.character_ids), "locationIds": list(brief.location_ids),
                 "language": brief.language, "durationSeconds": brief.duration_seconds, "style": brief.style,
+                "contextVersion": context["version"],
             }, entity_type="content_plan", entity_id=project_id)
         story = self.story_engine.generate(effective_brief, model_id, characters, locations)
         script = self.script_engine.generate(effective_brief, story, model_id)
@@ -163,7 +172,7 @@ class OrchestratorRuntime:
                 worker_id = self.workers.resolve_for_job(job.type)
                 self.workers.get(worker_id).cancel(job.id)
             except Exception:
-                logger.exception("Best-effort worker cancellation failed for job %s", job.id)
+                logger.exception("Best-effort worker cancellation failed for job %s", job_id)
         return self.job_service.cancel(job_id)
 
     def heartbeat(self, job_id: str, lease_id: str, worker_id: str) -> None:
