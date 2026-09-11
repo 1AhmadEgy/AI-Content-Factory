@@ -26,11 +26,21 @@ def _story() -> StoryPlan:
     return StoryPlan("Title", "Logline", "Synopsis", (ScenePlan(1, "Scene", 10, "Visual", "Narration", (ShotPlan(1, "prompt", 10),)),))
 
 
-def test_story_engine_accepts_real_provider_response() -> None:
-    payload = json.dumps({"title": "Generated", "logline": "A logline", "synopsis": "A synopsis", "scenes": [{"title": "Scene 1", "duration_seconds": 10, "visual": "Space", "narration": "Stars", "shots": [{"prompt": "stars", "duration_seconds": 10}]}]})
+def test_story_engine_accepts_valid_provider_response() -> None:
+    payload = json.dumps({"title": "Generated", "logline": "A logline", "synopsis": "A synopsis", "scenes": [{"number": 1, "title": "Scene 1", "duration_seconds": 10, "visual": "Space", "narration": "Stars", "shots": [{"number": 1, "prompt": "stars", "duration_seconds": 10, "camera": "medium", "lighting": "natural", "style": "cinematic", "character_ids": [], "location_ids": []}]}]})
     result = AIStoryEngine(_registry(payload)).generate(ContentBrief("space"), "test-model")
     assert result.title == "Generated"
-    assert result.scenes
+    assert result.scenes[0].shots
+
+
+def test_story_engine_rejects_empty_scene_list() -> None:
+    payload = json.dumps({"title": "Generated", "logline": "A logline", "synopsis": "A synopsis", "scenes": []})
+    try:
+        AIStoryEngine(_registry(payload)).generate(ContentBrief("space"), "test-model")
+    except RuntimeError as exc:
+        assert str(exc).startswith("AI_STORY_SCHEMA_INVALID")
+    else:
+        raise AssertionError("invalid story schema must fail")
 
 
 def test_scene_planner_updates_scene_direction_from_provider_json() -> None:
