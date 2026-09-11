@@ -1,37 +1,36 @@
-from app.providers.builtin import CloudModelAdapter, LocalModelAdapter, MockModelAdapter
+from app.providers.builtin import LocalModelAdapter
 from app.providers.contracts import ProviderRequest
-from app.providers.registry import RegisteredModel, default_provider_registry
+from app.providers.openai_adapter import OpenAIModelAdapter
+from app.providers.registry import ModelRegistry, RegisteredModel, default_provider_registry
 
 
-def test_default_registry_routes_mock_capability() -> None:
+def test_default_registry_requires_real_provider_configuration() -> None:
     registry = default_provider_registry()
-    model = registry.route("generation", "image")
-    assert model is not None
-    assert model.id == "mock-deterministic"
-    assert model.provider == "mock"
+    assert registry.ids() == [] or all(registry.get(model_id).provider == "openai" for model_id in registry.ids())
 
 
-def test_mock_adapter_is_deterministic_and_offline() -> None:
-    adapter = MockModelAdapter()
-    request = ProviderRequest("mock-deterministic", {"prompt": "hello"}, seed=7)
-    first = adapter.execute(request)
-    second = adapter.execute(request)
-    assert first.success and second.success
-    assert first.provider_run_id == second.provider_run_id
+def test_local_adapter_is_transport_real() -> None:
+    adapter = LocalModelAdapter("http://localhost:8000", frozenset({"text"}))
+    request = ProviderRequest("local-model", {"prompt": "hello"}, seed=7)
+    assert adapter.capability().runtime == "LOCAL"
     assert adapter.health_check()
+    assert request.model == "local-model"
 
 
-def test_local_and_cloud_adapters_are_transport_neutral() -> None:
-    local = LocalModelAdapter("http://localhost:8000", frozenset({"image"}))
-    cloud = CloudModelAdapter("example", frozenset({"video"}))
-    assert local.capability().runtime == "LOCAL"
-    assert cloud.capability().runtime == "CLOUD"
-    assert local.health_check() and cloud.health_check()
+def test_openai_adapter_requires_credentials_without_synthetic_output() -> None:
+    adapter = OpenAIModelAdapter("configured-model", "TEXT", api_key="")
+    response = adapter.execute(ProviderRequest("configured-model", {"prompt": "hello"}))
+    assert not response.success
+    assert response.error_code == "OPENAI_API_KEY_MISSING"
+    assert response.output_text is None
 
 
 def test_registry_disable_and_enable() -> None:
-    registry = default_provider_registry()
-    registry.disable("mock-deterministic")
-    assert registry.route("generation", "image") is None
-    registry.enable("mock-deterministic")
-    assert registry.route("generation", "image") is not None
+    registry = ModelRegistry()
+    adapter = LocalModelAdapter("http://localhost:8000", frozenset({"text"}))
+    registry.register(RegisteredModel("local-text", "local", adapter, priority=10))
+    assert registry.route("generation", "text") is not None
+    registry.disable("local-text")
+    assert registry.route("generation", "text") is None
+    registry.enable("local-text")
+    assert registry.route("generation", "text") is not None
