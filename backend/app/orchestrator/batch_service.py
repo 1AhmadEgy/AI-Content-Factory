@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from ..domain.jobs import GenerationJob, JobInput, JobStatus, JobType
 from ..domain.repositories import JobRepository
@@ -22,9 +22,9 @@ class BatchItem:
 
 
 class BatchService:
-    def __init__(self, repository: JobRepository, enqueue):
+    def __init__(self, repository: JobRepository, enqueue, context_provider: Callable[[str], dict] | None = None):
         self.repository = repository
-        self.jobs = JobService(repository)
+        self.jobs = JobService(repository, context_provider=context_provider)
         self.enqueue = enqueue
 
     def create(self, project_id: str, items: list[BatchItem], priority: int = 100) -> GenerationJob:
