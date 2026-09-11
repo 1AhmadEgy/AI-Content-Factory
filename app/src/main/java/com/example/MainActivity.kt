@@ -50,6 +50,13 @@ fun MainScreen() {
                     colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan),
                 )
                 NavigationBarItem(
+                    icon = { Icon(Icons.Filled.List, contentDescription = "Characters") },
+                    label = { Text("Characters") },
+                    selected = currentRoute == "characters" || currentRoute?.startsWith("character/") == true || currentRoute == "scene-builder",
+                    onClick = { navController.navigate("characters") { launchSingleTop = true } },
+                    colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan),
+                )
+                NavigationBarItem(
                     icon = { Icon(Icons.Filled.List, contentDescription = "Control") },
                     label = { Text("Control") },
                     selected = currentRoute == "control",
@@ -63,13 +70,7 @@ fun MainScreen() {
             composable("projects") { DashboardScreen(viewModel, onProjectClick = { id -> navController.navigate("project/$id") }) }
             composable("project/{projectId}", arguments = listOf(navArgument("projectId") { type = NavType.StringType })) { backStackEntry ->
                 val projectId = backStackEntry.arguments?.getString("projectId") ?: return@composable
-                ProjectDetailScreen(
-                    projectId,
-                    viewModel,
-                    onBack = { navController.popBackStack() },
-                    onSeriesClick = { id -> navController.navigate("series/$id") },
-                    onSeriesControlClick = { navController.navigate("series-control/$projectId") },
-                )
+                ProjectDetailScreen(projectId, viewModel, onBack = { navController.popBackStack() }, onSeriesClick = { id -> navController.navigate("series/$id") }, onSeriesControlClick = { navController.navigate("series-control/$projectId") })
             }
             composable("series/{seriesId}", arguments = listOf(navArgument("seriesId") { type = NavType.StringType })) { backStackEntry ->
                 val seriesId = backStackEntry.arguments?.getString("seriesId") ?: return@composable
@@ -83,12 +84,7 @@ fun MainScreen() {
                 val episodeId = backStackEntry.arguments?.getString("episodeId") ?: return@composable
                 EpisodeDetailScreen(episodeId, viewModel, onBack = { navController.popBackStack() })
             }
-            composable("characters") {
-                CharacterListScreen(
-                    onCharacterClick = { id -> navController.navigate("character/$id") },
-                    onSceneClick = { navController.navigate("scene-builder") },
-                )
-            }
+            composable("characters") { CharacterListScreen(onCharacterClick = { id -> navController.navigate("character/$id") }, onSceneClick = { navController.navigate("scene-builder") }) }
             composable("character/{characterId}", arguments = listOf(navArgument("characterId") { type = NavType.StringType })) { backStackEntry ->
                 val characterId = backStackEntry.arguments?.getString("characterId") ?: return@composable
                 CharacterDetailScreen(characterId, onBack = { navController.popBackStack() }, onScene = { navController.navigate("scene-builder") })
