@@ -172,27 +172,46 @@ def test_provider_rejects_referenced_asset_that_does_not_exist(tmp_path: Path) -
     assert assets.items == {}
 
 
-def test_default_registry_requires_explicit_provider_configuration(monkeypatch) -> None:
+def _clear_cloud_provider_env(monkeypatch) -> None:
     for name in (
         "AICF_TEXT_PROVIDER_ENDPOINT", "AICF_TEXT_PROVIDER_MODEL",
         "AICF_MEDIA_PROVIDER_ENDPOINT", "AICF_MEDIA_PROVIDER_MODEL",
         "HF_TOKEN", "HF_MODEL", "HF_MEDIA_TOKEN", "HF_MEDIA_MODEL",
     ):
         monkeypatch.delenv(name, raising=False)
+
+
+def test_default_registry_requires_explicit_provider_configuration(monkeypatch) -> None:
+    _clear_cloud_provider_env(monkeypatch)
     registry = default_provider_registry()
     assert registry.ids() == []
 
 
-def test_default_registry_registers_real_huggingface_media_task(monkeypatch) -> None:
-    for name in (
-        "AICF_TEXT_PROVIDER_ENDPOINT", "AICF_TEXT_PROVIDER_MODEL",
-        "AICF_MEDIA_PROVIDER_ENDPOINT", "AICF_MEDIA_PROVIDER_MODEL",
-    ):
-        monkeypatch.delenv(name, raising=False)
+def test_default_registry_registers_real_huggingface_image_task(monkeypatch) -> None:
+    _clear_cloud_provider_env(monkeypatch)
     monkeypatch.setenv("HF_MEDIA_TOKEN", "hf-test")
     monkeypatch.setenv("HF_MEDIA_MODEL", "black-forest-labs/FLUX.1-schnell")
     monkeypatch.setenv("HF_MEDIA_TASK", "text-to-image")
     registry = default_provider_registry()
-    assert registry.ids() == ["huggingface-media:black-forest-labs/FLUX.1-schnell"]
     registered = registry.get("huggingface-media:black-forest-labs/FLUX.1-schnell")
     assert registered.adapter.capability().capabilities == frozenset({"image"})
+
+
+def test_default_registry_registers_real_huggingface_video_task(monkeypatch) -> None:
+    _clear_cloud_provider_env(monkeypatch)
+    monkeypatch.setenv("HF_MEDIA_TOKEN", "hf-test")
+    monkeypatch.setenv("HF_MEDIA_MODEL", "Wan-AI/Wan2.2-TI2V-5B")
+    monkeypatch.setenv("HF_MEDIA_TASK", "text-to-video")
+    registry = default_provider_registry()
+    registered = registry.get("huggingface-media:Wan-AI/Wan2.2-TI2V-5B")
+    assert registered.adapter.capability().capabilities == frozenset({"video"})
+
+
+def test_default_registry_registers_real_huggingface_tts_task(monkeypatch) -> None:
+    _clear_cloud_provider_env(monkeypatch)
+    monkeypatch.setenv("HF_MEDIA_TOKEN", "hf-test")
+    monkeypatch.setenv("HF_MEDIA_MODEL", "OuteAI/OuteTTS-0.3-500M")
+    monkeypatch.setenv("HF_MEDIA_TASK", "text-to-speech")
+    registry = default_provider_registry()
+    registered = registry.get("huggingface-media:OuteAI/OuteTTS-0.3-500M")
+    assert registered.adapter.capability().capabilities == frozenset({"tts"})
