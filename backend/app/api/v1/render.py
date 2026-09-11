@@ -42,11 +42,31 @@ class RenderRequest(BaseModel):
     timelineId: str
     output: RenderOutput = Field(default_factory=RenderOutput)
     subtitles: SubtitleOptions = Field(default_factory=SubtitleOptions)
-    branding: BrandingOptions = Field(default_factory=BrandingOptions)
+    # None means: use the project's branding setting. An explicit value here
+    # is a per-render override and does not change the project setting.
+    branding: BrandingOptions | None = None
 
 
-def _fingerprint(body: RenderRequest) -> str:
-    return hashlib.sha256(json.dumps(body.model_dump(mode="json"), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+def _fingerprint(body: RenderRequest, effective_branding: BrandingOptions) -> str:
+    payload = body.model_dump(mode="json")
+    payload["branding"] = effective_branding.model_dump(mode="json")
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _resolve_branding(project, request_branding: BrandingOptions | None) -> BrandingOptions:
+    if request_branding is not None:
+        return request_branding
+
+    settings = project.settings or {}
+    configured = settings.get("branding") or {}
+    return BrandingOptions(
+        enabled=bool(configured.get("enabled", True)),
+        brand=str(configured.get("brand") or "afham-wadhak"),
+        introAssetId=configured.get("introAssetId"),
+        outroAssetId=configured.get("outroAssetId"),
+        watermarkAssetId=configured.get("watermarkAssetId"),
+        watermarkOpacity=float(configured.get("watermarkOpacity", 0.82)),
+    )
 
 
 def build_router(runtime: OrchestratorRuntime, jobs: SQLiteJobRepository) -> APIRouter:
@@ -57,7 +77,8 @@ def build_router(runtime: OrchestratorRuntime, jobs: SQLiteJobRepository) -> API
     def render(body: RenderRequest, request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
         if not idempotency_key:
             raise HTTPException(status_code=400, detail="IDEMPOTENCY_KEY_REQUIRED")
-        if runtime.repositories.projects.get(body.projectId) is None:
+        project = runtime.repositories.projects.get(body.projectId)
+        if project is None:
             raise HTTPException(status_code=404, detail="PROJECT_NOT_FOUND")
         timeline_asset = runtime.assets.get(body.timelineId)
         if timeline_asset is None or timeline_asset.project_id != body.projectId:
@@ -65,8 +86,9 @@ def build_router(runtime: OrchestratorRuntime, jobs: SQLiteJobRepository) -> API
         if timeline_asset.type is not AssetType.DOCUMENT or timeline_asset.status is not AssetStatus.READY:
             raise HTTPException(status_code=422, detail="TIMELINE_NOT_READY")
 
+        effective_branding = _resolve_branding(project, body.branding)
         operation = "POST:/api/v1/render"
-        fingerprint = _fingerprint(body)
+        fingerprint = _fingerprint(body, effective_branding)
         existing = jobs.store.get_idempotency(idempotency_key, operation)
         if existing:
             if existing["request_fingerprint"] != fingerprint:
@@ -88,7 +110,7 @@ def build_router(runtime: OrchestratorRuntime, jobs: SQLiteJobRepository) -> API
                 parameters={
                     "output": body.output.model_dump(),
                     "subtitles": body.subtitles.model_dump(),
-                    "branding": body.branding.model_dump(),
+                    "branding": effective_branding.model_dump(),
                 },
                 reference_asset_ids=[body.timelineId],
             ),
