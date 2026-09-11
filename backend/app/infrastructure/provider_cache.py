@@ -1,0 +1,118 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Any
+
+from .sqlite import SQLiteStore
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderCacheEntry:
+    cache_key: str
+    provider: str
+    model: str
+    output_text: str | None
+    output_bytes: bytes | None
+    output_mime_type: str | None
+    output_filename: str | None
+    output_metadata: dict[str, Any]
+    metrics: dict[str, float]
+
+
+class SQLiteProviderCache:
+    """Durable success-only provider response cache.
+
+    Cached responses are never returned directly as job assets. The worker
+    materializes a fresh project-owned asset so provenance remains tied to the
+    current job.
+    """
+
+    def __init__(self, store: SQLiteStore, ttl_seconds: int = 86400, max_bytes: int = 20 * 1024 * 1024) -> None:
+        if ttl_seconds <= 0:
+            raise ValueError("ttl_seconds must be positive")
+        if max_bytes <= 0:
+            raise ValueError("max_bytes must be positive")
+        self.store = store
+        self.ttl_seconds = ttl_seconds
+        self.max_bytes = max_bytes
+
+    def get(self, cache_key: str) -> ProviderCacheEntry | None:
+        with self.store._lock, self.store.connection:
+            row = self.store.connection.execute(
+                "SELECT * FROM provider_cache WHERE cache_key=? "
+                "AND (expires_at IS NULL OR expires_at>?)",
+                (cache_key, datetime.utcnow().isoformat()),
+            ).fetchone()
+            if row is None:
+                return None
+            self.store.connection.execute(
+                "UPDATE provider_cache SET hits=hits+1 WHERE cache_key=?",
+                (cache_key,),
+            )
+            return ProviderCacheEntry(
+                cache_key=row["cache_key"],
+                provider=row["provider"],
+                model=row["model"],
+                output_text=row["output_text"],
+                output_bytes=row["output_bytes"],
+                output_mime_type=row["output_mime_type"],
+                output_filename=row["output_filename"],
+                output_metadata=json.loads(row["output_metadata_json"] or "{}"),
+                metrics={k: float(v) for k, v in json.loads(row["metrics_json"] or "{}").items()},
+            )
+
+    def put(
+        self,
+        cache_key: str,
+        provider: str,
+        model: str,
+        *,
+        output_text: str | None,
+        output_bytes: bytes | None,
+        output_mime_type: str | None,
+        output_filename: str | None,
+        output_metadata: dict[str, Any],
+        metrics: dict[str, float],
+    ) -> bool:
+        if output_bytes is not None and len(output_bytes) > self.max_bytes:
+            return False
+        expires_at = (datetime.utcnow() + timedelta(seconds=self.ttl_seconds)).isoformat()
+        with self.store._lock, self.store.connection:
+            self.store.connection.execute(
+                "INSERT INTO provider_cache(" 
+                "cache_key,provider,model,output_text,output_bytes,output_mime_type," 
+                "output_filename,output_metadata_json,metrics_json,created_at,expires_at,hits) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,0) ON CONFLICT(cache_key) DO NOTHING",
+                (
+                    cache_key,
+                    provider,
+                    model,
+                    output_text,
+                    output_bytes,
+                    output_mime_type,
+                    output_filename,
+                    json.dumps(output_metadata, ensure_ascii=False, sort_keys=True),
+                    json.dumps(metrics, ensure_ascii=False, sort_keys=True),
+                    datetime.utcnow().isoformat(),
+                    expires_at,
+                ),
+            )
+            return True
+
+    def purge_expired(self, now: datetime | None = None) -> int:
+        cutoff = (now or datetime.utcnow()).isoformat()
+        with self.store._lock, self.store.connection:
+            result = self.store.connection.execute(
+                "DELETE FROM provider_cache WHERE expires_at IS NOT NULL AND expires_at<=?",
+                (cutoff,),
+            )
+            return result.rowcount
+
+    def stats(self) -> dict[str, int]:
+        with self.store._lock:
+            row = self.store.connection.execute(
+                "SELECT COUNT(*) AS entries, COALESCE(SUM(hits),0) AS hits FROM provider_cache"
+            ).fetchone()
+            return {"entries": int(row["entries"]), "hits": int(row["hits"])}
