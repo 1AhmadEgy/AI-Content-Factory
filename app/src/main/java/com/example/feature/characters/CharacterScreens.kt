@@ -9,8 +9,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -28,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,8 +36,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.remote.NetworkClient
-import kotlinx.coroutines.launch
-import androidx.compose.runtime.rememberCoroutineScope
 
 @Composable
 fun CharacterListScreen(
@@ -47,7 +44,7 @@ fun CharacterListScreen(
     projectId: String? = null,
 ) {
     val vm: CharacterViewModel = viewModel(factory = CharacterViewModelFactory())
-    val state by vm.state.collectAsStateCompat()
+    val state by vm.state.collectAsState()
     Scaffold(
         topBar = {
             TopAppBar(title = { Text("الشخصيات") }, actions = {
@@ -91,7 +88,6 @@ fun CharacterListScreen(
 fun CharacterDetailScreen(characterId: String, onBack: () -> Unit, onScene: () -> Unit) {
     var character by remember { mutableStateOf<CharacterUi?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
     LaunchedEffect(characterId) {
         runCatching { NetworkClient.apiService.getCharacter(characterId).data }
             .onSuccess { character = it.toUi() }
@@ -117,8 +113,3 @@ fun CharacterDetailScreen(characterId: String, onBack: () -> Unit, onScene: () -
         }
     }
 }
-
-@Composable
-private fun <T> StateFlowCompat<T>.collectAsStateCompat() = androidx.compose.runtime.collectAsState(this.flow)
-
-private typealias StateFlowCompat<T> = androidx.compose.runtime.State< T >
