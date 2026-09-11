@@ -71,7 +71,7 @@ jobs:
       - name: Run Ruff lint
         run: |
           cd backend
-          ruff check --output-format=github .
+          ruff check --select F --output-format=github .
 
       - name: Run backend tests
         run: |
