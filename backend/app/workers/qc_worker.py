@@ -51,7 +51,10 @@ class QualityControlWorker(Worker):
                 "checksum": integrity_ok,
                 "licenseVerified": bool(asset and asset.provenance.license_status is LicenseStatus.VERIFIED),
             })
-        valid = [c for c in checks if c["exists"] and c["ready"] and c["pathExists"] and c["nonEmpty"] and c["checksum"]]
+        valid = [
+            c for c in checks
+            if c["exists"] and c["ready"] and c["pathExists"] and c["nonEmpty"] and c["checksum"] and c["licenseVerified"]
+        ]
         score = round(100.0 * len(valid) / len(checks), 2)
         passed = score == 100.0
         report = {"jobId": job.id, "assetIds": asset_ids, "checks": checks, "score": score, "passed": passed}
