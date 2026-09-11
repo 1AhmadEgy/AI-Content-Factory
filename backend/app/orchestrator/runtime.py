@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import replace
 from pathlib import Path
 
 from ..application.ai_scene_planner import AIScenePlanner
@@ -21,6 +22,7 @@ from ..infrastructure.storage import LocalAssetStorage
 from ..library.country_catalog import get_country_library
 from ..library.seed import ensure_country_library_projects, ensure_egypt_library, ensure_libya_library
 from ..providers.registry import default_provider_registry
+from ..services.project_context import ProjectContextStore
 from ..workers.best_take_worker import BestTakeWorker
 from ..workers.language_pack_worker import LanguagePackWorker
 from ..workers.media_document_worker import MediaDocumentWorker
@@ -41,10 +43,11 @@ logger = logging.getLogger(__name__)
 
 
 class OrchestratorRuntime:
-    """Production composition root. Generation requires a configured real provider."""
+    """Production composition root with durable project/series continuity memory."""
 
     def __init__(self, repositories: SQLiteRepositories, storage_root: str | Path | None = None) -> None:
         self.repositories = repositories
+        self.context = ProjectContextStore(repositories.store)
         self.assets = SQLiteAssetRepository(repositories.store)
         self.characters = SQLiteCharacterRepository(repositories.store)
         self.locations = SQLiteLocationRepository(repositories.store)
@@ -60,7 +63,6 @@ class OrchestratorRuntime:
         provider_worker = ProviderGenerationWorker(self.providers, self.storage, self.assets, self.provider_runs)
         provider_worker.initialize()
         self.workers.register(provider_worker, capabilities={"STORY", "CHARACTER", "WORLD", "SCENE", "SHOT", "IMAGE", "TTS"}, worker_id="provider-generation")
-
         qc = QualityControlWorker(self.storage, self.assets); qc.initialize(); self.workers.register(qc, capabilities={"QC"}, worker_id="quality-control")
         best_take = BestTakeWorker(self.storage, self.assets); best_take.initialize(); self.workers.register(best_take, capabilities={"BEST_TAKE"}, worker_id="best-take")
         timeline = TimelineWorker(self.storage, self.assets); timeline.initialize(); self.workers.register(timeline, capabilities={"TIMELINE"}, worker_id="timeline")
@@ -82,20 +84,24 @@ class OrchestratorRuntime:
         self.libya_library_seed = ensure_libya_library(repositories)
 
     def _on_job_completed(self, job: GenerationJob) -> None:
-        """Persist provider outputs on their domain target, then advance the pipeline."""
+        """Persist provider outputs and record production events in durable series memory."""
         if job.status is JobStatus.COMPLETED and job.output and job.output.asset_ids:
             try:
                 if job.type is JobType.IMAGE and job.target_type == "shot":
-                    self.shot_composition.update_generation(
-                        job.target_id,
-                        status="completed",
-                        error="",
-                        image_asset_id=job.output.asset_ids[0],
-                    )
+                    self.shot_composition.update_generation(job.target_id, status="completed", error="", image_asset_id=job.output.asset_ids[0])
                 elif job.type is JobType.TTS and job.target_type == "shot_character":
                     self.shot_composition.set_voice_audio_asset(job.target_id, job.output.asset_ids[0])
             except Exception:
                 logger.exception("Failed to bind completed %s job %s to target %s/%s", job.type.value, job.id, job.target_type, job.target_id)
+        if job.project_id:
+            try:
+                self.context.append_event(job.project_id, "job.completed" if job.status is JobStatus.COMPLETED else "job.finished", {
+                    "jobId": job.id, "type": job.type.value, "targetType": job.target_type, "targetId": job.target_id,
+                    "status": job.status.value, "assetIds": list(job.output.asset_ids) if job.output else [],
+                    "errorCode": job.error_code, "errorMessage": job.error_message,
+                }, entity_type="job", entity_id=job.id)
+            except Exception:
+                logger.exception("Failed to append project context event for job %s", job.id)
         self.pipeline.on_completed(job)
 
     def _resolve_library_scope(self, brief: ContentBrief) -> tuple[str, str]:
@@ -118,9 +124,19 @@ class OrchestratorRuntime:
             raise ValueError("CHARACTERS_NOT_FOUND_IN_PROJECT")
         if brief.location_ids and not locations:
             raise ValueError("LOCATIONS_NOT_FOUND_IN_PROJECT")
-        story = self.story_engine.generate(brief, model_id, characters, locations)
-        script = self.script_engine.generate(brief, story, model_id)
-        return self.scene_planner.plan(brief, script, model_id)
+        context = self.context.get(project_id) if project_id else {"version": 0, "context": {}}
+        enriched_context = dict(brief.production_context)
+        enriched_context["persistentSeriesContext"] = context["context"]
+        enriched_context["contextVersion"] = context["version"]
+        effective_brief = replace(brief, production_context=enriched_context)
+        if project_id:
+            self.context.append_event(project_id, "content.plan.requested", {
+                "topic": brief.topic, "characterIds": list(brief.character_ids), "locationIds": list(brief.location_ids),
+                "language": brief.language, "durationSeconds": brief.duration_seconds, "style": brief.style,
+            }, entity_type="content_plan", entity_id=project_id)
+        story = self.story_engine.generate(effective_brief, model_id, characters, locations)
+        script = self.script_engine.generate(effective_brief, story, model_id)
+        return self.scene_planner.plan(effective_brief, script, model_id)
 
     def execute_next(self, worker_id: str = "auto") -> ExecutionResult | None:
         claimed = self.queue.claim_next(worker_id)
