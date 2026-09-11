@@ -106,24 +106,33 @@ class OrchestratorRuntime:
             raise ValueError("COUNTRY_LIBRARY_MISMATCH")
         return country_id, library_id
 
+    @staticmethod
+    def _validate_identity_continuity(story: StoryPlan, characters: tuple, locations: tuple) -> None:
+        allowed_characters = {c.id for c in characters}
+        allowed_locations = {l.id for l in locations}
+        for scene in story.scenes:
+            for shot in scene.shots:
+                if set(shot.character_ids) - allowed_characters:
+                    raise ValueError("CHARACTER_CONTINUITY_VIOLATION")
+                if set(shot.location_ids) - allowed_locations:
+                    raise ValueError("LOCATION_CONTINUITY_VIOLATION")
+
     def plan_content(self, brief: ContentBrief, model_id: str | None = None) -> StoryPlan:
         self._resolve_library_scope(brief)
         project_id = brief.project_id or brief.library_id
-        characters = tuple(
-            c for cid in brief.character_ids
-            if (c := self.characters.get(cid)) is not None and c.project_id == project_id
-        )
-        locations = tuple(
-            l for lid in brief.location_ids
-            if (l := self.locations.get(lid)) is not None and l.project_id == project_id
-        )
+        characters = tuple(c for cid in brief.character_ids if (c := self.characters.get(cid)) is not None and c.project_id == project_id)
+        locations = tuple(l for lid in brief.location_ids if (l := self.locations.get(lid)) is not None and l.project_id == project_id)
         if len(characters) != len(brief.character_ids):
             raise ValueError("CHARACTER_SCOPE_VIOLATION")
         if len(locations) != len(brief.location_ids):
             raise ValueError("LOCATION_SCOPE_VIOLATION")
         story = self.story_engine.generate(brief, model_id, characters, locations)
+        self._validate_identity_continuity(story, characters, locations)
         script = self.script_engine.generate(brief, story, model_id)
-        return self.scene_planner.plan(brief, script, model_id)
+        self._validate_identity_continuity(script, characters, locations)
+        planned = self.scene_planner.plan(brief, script, model_id)
+        self._validate_identity_continuity(planned, characters, locations)
+        return planned
 
     def _execute_claimed(self, job, lease, worker_id: str) -> ExecutionResult:
         self.queue.start(lease)
