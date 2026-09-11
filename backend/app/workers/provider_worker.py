@@ -78,31 +78,43 @@ class ProviderGenerationWorker(Worker):
         if not model.enabled or not model.adapter.health_check():
             return JobExecutionResult(False, error_code="MODEL_UNHEALTHY", error_message=model.id, retryable=True)
 
-        breaker = self._breaker(model.provider, model.id)
-        if breaker is not None and not breaker.acquire():
-            return JobExecutionResult(False, error_code="PROVIDER_CIRCUIT_OPEN", error_message=f"Circuit open for {model.provider}:{model.id}", retryable=True)
-
+        # Important ordering: Cache -> Lock -> Circuit -> Provider.
+        # Cache hits never call the provider and therefore must never be blocked by an open circuit.
         cache_key = self._cache_key(model.provider, model.id, job)
         cached = self._cache.get(cache_key) if self._cache else None
         lock_token: str | None = None
         if cached is None and self._cache is not None:
-            cached, lock_token = self._cache.get_or_lock(cache_key, lock_seconds=int(os.getenv("AICF_PROVIDER_CACHE_LOCK_SECONDS", "30")))
+            cached, lock_token = self._cache.get_or_lock(
+                cache_key,
+                lock_seconds=int(os.getenv("AICF_PROVIDER_CACHE_LOCK_SECONDS", "30")),
+            )
             if cached is None and lock_token is None:
-                # Bound the wait to one retry; another worker owns the fetch lock.
                 time.sleep(float(os.getenv("AICF_PROVIDER_CACHE_WAIT_SECONDS", "2")))
                 cached = self._cache.get(cache_key)
 
         if cached is not None:
-            response = ProviderResponse(success=True, output_text=cached.output_text, output_bytes=cached.output_bytes,
-                output_mime_type=cached.output_mime_type, output_filename=cached.output_filename,
-                output_metadata={**cached.output_metadata, "cacheHit": True}, metrics={**cached.metrics, "cache_hit": 1.0},
-                provider_run_id=f"cache:{cache_key[:16]}")
+            response = ProviderResponse(
+                success=True,
+                output_text=cached.output_text,
+                output_bytes=cached.output_bytes,
+                output_mime_type=cached.output_mime_type,
+                output_filename=cached.output_filename,
+                output_metadata={**cached.output_metadata, "cacheHit": True},
+                metrics={**cached.metrics, "cache_hit": 1.0},
+                provider_run_id=f"cache:{cache_key[:16]}",
+            )
             asset_ids = self._materialize_response(job, model.provider, model.id, response, response.provider_run_id or "cache")
             if lock_token and self._cache:
                 self._cache.release_lock(cache_key, lock_token)
             if not asset_ids:
                 return JobExecutionResult(False, error_code="PROVIDER_CACHE_ENTRY_INVALID", error_message="Cached response contained no usable output", retryable=False)
             return JobExecutionResult(True, asset_ids=asset_ids, metrics={**cached.metrics, "cache_hit": 1.0}, provider_run_id=response.provider_run_id)
+
+        breaker = self._breaker(model.provider, model.id)
+        if breaker is not None and not breaker.acquire():
+            if self._cache:
+                self._cache.release_lock(cache_key, lock_token)
+            return JobExecutionResult(False, error_code="PROVIDER_CIRCUIT_OPEN", error_message=f"Circuit open for {model.provider}:{model.id}", retryable=True)
 
         run_id = str(uuid.uuid4())
         if self.provider_runs:
@@ -111,27 +123,26 @@ class ProviderGenerationWorker(Worker):
         try:
             response = model.adapter.execute(ProviderRequest(model=model.id, parameters=dict(job.input.parameters), seed=job.input.seed))
         except Exception as exc:
-            if breaker is not None and classify_exception(exc) is ErrorKind.TRANSIENT:
+            kind = classify_exception(exc)
+            if breaker is not None and kind is ErrorKind.TRANSIENT:
                 breaker.record_failure()
             if self._cache:
                 self._cache.release_lock(cache_key, lock_token)
             if self.provider_runs:
                 self.provider_runs.complete(run_id, status="FAILED", error_code="PROVIDER_EXCEPTION", response_metadata={"exceptionType": type(exc).__name__})
-            return JobExecutionResult(False, provider_run_id=run_id, error_code="PROVIDER_EXCEPTION", error_message=str(exc), retryable=True)
+            return JobExecutionResult(False, provider_run_id=run_id, error_code="PROVIDER_EXCEPTION", error_message=str(exc), retryable=kind is ErrorKind.TRANSIENT)
 
         provider_run_id = response.provider_run_id or run_id
         if not response.success:
-            if breaker is not None and classify_provider_response(response.error_code, response.error_message) is ErrorKind.TRANSIENT:
+            kind = classify_provider_response(response.error_code, response.error_message)
+            if breaker is not None and kind is ErrorKind.TRANSIENT:
                 breaker.record_failure()
             if self._cache:
                 self._cache.release_lock(cache_key, lock_token)
             if self.provider_runs:
                 self.provider_runs.complete(run_id, status="FAILED", error_code=response.error_code or "PROVIDER_FAILED", response_metadata=dict(response.metrics))
-            kind = classify_provider_response(response.error_code, response.error_message)
             return JobExecutionResult(False, provider_run_id=provider_run_id, error_code=response.error_code or "PROVIDER_FAILED", error_message=response.error_message or "Provider execution failed", retryable=kind is ErrorKind.TRANSIENT)
 
-        if breaker is not None:
-            breaker.record_success()
         asset_ids = self._materialize_response(job, model.provider, model.id, response, provider_run_id)
         if not asset_ids:
             if self._cache:
@@ -140,6 +151,8 @@ class ProviderGenerationWorker(Worker):
                 self.provider_runs.complete(run_id, status="FAILED", error_code="PROVIDER_OUTPUT_INVALID", response_metadata={})
             return JobExecutionResult(False, provider_run_id=provider_run_id, error_code="PROVIDER_OUTPUT_INVALID", error_message="Provider returned no usable output", retryable=False)
 
+        if breaker is not None:
+            breaker.record_success()
         if self._cache:
             self._cache.put(cache_key, model.provider, model.id, output_text=response.output_text, output_bytes=response.output_bytes,
                 output_mime_type=response.output_mime_type, output_filename=response.output_filename,
