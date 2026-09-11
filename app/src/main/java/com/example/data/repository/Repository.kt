@@ -11,7 +11,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -32,20 +31,7 @@ class Repository(private val dao: FactoryDao) {
     val jobs: StateFlow<List<GenerationJob>> = dao.getAllJobs().stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
-        scope.launch {
-            if (dao.getAllProjects().firstOrNull()?.isEmpty() == true) {
-                val project = Project(name = "My AI Series", description = "Arabic comedy series")
-                dao.insertProject(project)
-                val series = Series(projectId = project.id, title = "Pilot Series", genre = "Comedy")
-                dao.insertSeries(series)
-                val episode = Episode(seriesId = series.id, number = 1, title = "The Beginning")
-                dao.insertEpisode(episode)
-                dao.insertScene(Scene(episodeId = episode.id, number = 1, description = "A character enters the room surprised", location = "Living Room", emotion = "Surprise"))
-                dao.insertScene(Scene(episodeId = episode.id, number = 2, description = "Character finds a mysterious box", location = "Living Room", emotion = "Curiosity"))
-                snapshotEpisodeContext(series.projectId, episode.id)
-            }
-            syncJobs()
-        }
+        scope.launch { syncJobs() }
     }
 
     suspend fun addProject(name: String, description: String) {
@@ -54,6 +40,7 @@ class Repository(private val dao: FactoryDao) {
             dao.insertProject(Project(id = project.id, name = project.name, description = project.description))
         } catch (e: Exception) {
             Log.e("Repository", "createProject failed", e)
+            throw e
         }
     }
 
@@ -68,14 +55,12 @@ class Repository(private val dao: FactoryDao) {
     }
 
     private suspend fun snapshotEpisodeContext(projectId: String, episodeId: String) {
-        runCatching { api.snapshotEpisodeContext(projectId, episodeId) }
-            .onFailure { Log.w("Repository", "Episode continuity snapshot unavailable; local episode retained", it) }
+        api.snapshotEpisodeContext(projectId, episodeId)
     }
 
     suspend fun generateScene(sceneId: String) {
         val scene = scenes.value.find { it.id == sceneId } ?: return
-        val projectId = dao.findProjectIdForScene(sceneId)
-        if (projectId == null) {
+        val projectId = dao.findProjectIdForScene(sceneId) ?: run {
             scene.status = "FAILED"
             dao.updateScene(scene)
             return
@@ -89,11 +74,17 @@ class Repository(private val dao: FactoryDao) {
                     type = "IMAGE",
                     targetType = "scene",
                     targetId = sceneId,
-                    provider = "mock",
-                    model = "mock-deterministic",
+                    provider = "openai",
+                    model = "gpt-image-2",
                     input = JobInputRequest(
-                        parameters = mapOf("sceneId" to sceneId, "description" to scene.description, "location" to scene.location, "emotion" to scene.emotion),
-                        deterministic = true,
+                        parameters = mapOf(
+                            "prompt" to "${scene.description}. Location: ${scene.location}. Emotion: ${scene.emotion}. Create a production-ready cinematic frame with consistent character and environment identity.",
+                            "sceneId" to sceneId,
+                            "description" to scene.description,
+                            "location" to scene.location,
+                            "emotion" to scene.emotion,
+                        ),
+                        deterministic = false,
                     ),
                 ),
                 idempotencyKey = "android-scene-$sceneId",
@@ -103,6 +94,7 @@ class Repository(private val dao: FactoryDao) {
             Log.e("Repository", "generateScene failed", e)
             scene.status = "FAILED"
             dao.updateScene(scene)
+            throw e
         }
     }
 
@@ -132,24 +124,15 @@ class Repository(private val dao: FactoryDao) {
     )
 
     suspend fun syncJobs(projectId: String? = null) {
-        try {
-            api.listJobs(projectId = projectId, limit = 200).data.forEach { dao.insertJob(it.toLocalJob()) }
-        } catch (e: Exception) {
-            Log.w("Repository", "Job sync unavailable; retaining local state", e)
-        }
+        api.listJobs(projectId = projectId, limit = 200).data.forEach { dao.insertJob(it.toLocalJob()) }
     }
 
-    suspend fun cancelJob(jobId: String): GenerationJob? = runCatching {
-        api.cancelJob(jobId).data.toLocalJob().also { dao.insertJob(it) }
-    }.onFailure { Log.e("Repository", "cancelJob failed", it) }.getOrNull()
+    suspend fun cancelJob(jobId: String): GenerationJob? = api.cancelJob(jobId).data.toLocalJob().also { dao.insertJob(it) }
 
-    suspend fun retryJob(jobId: String): GenerationJob? = runCatching {
-        api.retryJob(jobId).data.toLocalJob().also { dao.insertJob(it) }
-    }.onFailure { Log.e("Repository", "retryJob failed", it) }.getOrNull()
+    suspend fun retryJob(jobId: String): GenerationJob? = api.retryJob(jobId).data.toLocalJob().also { dao.insertJob(it) }
 
     suspend fun refreshJob(jobId: String) {
-        runCatching { api.getJob(jobId).data.toLocalJob().also { dao.insertJob(it) } }
-            .onFailure { Log.w("Repository", "refreshJob failed", it) }
+        dao.insertJob(api.getJob(jobId).data.toLocalJob())
     }
 }
 
