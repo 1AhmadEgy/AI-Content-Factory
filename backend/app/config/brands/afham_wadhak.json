@@ -1,65 +1,86 @@
 {
-  "id": "afham_wadhak",
-  "name": "افهم واضحك",
-  "latin_name": "AFHAM WADHAK",
-  "tagline": "وخد المفيد.",
-  "enabled_by_default": false,
-  "colors": {
-    "primary": "#FFD21F",
-    "background": "#111111",
-    "foreground": "#FFFFFF",
-    "accent": "#FF7A00"
+  "brand_id": "afham_wadhak",
+  "brand_name_ar": "افهم واضحك",
+  "brand_name_en": "Afham Wadhak",
+  "tagline_ar": "افهم ببساطة وابتسم",
+  "tagline_en": "Understand Simply and Smile",
+  "language": "ar",
+  "platform": "youtube",
+  "persona": {
+    "tone": ["educational", "fun", "smart", "simple", "friendly"],
+    "style_keywords": ["clean", "high-contrast", "minimal", "playful", "modern"],
+    "brand_voice": "يشرح الأفكار ببساطة مع لمسة فكاهية خفيفة دون مبالغة."
   },
-  "fonts": {
-    "arabic_headings": "Cairo ExtraBold",
-    "arabic_body": "Cairo Medium",
-    "arabic_emphasis": "Cairo Bold",
-    "latin": "Poppins"
+  "color_palette": {
+    "primary": "#111111",
+    "secondary": "#FFD84D",
+    "accent": "#4DB6FF",
+    "text": "#FFFFFF",
+    "neutral": "#2A2A2A",
+    "background": "#111111"
   },
-  "canvas": {
-    "width": 1080,
-    "height": 1920,
-    "fps": 30,
-    "aspect_ratio": "9:16"
+  "typography": {
+    "primary_font": "Tajawal Bold",
+    "secondary_font": "Cairo Regular",
+    "headline_font": "Tajawal ExtraBold",
+    "logo_font_style": "Arabic geometric sans-serif, bold and highly legible"
   },
-  "intro": {
-    "enabled": true,
-    "duration_seconds": 2.5,
-    "path": "assets/branding/afham_wadhak/intro.mp4"
+  "logo": {
+    "concept": "وجه مبتسم بسيط مع لمبة فكرة أو فقاعة كلام، بتصميم دائري ومركز",
+    "usage": ["primary_logo", "icon_logo", "monochrome_logo", "watermark"],
+    "rules": [
+      "Keep important elements centered.",
+      "Do not place text near the edges.",
+      "Ensure readability at 98x98 px.",
+      "Avoid complex details and thin lines."
+    ],
+    "preferred_background": "transparent_or_dark",
+    "export_format": "png"
   },
-  "outro": {
-    "enabled": true,
-    "duration_seconds": 2.5,
-    "path": "assets/branding/afham_wadhak/outro.mp4"
+  "youtube_profile_picture": {
+    "size": "800x800",
+    "aspect_ratio": "1:1",
+    "format": "png",
+    "display_crop": "circle",
+    "safe_zone": "centered",
+    "notes": ["Design for small-size readability.", "Use icon-first composition.", "Keep text optional and secondary."]
+  },
+  "youtube_banner": {
+    "size": "2560x1440",
+    "min_size": "2048x1152",
+    "safe_zone": {"recommended": "1546x423", "alternative": "1235x338", "strategy": "Keep all text and logo inside the center safe area."},
+    "notes": ["Use a dark background with subtle shapes.", "Keep the main slogan short.", "Avoid placing critical elements in the corners."]
+  },
+  "thumbnail_system": {
+    "style": "high_contrast",
+    "text_length": "2_to_4_words",
+    "rules": ["Use bold Arabic typography.", "Keep one strong focal point.", "Use the brand yellow as the primary accent.", "Avoid clutter and tiny details."]
   },
   "watermark": {
-    "enabled": true,
-    "opacity": 0.7,
-    "position": "top_right",
-    "path": "assets/branding/afham_wadhak/watermark.png"
+    "type": "icon_only",
+    "opacity": 0.35,
+    "position": "bottom_right",
+    "color": "#FFFFFF",
+    "format": "png"
   },
-  "subtitles": {
-    "enabled": true,
-    "style": "bold_large_shadow",
-    "highlight_color": "#FFD21F",
-    "font": "Cairo Bold"
+  "motion_identity": {
+    "intro_duration_sec": 2.5,
+    "outro_duration_sec": 2.5,
+    "audio_jingle": "short_friendly_chime",
+    "motion_style": "smooth, light, modern, minimal"
   },
-  "thumbnail": {
-    "enabled": true,
-    "path": "assets/branding/afham_wadhak/thumbnail_template.png"
+  "file_structure": {
+    "brand_folder": "assets/branding/afham_wadhak/",
+    "files": ["logo.svg", "logo_transparent.png", "avatar.png", "watermark.png", "thumbnail_template.png", "intro.mp4", "outro.mp4", "jingle.mp3"]
   },
-  "audio": {
-    "jingle_path": "assets/branding/afham_wadhak/jingle.mp3",
-    "voice_line": "افهم واضحك… وخد المفيد."
+  "design_rules": {
+    "do": ["Use strong contrast.", "Keep the logo simple.", "Test all visuals on mobile.", "Use 2 to 3 colors maximum.", "Keep the icon in the center."],
+    "dont": ["Do not use decorative fonts.", "Do not overcrowd the banner.", "Do not use too many colors.", "Do not place text near edges.", "Do not rely on thin details."]
   },
-  "assets": {
-    "logo": "assets/branding/afham_wadhak/logo.svg",
-    "logo_transparent": "assets/branding/afham_wadhak/logo_transparent.png",
-    "avatar": "assets/branding/afham_wadhak/avatar.png"
+  "prompt_templates": {
+    "logo_prompt": "شعار عربي حديث لقناة «افهم واضحك»، يتضمن وجهًا مبتسمًا بسيطًا مع فقاعة كلام أو لمبة صغيرة تدل على الفهم والشرح، بأسلوب نظيف ومرح، بخط عربي واضح وحديث، وألوان محدودة عالية التباين، وتصميم مربع مناسب لصورة قناة يوتيوب، مع الحفاظ على وضوح العناصر عند التصغير إلى حجم صغير جدًا.",
+    "banner_prompt": "بانر يوتيوب عربي حديث لقناة «افهم واضحك»، بخلفية داكنة وتفاصيل بسيطة، مع وضع الشعار والعبارة الرئيسية داخل المنطقة الآمنة المركزية، وبأسلوب تعليمي مرح، وألوان محدودة عالية التباين، وتصميم نظيف لا يزدحم بالعناصر.",
+    "thumbnail_prompt": "تصميم صورة مصغرة يوتيوب عالية التباين لقناة «افهم واضحك»، تحتوي على عنصر بصري واحد قوي ونص عربي قصير وواضح بخط سميك، مع ألوان العلامة الأساسية وخلفية نظيفة."
   },
-  "publishing": {
-    "platforms": ["youtube", "tiktok", "instagram", "facebook", "snapchat"],
-    "website": "https://afhamwadhak.pages.dev",
-    "email": "afhamwadhak@gmail.com"
-  }
+  "final_slogan_options": ["افهم ببساطة", "ضحك وفائدة", "شرح خفيف وممتع", "افهم وابتسم"]
 }
