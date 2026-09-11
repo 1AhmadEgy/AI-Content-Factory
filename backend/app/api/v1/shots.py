@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field
 
 from ...domain.jobs import JobInput, JobType
 from ...infrastructure.shot_composition_repository import SQLiteShotCompositionRepository, ShotCharacterLink
-from ...orchestrator.job_service import JobService
 from ...orchestrator.runtime import OrchestratorRuntime
 from ...services.shot_composer import ShotComposer
 
@@ -54,7 +53,7 @@ class GenerateImageRequest(BaseModel):
 def build_router(runtime: OrchestratorRuntime) -> APIRouter:
     router = APIRouter(prefix="/api/v1/shots", tags=["shots"])
     links = SQLiteShotCompositionRepository(runtime.repositories.store)
-    jobs = JobService(runtime.repositories.jobs)
+    jobs = runtime.job_service
     composer = ShotComposer()
 
     def _characters(items: list[CharacterInShot]):
@@ -112,6 +111,13 @@ def build_router(runtime: OrchestratorRuntime) -> APIRouter:
         style = body.visualStyle or (selected[0][0].visual_style if selected else {})
         links.update_generation(shot_id, prompt=result["prompt"], negative_prompt=result["negative_prompt"], status="pending", error="",
                                 continuity_hash=continuity, camera_angle=body.cameraAngle, mood=body.mood, visual_style=style)
+        try:
+            row = runtime.repositories.store.connection.execute("SELECT p.id FROM projects p JOIN episodes e ON e.project_id=p.id JOIN scenes s ON s.episode_id=e.id JOIN shots sh ON sh.scene_id=s.id WHERE sh.id=?", (shot_id,)).fetchone()
+            if row is not None:
+                runtime.series_bible.record_shot(row[0], shot_id, {"continuityHash": continuity, "characterIds": [c.id for c, _ in selected], "locationId": location.id if location else None, "cameraAngle": body.cameraAngle, "mood": body.mood, "sceneContext": body.sceneContext})
+        except Exception:
+            # Bible persistence must never make an already-valid shot composition fail.
+            pass
         return {"data": {"shotId": shot_id, "prompt": result["prompt"], "negativePrompt": result["negative_prompt"], "continuityHash": continuity},
                 "requestId": request.state.request_id}
 
@@ -178,18 +184,22 @@ def build_router(runtime: OrchestratorRuntime) -> APIRouter:
         prompt = row["prompt"] if row else ""
         if not prompt:
             raise HTTPException(400, "SHOT_PROMPT_REQUIRED")
-        project_id = runtime.repositories.store.connection.execute(
+        project_row = runtime.repositories.store.connection.execute(
             "SELECT p.id FROM projects p JOIN episodes e ON e.project_id=p.id JOIN scenes s ON s.episode_id=e.id JOIN shots sh ON sh.scene_id=s.id WHERE sh.id=?", (shot_id,)
         ).fetchone()
-        if project_id is None:
+        if project_row is None:
             raise HTTPException(422, "SHOT_PROJECT_NOT_RESOLVED")
+        project_id = project_row[0]
         model = os.getenv("AICF_IMAGE_MODEL", "gpt-image-2")
-        job = jobs.create(project_id=project_id[0], job_type=JobType.IMAGE, target_type="shot", target_id=shot_id,
+        bible = runtime.context_snapshot(project_id)
+        job = jobs.create(project_id=project_id, job_type=JobType.IMAGE, target_type="shot", target_id=shot_id,
                           priority=50, provider="openai", model=model,
-                          input=JobInput(parameters={"prompt": prompt, "size": body.size, "output_format": body.outputFormat, **({"quality": body.quality} if body.quality else {})}))
+                          input=JobInput(parameters={"prompt": prompt, "size": body.size, "output_format": body.outputFormat,
+                                                     **({"quality": body.quality} if body.quality else {}),
+                                                     "contextVersion": bible["contextVersion"], "seriesBible": bible}))
         runtime.queue.enqueue(job)
         links.update_generation(shot_id, status="queued", error="")
-        return {"data": {"jobId": job.id, "shotId": shot_id, "status": job.status.value}, "requestId": request.state.request_id}
+        return {"data": {"jobId": job.id, "shotId": shot_id, "status": job.status.value, "contextVersion": bible["contextVersion"]}, "requestId": request.state.request_id}
 
     @router.post("/{shot_id}/generate-voice", status_code=202)
     def generate_voice(shot_id: str, request: Request):
@@ -198,6 +208,8 @@ def build_router(runtime: OrchestratorRuntime) -> APIRouter:
         row = runtime.repositories.store.connection.execute("SELECT project_id FROM episodes e JOIN scenes s ON s.episode_id=e.id JOIN shots sh ON sh.scene_id=s.id WHERE sh.id=?", (shot_id,)).fetchone()
         if row is None:
             raise HTTPException(422, "SHOT_PROJECT_NOT_RESOLVED")
+        project_id = row[0]
+        bible = runtime.context_snapshot(project_id)
         created = []
         model = os.getenv("AICF_TTS_MODEL", "gpt-4o-mini-tts")
         for link in links.list_characters(shot_id):
@@ -207,13 +219,14 @@ def build_router(runtime: OrchestratorRuntime) -> APIRouter:
             if character is None:
                 continue
             voice = character.voice.get("ttsVoiceId") or character.voice.get("voice") or "alloy"
-            job = jobs.create(project_id=row[0], job_type=JobType.TTS, target_type="shot_character", target_id=link.id,
+            job = jobs.create(project_id=project_id, job_type=JobType.TTS, target_type="shot_character", target_id=link.id,
                               priority=60, provider="openai", model=model,
-                              input=JobInput(parameters={"text": link.dialogue, "voice": voice, "response_format": "mp3", "shotId": shot_id, "characterId": character.id}))
+                              input=JobInput(parameters={"text": link.dialogue, "voice": voice, "response_format": "mp3", "shotId": shot_id, "characterId": character.id,
+                                                         "contextVersion": bible["contextVersion"], "seriesBible": bible}))
             runtime.queue.enqueue(job)
-            created.append({"jobId": job.id, "characterId": character.id, "dialogue": link.dialogue})
+            created.append({"jobId": job.id, "characterId": character.id, "dialogue": link.dialogue, "contextVersion": bible["contextVersion"]})
         if not created:
             raise HTTPException(400, "NO_SPEAKING_CHARACTERS")
-        return {"data": {"shotId": shot_id, "jobs": created}, "requestId": request.state.request_id}
+        return {"data": {"shotId": shot_id, "jobs": created, "contextVersion": bible["contextVersion"]}, "requestId": request.state.request_id}
 
     return router
