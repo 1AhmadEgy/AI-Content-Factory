@@ -24,7 +24,7 @@ from ..orchestrator.queue import JobExecutionResult, Worker, WorkerContext
 
 
 class MediaDocumentWorker(Worker):
-    """Offline-first worker for language-aware subtitles, thumbnails, metadata and QC."""
+    """Generate media documents and derived assets from real project inputs."""
 
     worker_type = "media-document"
     _VTT_CLOCK = re.compile(r"^(?:(\d{2,}):)?(\d{2}):(\d{2})(?:\.(\d{1,3}))?$")
@@ -74,7 +74,7 @@ class MediaDocumentWorker(Worker):
         digest, path, size = self.storage.put_bytes(payload)
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{job.type.value}:{job.id}:{digest}"))
         self.assets.create(Asset(asset_id, job.project_id, kind, path, mime, size, digest, AssetStatus.READY, build_provenance(job, source_asset_ids=list(job.input.reference_asset_ids), metadata={"worker": self.worker_type}, license_status=LicenseStatus.VERIFIED)))
-        return JobExecutionResult(True, [asset_id], {"bytes": size}, f"{self.worker_type}-{job.id}")
+        return JobExecutionResult(True, [asset_id], {"bytes": size})
 
     @classmethod
     def _vtt_time(cls, value: Any, default: str) -> str:
@@ -200,7 +200,7 @@ class MediaDocumentWorker(Worker):
             digest, path, size = self.storage.put_file(output_path)
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"thumbnail:{job.id}:{digest}"))
         self.assets.create(Asset(asset_id, job.project_id, AssetType.THUMBNAIL, path, "image/jpeg", size, digest, AssetStatus.READY, build_provenance(job, source_asset_ids=[source.id], metadata={"engine": "ffmpeg", "timestamp": timestamp}, license_status=LicenseStatus.VERIFIED)))
-        return JobExecutionResult(True, [asset_id], {"bytes": size, "format": "jpeg", "timestamp": timestamp}, f"thumbnail-{job.id}")
+        return JobExecutionResult(True, [asset_id], {"bytes": size, "format": "jpeg", "timestamp": timestamp})
 
     def _final_qc(self, job: GenerationJob) -> JobExecutionResult:
         checks = []
