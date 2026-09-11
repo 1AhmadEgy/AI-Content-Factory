@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -14,10 +15,9 @@ BRANDS_DIR = ROOT / "backend" / "app" / "config" / "brands"
 class BrandVideoRenderer:
     """Apply configured branding with real FFmpeg processing.
 
-    Intro/outro/watermark media are optional. Missing optional brand media no
-    longer turns a valid production render into a fake/synthetic result or an
-    unexplained file-not-found crash; the content is still normalized and
-    returned as a real MP4.
+    Branding never invents an audio track. If the source has no audio, the
+    branded output remains video-only; real narration/audio must be supplied
+    by the pipeline when an audio track is required.
     """
 
     def __init__(self, brand_id: str = "afham_wadhak") -> None:
@@ -28,8 +28,12 @@ class BrandVideoRenderer:
         self.config = json.loads(self.config_path.read_text(encoding="utf-8"))
         if self.config.get("brand_id") != brand_id:
             raise ValueError(f"Brand config id mismatch: {self.config.get('brand_id')} != {brand_id}")
-        if shutil.which("ffmpeg") is None:
+        self.ffmpeg_bin = os.getenv("AICF_FFMPEG_BIN", "ffmpeg")
+        self.ffprobe_bin = os.getenv("AICF_FFPROBE_BIN", "ffprobe")
+        if shutil.which(self.ffmpeg_bin) is None:
             raise RuntimeError("FFMPEG_NOT_FOUND")
+        if shutil.which(self.ffprobe_bin) is None:
+            raise RuntimeError("FFPROBE_NOT_FOUND")
 
     def _asset(self, name: str) -> Path | None:
         folder = self.config.get("file_structure", {}).get("brand_folder", f"assets/branding/{self.brand_id}/")
@@ -37,10 +41,8 @@ class BrandVideoRenderer:
         return path if path.is_file() else None
 
     def _has_audio(self, source: Path) -> bool:
-        if shutil.which("ffprobe") is None:
-            return True
         result = subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=index", "-of", "csv=p=0", str(source)],
+            [self.ffprobe_bin, "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=index", "-of", "csv=p=0", str(source)],
             capture_output=True,
             text=True,
             check=False,
@@ -52,7 +54,7 @@ class BrandVideoRenderer:
             f"fps={fps},scale={width}:{height}:force_original_aspect_ratio=decrease,"
             f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=yuv420p"
         )
-        args = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(source)]
+        args = [self.ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error", "-i", str(source)]
         if watermark is not None:
             filter_complex = f"[0:v]{video_filter}[v];[1:v]format=rgba,colorchannelmixer=aa={opacity}[wm];[v][wm]overlay=W-w-36:H-h-36[vout]"
             args += ["-loop", "1", "-i", str(watermark), "-filter_complex", filter_complex, "-map", "[vout]"]
@@ -60,9 +62,6 @@ class BrandVideoRenderer:
             args += ["-vf", video_filter, "-map", "0:v:0"]
         if self._has_audio(source):
             args += ["-map", "0:a:0", "-c:a", "aac", "-b:a", "192k"]
-        else:
-            audio_input = 2 if watermark is not None else 1
-            args += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100", "-map", f"{audio_input}:a:0", "-c:a", "aac", "-b:a", "192k"]
         args += ["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(target)]
         subprocess.run(args, check=True)
 
@@ -71,15 +70,15 @@ class BrandVideoRenderer:
             f"fps={fps},scale={width}:{height}:force_original_aspect_ratio=decrease,"
             f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=yuv420p"
         )
-        subprocess.run(
-            [
-                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(source),
-                "-vf", video_filter, "-map", "0:v:0", "-map", "0:a:0?",
-                "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
-                "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(target),
-            ],
-            check=True,
-        )
+        args = [
+            self.ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error", "-i", str(source),
+            "-vf", video_filter, "-map", "0:v:0", "-c:v", "libx264", "-preset", "medium",
+            "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+        ]
+        if self._has_audio(source):
+            args += ["-map", "0:a:0", "-c:a", "aac", "-b:a", "192k"]
+        args.append(str(target))
+        subprocess.run(args, check=True)
 
     def apply(self, source: str | Path, output: str | Path, width: int, height: int, fps: int) -> str:
         source_path = Path(source)
@@ -106,13 +105,15 @@ class BrandVideoRenderer:
             concat_file = temp / "concat.txt"
             self._normalize_brand_segment(intro, normalized_intro, width, height, fps)
             self._normalize_brand_segment(outro, normalized_outro, width, height, fps)
+            if self._has_audio(normalized_intro) != self._has_audio(branded_content) or self._has_audio(normalized_outro) != self._has_audio(branded_content):
+                raise RuntimeError("BRAND_SEGMENT_AUDIO_LAYOUT_MISMATCH")
             concat_file.write_text(
                 "\n".join(f"file '{path.as_posix()}'" for path in (normalized_intro, branded_content, normalized_outro)) + "\n",
                 encoding="utf-8",
             )
             subprocess.run(
                 [
-                    "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                    self.ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
                     "-f", "concat", "-safe", "0", "-i", str(concat_file),
                     "-c", "copy", "-movflags", "+faststart",
                     "-metadata", f"brand_id={self.brand_id}",
