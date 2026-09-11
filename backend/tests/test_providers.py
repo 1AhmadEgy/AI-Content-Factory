@@ -1,37 +1,28 @@
-from app.providers.builtin import CloudModelAdapter, LocalModelAdapter, MockModelAdapter
-from app.providers.contracts import ProviderRequest
-from app.providers.registry import RegisteredModel, default_provider_registry
+from app.providers.builtin import CloudModelAdapter, LocalMediaModelAdapter, LocalModelAdapter
+from app.providers.registry import RegisteredModel, ModelRegistry, default_provider_registry
 
 
-def test_default_registry_routes_mock_capability() -> None:
+def test_default_registry_has_no_implicit_provider() -> None:
     registry = default_provider_registry()
-    model = registry.route("generation", "image")
-    assert model is not None
-    assert model.id == "mock-deterministic"
-    assert model.provider == "mock"
+    assert registry.ids() == []
+    assert registry.route("generation", "image") is None
 
 
-def test_mock_adapter_is_deterministic_and_offline() -> None:
-    adapter = MockModelAdapter()
-    request = ProviderRequest("mock-deterministic", {"prompt": "hello"}, seed=7)
-    first = adapter.execute(request)
-    second = adapter.execute(request)
-    assert first.success and second.success
-    assert first.provider_run_id == second.provider_run_id
-    assert adapter.health_check()
-
-
-def test_local_and_cloud_adapters_are_transport_neutral() -> None:
-    local = LocalModelAdapter("http://localhost:8000", frozenset({"image"}))
+def test_local_and_cloud_adapters_are_explicit_transports() -> None:
+    local = LocalModelAdapter("http://localhost:8000", frozenset({"story"}))
+    media = LocalMediaModelAdapter("http://localhost:9000/generate", frozenset({"image"}))
     cloud = CloudModelAdapter("example", frozenset({"video"}))
     assert local.capability().runtime == "LOCAL"
+    assert media.capability().runtime == "LOCAL"
     assert cloud.capability().runtime == "CLOUD"
-    assert local.health_check() and cloud.health_check()
+    assert local.health_check() and media.health_check() and cloud.health_check()
 
 
 def test_registry_disable_and_enable() -> None:
-    registry = default_provider_registry()
-    registry.disable("mock-deterministic")
-    assert registry.route("generation", "image") is None
-    registry.enable("mock-deterministic")
-    assert registry.route("generation", "image") is not None
+    registry = ModelRegistry()
+    registry.register(RegisteredModel("text", "local-text", LocalModelAdapter("http://localhost:8000", frozenset({"story"}))))
+    assert registry.route("generation", "story") is not None
+    registry.disable("text")
+    assert registry.route("generation", "story") is None
+    registry.enable("text")
+    assert registry.route("generation", "story") is not None
