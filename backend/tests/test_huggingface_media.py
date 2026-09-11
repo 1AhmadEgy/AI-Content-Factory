@@ -1,16 +1,15 @@
 import json
-from types import SimpleNamespace
 
 from backend.app.providers.contracts import ProviderRequest
 from backend.app.providers.huggingface_media import HuggingFaceMediaAdapter
 
 
 class FakeResponse:
-    def __init__(self, body: bytes, content_type: str, request_id: str | None = None):
+    def __init__(self, body: bytes, content_type: str, request_id: str | None = None, header_name: str = "x-request-id"):
         self._body = body
         self.headers = {"Content-Type": content_type}
         if request_id:
-            self.headers["x-request-id"] = request_id
+            self.headers[header_name] = request_id
 
     def __enter__(self):
         return self
@@ -70,11 +69,37 @@ def test_binary_without_provider_request_id_is_rejected(monkeypatch):
     assert result.error_code == "HF_RUN_ID_MISSING"
 
 
-def test_binary_with_real_provider_request_id_succeeds(monkeypatch):
+def test_binary_with_x_request_id_succeeds(monkeypatch):
     monkeypatch.setattr(
         "backend.app.providers.huggingface_media.urlopen",
         lambda request, timeout: FakeResponse(b"PNG-BYTES", "image/png", "hf-request-123"),
     )
+    result = _adapter().execute(ProviderRequest(model="test-model", parameters={"prompt": "a real scene"}))
+    assert result.success
+    assert result.provider_run_id == "hf-request-123"
+    assert result.output_bytes == b"PNG-BYTES"
+    assert result.output_mime_type == "image/png"
+    assert result.output_metadata == {"task": "text-to-image", "model": "test-model"}
+
+
+def test_binary_with_documented_inference_id_succeeds(monkeypatch):
+    monkeypatch.setattr(
+        "backend.app.providers.huggingface_media.urlopen",
+        lambda request, timeout: FakeResponse(b"PNG-BYTES", "image/png", "inference-123", "Inference-Id"),
+    )
+    result = _adapter().execute(ProviderRequest(model="test-model", parameters={"prompt": "a real scene"}))
+    assert result.success
+    assert result.provider_run_id == "inference-123"
+
+
+def test_continuity_context_is_not_sent_to_external_payload(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode())
+        return FakeResponse(b"PNG-BYTES", "image/png", "hf-request-123")
+
+    monkeypatch.setattr("backend.app.providers.huggingface_media.urlopen", fake_urlopen)
     result = _adapter().execute(
         ProviderRequest(
             model="test-model",
@@ -92,36 +117,7 @@ def test_binary_with_real_provider_request_id_succeeds(monkeypatch):
         )
     )
     assert result.success
-    assert result.provider_run_id == "hf-request-123"
-    assert result.output_bytes == b"PNG-BYTES"
-    assert result.output_mime_type == "image/png"
-    assert result.output_metadata == {"task": "text-to-image"}
-
-
-def test_continuity_context_is_not_sent_to_external_payload(monkeypatch):
-    captured = {}
-
-    def fake_urlopen(request, timeout):
-        captured["payload"] = json.loads(request.data.decode())
-        return FakeResponse(b"PNG-BYTES", "image/png", "hf-request-123")
-
-    monkeypatch.setattr("backend.app.providers.huggingface_media.urlopen", fake_urlopen)
-    _adapter().execute(
-        ProviderRequest(
-            model="test-model",
-            parameters={
-                "prompt": "a real scene",
-                "character_ids": ["char-1"],
-                "location_ids": ["loc-1"],
-                "country_id": "LY",
-                "library_id": "lib-1",
-                "continuity_rules": ["preserve identity"],
-                "production_context": {"season": "1"},
-                "width": 512,
-            },
-            seed=42,
-        )
-    )
+    assert result.output_metadata == {"task": "text-to-image", "model": "test-model"}
     provider_payload = captured["payload"]
     assert provider_payload["inputs"] == "a real scene"
     assert provider_payload["parameters"] == {"width": 512, "seed": 42}
