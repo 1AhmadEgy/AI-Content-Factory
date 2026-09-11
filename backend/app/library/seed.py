@@ -14,7 +14,6 @@ from .egypt_common import common_characters, common_locations
 from .countries.libya import LIBRARY_PROJECT_ID as LIBYA_LIBRARY_PROJECT_ID
 from .countries.libya import characters as libya_characters
 from .countries.libya import locations as libya_locations
-from .countries.libya import LIBRARY_VERSION as LIBYA_LIBRARY_VERSION
 
 
 def ensure_country_library_projects(repositories) -> dict[str, int]:
