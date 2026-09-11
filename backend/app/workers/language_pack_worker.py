@@ -92,5 +92,7 @@ class LanguagePackWorker(Worker):
             True,
             [asset_id],
             {"bytes": size, "languageCount": len(variants), "sourceFingerprint": source_hash},
-            f"{self.worker_type}-{job.id}",
         )
+
+    def shutdown(self) -> None:
+        self._initialized = False
