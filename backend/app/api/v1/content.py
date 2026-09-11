@@ -30,7 +30,7 @@ def build_router(runtime:OrchestratorRuntime,jobs:SQLiteJobRepository)->APIRoute
         store.connection.execute("CREATE TABLE IF NOT EXISTS content_resources (id TEXT PRIMARY KEY,resource_type TEXT NOT NULL,project_id TEXT,parent_id TEXT,title TEXT NOT NULL,description TEXT NOT NULL,payload_json TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)")
         store.connection.execute("CREATE INDEX IF NOT EXISTS idx_content_type_parent ON content_resources(resource_type,parent_id,created_at)")
         store.connection.execute("CREATE INDEX IF NOT EXISTS idx_content_project ON content_resources(project_id,resource_type)")
-    service=JobService(jobs)
+    service=JobService(jobs,context_provider=runtime.context_snapshot)
     def row_to_dict(row): return {"id":row["id"],"type":row["resource_type"],"projectId":row["project_id"],"parentId":row["parent_id"],"title":row["title"],"description":row["description"],"data":json.loads(row["payload_json"]),"createdAt":row["created_at"],"updatedAt":row["updated_at"]}
     def ensure_type(t):
         t=t.lower()
@@ -47,6 +47,10 @@ def build_router(runtime:OrchestratorRuntime,jobs:SQLiteJobRepository)->APIRoute
         if body.projectId and runtime.repositories.projects.get(body.projectId) is None: raise HTTPException(404,"PROJECT_NOT_FOUND")
         rid=str(uuid.uuid4()); now=datetime.now(timezone.utc).isoformat()
         with store._lock,store.connection: store.connection.execute("INSERT INTO content_resources VALUES(?,?,?,?,?,?,?,?,?)",(rid,t,body.projectId,body.parentId,body.title,body.description,json.dumps(body.data,ensure_ascii=False,sort_keys=True),now,now))
+        if body.projectId:
+            if t=="episode": runtime.series_bible.record_episode(body.projectId,rid,{"title":body.title,"description":body.description,"data":body.data,"parentId":body.parentId})
+            elif t=="scene": runtime.series_bible.record_scene(body.projectId,rid,{"title":body.title,"description":body.description,"data":body.data,"parentId":body.parentId})
+            elif t=="shot": runtime.series_bible.record_shot(body.projectId,rid,{"title":body.title,"description":body.description,"data":body.data,"parentId":body.parentId})
         return {"data":{"id":rid,"type":t,"projectId":body.projectId,"parentId":body.parentId,"title":body.title,"description":body.description,"data":body.data,"createdAt":now,"updatedAt":now},"requestId":request.state.request_id}
     @router.post("/{resource_type}",status_code=201)
     def create(resource_type,body:ResourceRequest,request:Request): return create_resource_internal(resource_type,body,request)
@@ -65,17 +69,22 @@ def build_router(runtime:OrchestratorRuntime,jobs:SQLiteJobRepository)->APIRoute
         return {"data":row_to_dict(row),"requestId":request.state.request_id}
     @router.patch("/{resource_type}/{resource_id}")
     def patch_resource(resource_type,resource_id,body:PatchResourceRequest,request:Request):
-        ensure_type(resource_type); row=get_row(resource_id)
-        if row["resource_type"]!=resource_type: raise HTTPException(404,"RESOURCE_NOT_FOUND")
-        now=datetime.now(timezone.utc).isoformat(); payload=body.data if body.data is not None else json.loads(row["payload_json"])
+        t=ensure_type(resource_type); row=get_row(resource_id)
+        if row["resource_type"]!=t: raise HTTPException(404,"RESOURCE_NOT_FOUND")
+        now=datetime.now(timezone.utc).isoformat(); payload=body.data if body.data is not None else json.loads(row["payload_json"]); project_id=row["project_id"]
         store._insert("UPDATE content_resources SET parent_id=?,title=?,description=?,payload_json=?,updated_at=? WHERE id=?",(body.parentId if body.parentId is not None else row["parent_id"],body.title or row["title"],body.description if body.description is not None else row["description"],json.dumps(payload,ensure_ascii=False,sort_keys=True),now,resource_id))
+        if project_id:
+            data={"title":body.title or row["title"],"description":body.description if body.description is not None else row["description"],"data":payload,"parentId":body.parentId if body.parentId is not None else row["parent_id"]}
+            if t=="episode": runtime.series_bible.record_episode(project_id,resource_id,data)
+            elif t=="scene": runtime.series_bible.record_scene(project_id,resource_id,data)
+            elif t=="shot": runtime.series_bible.record_shot(project_id,resource_id,data)
         return {"data":row_to_dict(get_row(resource_id)),"requestId":request.state.request_id}
     def generate_internal(t,rid,request):
         t=ensure_type(t); row=get_row(rid)
         if row["resource_type"]!=t or t not in JOB_TYPES: raise HTTPException(422,"GENERATION_NOT_SUPPORTED")
         if not row["project_id"]: raise HTTPException(400,"PROJECT_ID_REQUIRED")
         job=service.create(project_id=row["project_id"],job_type=JOB_TYPES[t],target_type=t,target_id=rid,priority=50,provider="auto",model=None,input=JobInput(parameters={"resourceId":rid,"resourceType":t,"payload":json.loads(row["payload_json"])}))
-        runtime.queue.enqueue(job); return {"data":{"jobId":job.id,"status":job.status.value},"requestId":request.state.request_id}
+        runtime.queue.enqueue(job); return {"data":{"jobId":job.id,"status":job.status.value,"contextVersion":job.input.parameters.get("contextVersion",0)},"requestId":request.state.request_id}
     @router.post("/{resource_type}/{resource_id}/generate",status_code=202)
     def generate(resource_type,resource_id,request:Request): return generate_internal(resource_type,resource_id,request)
     @router.post("/shots/{shot_id}/regenerate",status_code=202)
@@ -94,7 +103,8 @@ def build_router(runtime:OrchestratorRuntime,jobs:SQLiteJobRepository)->APIRoute
     def create_character(body:CharacterWrite,request:Request):
         if runtime.repositories.projects.get(body.projectId) is None: raise HTTPException(404,"PROJECT_NOT_FOUND")
         now=datetime.now(timezone.utc); c=CharacterProfile(id=f"char_{uuid.uuid4().hex}",project_id=body.projectId,name=body.name.strip(),aliases=tuple(body.aliases),description=body.description,personality=body.personality,appearance=body.appearance,voice=body.voice,speaking_style=body.speakingStyle,visual_style=body.visualStyle,behavior_rules=tuple(body.behaviorRules),reference_asset_ids=tuple(body.referenceAssetIds),provider_character_id=body.providerCharacterId,metadata=body.metadata,created_at=now,updated_at=now)
-        return {"data":char_data(runtime.characters.create(c)),"requestId":request.state.request_id}
+        c=runtime.characters.create(c); runtime.series_bible.upsert_character(body.projectId,c.snapshot())
+        return {"data":char_data(c),"requestId":request.state.request_id}
     @router.get("/characters",tags=["characters"])
     def list_characters(request:Request,projectId:str|None=None,q:str|None=None,limit:int=Query(100,ge=1,le=500)):
         items=runtime.characters.list(project_id=projectId,query=q,limit=limit); return {"data":[char_data(c) for c in items],"meta":{"count":len(items),"limit":limit},"requestId":request.state.request_id}
@@ -109,10 +119,13 @@ def build_router(runtime:OrchestratorRuntime,jobs:SQLiteJobRepository)->APIRoute
         if not old: raise HTTPException(404,"CHARACTER_NOT_FOUND")
         if runtime.repositories.projects.get(body.projectId) is None: raise HTTPException(404,"PROJECT_NOT_FOUND")
         c=CharacterProfile(id=old.id,project_id=body.projectId,name=body.name.strip(),aliases=tuple(body.aliases),description=body.description,personality=body.personality,appearance=body.appearance,voice=body.voice,speaking_style=body.speakingStyle,visual_style=body.visualStyle,behavior_rules=tuple(body.behaviorRules),reference_asset_ids=tuple(body.referenceAssetIds),provider_character_id=body.providerCharacterId,metadata=body.metadata,version=old.version,created_at=old.created_at,updated_at=old.updated_at)
-        return {"data":char_data(runtime.characters.update(c)),"requestId":request.state.request_id}
+        c=runtime.characters.update(c); runtime.series_bible.upsert_character(body.projectId,c.snapshot())
+        return {"data":char_data(c),"requestId":request.state.request_id}
     @router.delete("/characters/{character_id}",tags=["characters"])
     def delete_character(character_id,request:Request):
-        if not runtime.characters.delete(character_id): raise HTTPException(404,"CHARACTER_NOT_FOUND")
+        old=runtime.characters.get(character_id)
+        if not old or not runtime.characters.delete(character_id): raise HTTPException(404,"CHARACTER_NOT_FOUND")
+        runtime.series_bible.update_continuity(old.project_id,{"deletedCharacters":[character_id]})
         return {"data":{"id":character_id,"deleted":True},"requestId":request.state.request_id}
 
     def location_data(x): return x.snapshot()|{"createdAt":x.created_at.isoformat(),"updatedAt":x.updated_at.isoformat()}
@@ -120,7 +133,8 @@ def build_router(runtime:OrchestratorRuntime,jobs:SQLiteJobRepository)->APIRoute
     def create_location(body:LocationWrite,request:Request):
         if runtime.repositories.projects.get(body.projectId) is None: raise HTTPException(404,"PROJECT_NOT_FOUND")
         now=datetime.now(timezone.utc); x=LocationProfile(id=f"loc_{uuid.uuid4().hex}",project_id=body.projectId,name=body.name.strip(),aliases=tuple(body.aliases),description=body.description,geography=body.geography,architecture=body.architecture,environment=body.environment,visual_style=body.visualStyle,lighting=body.lighting,weather=body.weather,time_of_day=body.timeOfDay,props=tuple(body.props),rules=tuple(body.rules),negative_constraints=tuple(body.negativeConstraints),reference_asset_ids=tuple(body.referenceAssetIds),provider_location_id=body.providerLocationId,metadata=body.metadata,created_at=now,updated_at=now)
-        return {"data":location_data(runtime.locations.create(x)),"requestId":request.state.request_id}
+        x=runtime.locations.create(x); runtime.series_bible.upsert_location(body.projectId,x.snapshot())
+        return {"data":location_data(x),"requestId":request.state.request_id}
     @router.get("/locations",tags=["locations"])
     def list_locations(request:Request,projectId:str|None=None,q:str|None=None,limit:int=Query(100,ge=1,le=500)):
         items=runtime.locations.list(project_id=projectId,query=q,limit=limit); return {"data":[location_data(x) for x in items],"meta":{"count":len(items),"limit":limit},"requestId":request.state.request_id}
@@ -135,9 +149,12 @@ def build_router(runtime:OrchestratorRuntime,jobs:SQLiteJobRepository)->APIRoute
         if not old: raise HTTPException(404,"LOCATION_NOT_FOUND")
         if runtime.repositories.projects.get(body.projectId) is None: raise HTTPException(404,"PROJECT_NOT_FOUND")
         x=LocationProfile(id=old.id,project_id=body.projectId,name=body.name.strip(),aliases=tuple(body.aliases),description=body.description,geography=body.geography,architecture=body.architecture,environment=body.environment,visual_style=body.visualStyle,lighting=body.lighting,weather=body.weather,time_of_day=body.timeOfDay,props=tuple(body.props),rules=tuple(body.rules),negative_constraints=tuple(body.negativeConstraints),reference_asset_ids=tuple(body.referenceAssetIds),provider_location_id=body.providerLocationId,metadata=body.metadata,version=old.version,created_at=old.created_at,updated_at=old.updated_at)
-        return {"data":location_data(runtime.locations.update(x)),"requestId":request.state.request_id}
+        x=runtime.locations.update(x); runtime.series_bible.upsert_location(body.projectId,x.snapshot())
+        return {"data":location_data(x),"requestId":request.state.request_id}
     @router.delete("/locations/{location_id}",tags=["locations"])
     def delete_location(location_id,request:Request):
-        if not runtime.locations.delete(location_id): raise HTTPException(404,"LOCATION_NOT_FOUND")
+        old=runtime.locations.get(location_id)
+        if not old or not runtime.locations.delete(location_id): raise HTTPException(404,"LOCATION_NOT_FOUND")
+        runtime.series_bible.update_continuity(old.project_id,{"deletedLocations":[location_id]})
         return {"data":{"id":location_id,"deleted":True},"requestId":request.state.request_id}
     return router
