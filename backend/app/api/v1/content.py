@@ -2,7 +2,7 @@ from __future__ import annotations
 import json, uuid
 from datetime import datetime, timezone
 from typing import Any
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from ...domain.characters import CharacterProfile
 from ...domain.locations import LocationProfile
