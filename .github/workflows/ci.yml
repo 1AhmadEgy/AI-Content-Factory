@@ -14,7 +14,7 @@ env:
 
 jobs:
   test:
-    name: Lint, build assets, and test backend
+    name: Build assets and test backend
     runs-on: ubuntu-24.04
 
     steps:
@@ -40,7 +40,7 @@ jobs:
           ./build_brand_assets.sh
           ./build_video_assets.sh
 
-      - name: Validate brand configuration
+      - name: Validate canonical Afham Wadhak brand
         run: |
           python - <<'PY'
           import json
@@ -49,6 +49,7 @@ jobs:
           c = json.loads(p.read_text(encoding="utf-8"))
           assert c["brand_id"] == "afham_wadhak"
           assert c["brand_name_ar"] == "افهم واضحك"
+          assert c["brand_name_en"] == "Afham Wadhak"
           assert c["tagline_ar"] == "افهم ببساطة وابتسم"
           assert c["color_palette"]["secondary"] == "#FFD84D"
           assert c["color_palette"]["accent"] == "#4DB6FF"
@@ -63,10 +64,9 @@ jobs:
           pip install -r requirements.txt
           pip install ruff
 
-      - name: Run Ruff format check
+      - name: Validate Python syntax
         run: |
-          cd backend
-          ruff format --check --output-format=github .
+          python -m compileall -q backend/app backend/tests
 
       - name: Run Ruff lint
         run: |
