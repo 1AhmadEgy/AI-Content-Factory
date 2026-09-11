@@ -7,6 +7,7 @@ from typing import Any
 class JobStatus(str, Enum):
     PENDING = "PENDING"
     QUEUED = "QUEUED"
+    LEASED = "LEASED"
     RUNNING = "RUNNING"
     PAUSED = "PAUSED"
     RETRYING = "RETRYING"
