@@ -1,5 +1,7 @@
 from datetime import timedelta
 
+import pytest
+
 from backend.app.domain.jobs import GenerationJob, JobStatus, JobType, utc_now
 from backend.app.domain.projects import Project
 from backend.app.infrastructure.sqlite import SQLiteJobRepository, SQLiteRepositories
@@ -33,6 +35,36 @@ def test_claim_orders_by_priority_and_prevents_double_claim() -> None:
         assert second is not None
         assert second[0].id == "low"
         assert queue.claim_next("worker-c") is None
+    finally:
+        repositories.close()
+
+
+def test_start_moves_lease_to_running_and_increments_attempt_once() -> None:
+    repositories = SQLiteRepositories(":memory:")
+    try:
+        repositories.projects.create(Project(id="project-1", name="Demo"))
+        repositories.jobs.create(_queued_job("job-1", 50))
+        queue = SQLiteJobQueue(repositories.store, repositories.jobs)
+        claimed = queue.claim_next("worker-a")
+        assert claimed is not None
+        leased, lease = claimed
+        assert leased.status is JobStatus.LEASED
+        assert leased.attempt == 0
+
+        running = queue.start(lease)
+        assert running.status is JobStatus.RUNNING
+        assert running.attempt == 1
+
+        persisted = repositories.jobs.get("job-1")
+        assert persisted is not None
+        assert persisted.status is JobStatus.RUNNING
+        assert persisted.attempt == 1
+
+        with pytest.raises(RuntimeError, match="no longer LEASED"):
+            queue.start(lease)
+        persisted_after = repositories.jobs.get("job-1")
+        assert persisted_after is not None
+        assert persisted_after.attempt == 1
     finally:
         repositories.close()
 
