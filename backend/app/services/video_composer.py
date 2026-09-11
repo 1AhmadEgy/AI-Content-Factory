@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_BRAND_CONFIG = ROOT / "app" / "config" / "brands" / "afham_wadhak.json"
+DEFAULT_BRAND_CONFIG = ROOT / "backend" / "app" / "config" / "brands" / "afham_wadhak.json"
 
 
 class VideoComposer:
@@ -23,7 +23,7 @@ class VideoComposer:
             raise RuntimeError("FFMPEG_NOT_FOUND")
 
     def _asset(self, relative: str) -> Path:
-        return ROOT.parent / relative
+        return ROOT / relative
 
     def build_video(self, script_text: str, audio_file: str, output_path: str) -> str:
         """Build a deterministic branded test video: intro + content + outro."""
@@ -67,7 +67,6 @@ class VideoComposer:
             check=True,
         )
 
-        # Add silent audio to intro/outro so all three segments share A/V streams.
         silent_intro = output.with_name(output.stem + ".intro.mp4")
         silent_outro = output.with_name(output.stem + ".outro.mp4")
         for source, target, duration in ((intro, silent_intro, "2.5"), (outro, silent_outro, "2.5")):
