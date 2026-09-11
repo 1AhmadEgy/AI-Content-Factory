@@ -52,26 +52,13 @@ class AlignmentResult:
 
 
 class LipSyncAlignmentEngine:
-    """Normalize real ASR/TTS timings into stable subtitle and sync contracts.
+    """Normalize real ASR/TTS timings into stable subtitle and sync contracts."""
 
-    No audio/video is fabricated here. A real ASR/lip-sync provider supplies
-    timings; this layer validates, offsets, groups and records provenance.
-    """
-
-    def align_words(
-        self,
-        words: Iterable[Mapping[str, Any]],
-        *,
-        duration_ms: int,
-        offset_ms: int = 0,
-        minimum_confidence: float = 0.0,
-        provenance: Mapping[str, Any] | None = None,
-    ) -> AlignmentResult:
+    def align_words(self, words: Iterable[Mapping[str, Any]], *, duration_ms: int, offset_ms: int = 0, minimum_confidence: float = 0.0, provenance: Mapping[str, Any] | None = None) -> AlignmentResult:
         if duration_ms <= 0:
             raise LipSyncAlignmentError("duration_ms must be positive")
         if not 0.0 <= minimum_confidence <= 1.0:
             raise LipSyncAlignmentError("minimum_confidence must be between 0 and 1")
-
         normalized: list[WordTiming] = []
         for raw in words:
             if not isinstance(raw, Mapping):
@@ -92,9 +79,8 @@ class LipSyncAlignmentEngine:
             if end > duration_ms:
                 raise LipSyncAlignmentError("word timing exceeds media duration")
             normalized.append(word)
-
         normalized.sort(key=lambda item: (item.start_ms, item.end_ms, item.text))
-        cues = self._build_cues(normalized, duration_ms)
+        cues = [SubtitleCue(word.start_ms, word.end_ms, word.text) for word in normalized]
         result = AlignmentResult(tuple(cues), tuple(normalized), duration_ms, offset_ms, dict(provenance or {}))
         result.validate()
         return result
@@ -119,8 +105,7 @@ class LipSyncAlignmentEngine:
     def sync_score(self, *, expected: Iterable[Mapping[str, Any]], observed: Iterable[Mapping[str, Any]], tolerance_ms: int = 120) -> dict[str, Any]:
         if tolerance_ms < 0:
             raise LipSyncAlignmentError("tolerance_ms must be non-negative")
-        exp = list(expected)
-        obs = list(observed)
+        exp, obs = list(expected), list(observed)
         if not exp:
             raise LipSyncAlignmentError("expected timings are empty")
         if len(exp) != len(obs):
@@ -137,17 +122,6 @@ class LipSyncAlignmentEngine:
         mean_error = sum(errors) / len(errors)
         score = max(0.0, min(1.0, 1.0 - mean_error / max(tolerance_ms * 2, 1)))
         return {"score": score, "confidence": matched / len(errors), "matched": matched, "expected": len(exp), "observed": len(obs), "meanErrorMs": mean_error, "toleranceMs": tolerance_ms, "withinTolerance": matched == len(errors)}
-
-    @staticmethod
-    def _build_cues(words: list[WordTiming], duration_ms: int) -> list[SubtitleCue]:
-        if not words:
-            return []
-        cues: list[SubtitleCue] = []
-        for word in words:
-            if word.end_ms > duration_ms:
-                raise LipSyncAlignmentError("word timing exceeds media duration")
-            cues.append(SubtitleCue(word.start_ms, word.end_ms, word.text))
-        return cues
 
     @staticmethod
     def _optional(raw: Mapping[str, Any], *keys: str) -> str | None:
