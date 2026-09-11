@@ -21,6 +21,9 @@ import com.example.core.theme.AppTheme
 import com.example.core.theme.DarkBlue
 import com.example.core.theme.PrimaryCyan
 import com.example.feature.*
+import com.example.feature.characters.CharacterDetailScreen
+import com.example.feature.characters.CharacterListScreen
+import com.example.feature.scenes.SceneBuilderScreen
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -44,17 +47,17 @@ fun MainScreen() {
                     label = { Text("Projects") },
                     selected = currentRoute?.startsWith("projects") == true,
                     onClick = { navController.navigate("projects") { launchSingleTop = true } },
-                    colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan)
+                    colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan),
                 )
                 NavigationBarItem(
-                    icon = { Icon(Icons.Filled.List, contentDescription = "Control Center") },
+                    icon = { Icon(Icons.Filled.List, contentDescription = "Control") },
                     label = { Text("Control") },
                     selected = currentRoute == "control",
                     onClick = { navController.navigate("control") { launchSingleTop = true } },
-                    colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan)
+                    colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan),
                 )
             }
-        }
+        },
     ) { padding ->
         NavHost(navController = navController, startDestination = "projects", modifier = Modifier.padding(padding)) {
             composable("projects") { DashboardScreen(viewModel, onProjectClick = { id -> navController.navigate("project/$id") }) }
@@ -80,6 +83,17 @@ fun MainScreen() {
                 val episodeId = backStackEntry.arguments?.getString("episodeId") ?: return@composable
                 EpisodeDetailScreen(episodeId, viewModel, onBack = { navController.popBackStack() })
             }
+            composable("characters") {
+                CharacterListScreen(
+                    onCharacterClick = { id -> navController.navigate("character/$id") },
+                    onSceneClick = { navController.navigate("scene-builder") },
+                )
+            }
+            composable("character/{characterId}", arguments = listOf(navArgument("characterId") { type = NavType.StringType })) { backStackEntry ->
+                val characterId = backStackEntry.arguments?.getString("characterId") ?: return@composable
+                CharacterDetailScreen(characterId, onBack = { navController.popBackStack() }, onScene = { navController.navigate("scene-builder") })
+            }
+            composable("scene-builder") { SceneBuilderScreen(onBack = { navController.popBackStack() }) }
             composable("control") { ControlCenterScreen() }
         }
     }
