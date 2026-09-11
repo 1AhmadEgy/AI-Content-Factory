@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from .configuration import require_provider_model
 from .contracts import ModelAdapter
 from .openai_adapter import OpenAIModelAdapter
 
@@ -54,11 +55,11 @@ class ModelRegistry:
 def default_provider_registry() -> ModelRegistry:
     """Build the production registry from explicit environment configuration."""
     registry = ModelRegistry()
-    if not os.getenv("OPENAI_API_KEY"):
+    if not os.getenv("OPENAI_API_KEY", "").strip():
         return registry
-    text_model = os.getenv("AICF_TEXT_MODEL", "gpt-5.6-luna")
-    image_model = os.getenv("AICF_IMAGE_MODEL", "gpt-image-2")
-    tts_model = os.getenv("AICF_TTS_MODEL", "gpt-4o-mini-tts")
+    text_model = require_provider_model("AICF_TEXT_MODEL")
+    image_model = require_provider_model("AICF_IMAGE_MODEL")
+    tts_model = require_provider_model("AICF_TTS_MODEL")
     registry.register(RegisteredModel(text_model, "openai", OpenAIModelAdapter(text_model, "TEXT"), priority=10))
     registry.register(RegisteredModel(image_model, "openai", OpenAIModelAdapter(image_model, "IMAGE"), priority=10))
     registry.register(RegisteredModel(tts_model, "openai", OpenAIModelAdapter(tts_model, "TTS"), priority=10))
