@@ -13,17 +13,17 @@ from ..infrastructure.storage import LocalAssetStorage
 from ..orchestrator.provenance import build_provenance
 from ..orchestrator.queue import JobExecutionResult, Worker, WorkerContext
 from ..providers.contracts import ProviderRequest
-from ..providers.registry import ModelRegistry
 from ..providers.media import media_mime
+from ..providers.registry import ModelRegistry
 
 
 class ProviderGenerationWorker(Worker):
-    """Execute only provider capabilities that can produce the requested asset."""
+    """Execute only real provider capabilities and accept only persisted outputs."""
 
     worker_type = "provider-generation"
+    _TEXT_JOB_TYPES = {JobType.STORY, JobType.SCRIPT, JobType.SCENE, JobType.SHOT, JobType.CHARACTER, JobType.WORLD}
 
-    def __init__(self, providers: ModelRegistry, storage: LocalAssetStorage, assets: AssetRepository,
-                 provider_runs: SQLiteProviderRunRepository | None = None) -> None:
+    def __init__(self, providers: ModelRegistry, storage: LocalAssetStorage, assets: AssetRepository, provider_runs: SQLiteProviderRunRepository | None = None) -> None:
         self.providers = providers
         self.storage = storage
         self.assets = assets
@@ -53,11 +53,7 @@ class ProviderGenerationWorker(Worker):
 
         run_id = str(uuid.uuid4())
         if self.provider_runs:
-            self.provider_runs.create(ProviderRun(
-                id=run_id, job_id=job.id, provider=model.provider, model=model.id,
-                request_metadata={"jobType": job.type.value, "targetType": job.target_type, "targetId": job.target_id, "capability": capability},
-                status="RUNNING",
-            ))
+            self.provider_runs.create(ProviderRun(id=run_id, job_id=job.id, provider=model.provider, model=model.id, request_metadata={"jobType": job.type.value, "targetType": job.target_type, "targetId": job.target_id, "capability": capability}, status="RUNNING"))
         try:
             response = model.adapter.execute(ProviderRequest(model=model.id, parameters=dict(job.input.parameters), seed=job.input.seed))
         except Exception as exc:
@@ -72,13 +68,18 @@ class ProviderGenerationWorker(Worker):
             return JobExecutionResult(False, provider_run_id=provider_run_id, error_code=response.error_code or "PROVIDER_FAILED", error_message=response.error_message or "Provider execution failed", retryable=True)
 
         asset_ids = list(response.output_asset_ids)
+        if asset_ids:
+            validation_error = self._validate_existing_assets(job, asset_ids)
+            if validation_error:
+                return self._fail_run(run_id, provider_run_id, *validation_error)
+
         if not asset_ids and response.output_bytes is not None:
             if not response.output_bytes:
                 return self._fail_run(run_id, provider_run_id, "PROVIDER_EMPTY_MEDIA", "Provider returned an empty media payload")
             asset_ids = [self._persist_media(job, model.provider, model.id, response, provider_run_id)]
 
         if not asset_ids:
-            if job.type not in {JobType.STORY, JobType.SCRIPT, JobType.SCENE, JobType.SHOT, JobType.CHARACTER, JobType.WORLD}:
+            if job.type not in self._TEXT_JOB_TYPES:
                 return self._fail_run(run_id, provider_run_id, "PROVIDER_MEDIA_OUTPUT_REQUIRED", f"{job.type.value} requires a real binary media output")
             if not response.output_text or not response.output_text.strip():
                 return self._fail_run(run_id, provider_run_id, "PROVIDER_TEXT_OUTPUT_REQUIRED", "Provider returned no text output")
@@ -92,10 +93,30 @@ class ProviderGenerationWorker(Worker):
             self.provider_runs.complete(run_id, status="COMPLETED", response_metadata={"assetIds": asset_ids, **dict(response.metrics)})
         return JobExecutionResult(success=True, asset_ids=asset_ids, metrics=dict(response.metrics), provider_run_id=provider_run_id)
 
-    def _fail_run(self, run_id: str, provider_run_id: str, code: str, message: str) -> JobExecutionResult:
+    def _validate_existing_assets(self, job: GenerationJob, asset_ids: list[str]) -> tuple[str, str, bool] | None:
+        expected_type = self._asset_type(job)
+        for asset_id in asset_ids:
+            asset = self.assets.get(asset_id)
+            if asset is None:
+                return "PROVIDER_ASSET_NOT_PERSISTED", f"Provider returned an unknown asset id: {asset_id}", False
+            if asset.project_id != job.project_id:
+                return "PROVIDER_ASSET_PROJECT_MISMATCH", f"Provider asset belongs to another project: {asset_id}", False
+            if asset.status is not AssetStatus.READY:
+                return "PROVIDER_ASSET_NOT_READY", f"Provider asset is not READY: {asset_id}", False
+            if asset.type is not expected_type:
+                return "PROVIDER_ASSET_TYPE_MISMATCH", f"Expected {expected_type.value} but received {asset.type.value}: {asset_id}", False
+            try:
+                readable = self.storage.verify(asset)
+            except (OSError, IOError, ValueError):
+                readable = False
+            if not readable:
+                return "PROVIDER_ASSET_INTEGRITY_FAILED", f"Provider asset failed storage verification: {asset_id}", False
+        return None
+
+    def _fail_run(self, run_id: str, provider_run_id: str, code: str, message: str, retryable: bool = False) -> JobExecutionResult:
         if self.provider_runs:
             self.provider_runs.complete(run_id, status="FAILED", error_code=code, response_metadata={})
-        return JobExecutionResult(False, provider_run_id=provider_run_id, error_code=code, error_message=message, retryable=False)
+        return JobExecutionResult(False, provider_run_id=provider_run_id, error_code=code, error_message=message, retryable=retryable)
 
     def cancel(self, job_id: str) -> None:
         return None
@@ -122,25 +143,16 @@ class ProviderGenerationWorker(Worker):
 
     @staticmethod
     def _required_capability(job_type: JobType) -> str:
-        return {
-            JobType.IMAGE: "image",
-            JobType.VIDEO: "video",
-            JobType.TTS: "tts",
-            JobType.LIPSYNC: "lipsync",
-            JobType.MUSIC: "music",
-            JobType.SFX: "sfx",
-            JobType.STORY: "story",
-            JobType.SCRIPT: "script",
-            JobType.SCENE: "scene",
-            JobType.SHOT: "shot",
-            JobType.CHARACTER: "character",
-            JobType.WORLD: "world",
-        }.get(job_type, "generation")
+        return {JobType.IMAGE: "image", JobType.VIDEO: "video", JobType.TTS: "tts", JobType.LIPSYNC: "lipsync", JobType.MUSIC: "music", JobType.SFX: "sfx", JobType.STORY: "story", JobType.SCRIPT: "script", JobType.SCENE: "scene", JobType.SHOT: "shot", JobType.CHARACTER: "character", JobType.WORLD: "world"}.get(job_type, "generation")
 
     @staticmethod
     def _asset_type(job: GenerationJob) -> AssetType:
-        if job.type.value in {"IMAGE", "THUMBNAIL"}: return AssetType.IMAGE
-        if job.type.value in {"VIDEO", "RENDER"}: return AssetType.VIDEO
-        if job.type.value in {"TTS", "MUSIC", "SFX", "LIPSYNC"}: return AssetType.AUDIO
-        if job.type.value == "SUBTITLE": return AssetType.SUBTITLE
+        if job.type.value in {"IMAGE", "THUMBNAIL"}:
+            return AssetType.IMAGE
+        if job.type.value in {"VIDEO", "RENDER"}:
+            return AssetType.VIDEO
+        if job.type.value in {"TTS", "MUSIC", "SFX", "LIPSYNC"}:
+            return AssetType.AUDIO
+        if job.type.value == "SUBTITLE":
+            return AssetType.SUBTITLE
         return AssetType.DOCUMENT
