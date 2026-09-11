@@ -14,6 +14,7 @@ from .api.v1.assets import build_router as build_assets_router
 from .api.v1.batches import build_router as build_batch_router
 from .api.v1.best_take import build_router as build_best_take_router
 from .api.v1.content import build_router as build_content_router
+from .api.v1.context import build_router as build_context_router
 from .api.v1.episode_translations import build_router as build_episode_translation_router
 from .api.v1.episodes import build_router as build_episode_router
 from .api.v1.factory import build_router as build_factory_router
@@ -33,6 +34,7 @@ from .infrastructure.sqlite import SQLiteJobRepository, SQLiteProjectRepository,
 from .orchestrator.job_service import JobService
 from .orchestrator.runtime import OrchestratorRuntime
 from .orchestrator.worker_loop import WorkerLoop
+from .services.project_context import ProjectContextStore
 from .scheduling.loop import SchedulerLoop
 from .scheduling.persistent import PersistentScheduler, SQLiteScheduleRepository
 
@@ -42,6 +44,7 @@ job_repository = SQLiteJobRepository(repositories.store)
 project_repository = SQLiteProjectRepository(repositories.store)
 asset_repository = SQLiteAssetRepository(repositories.store)
 orchestrator_runtime = OrchestratorRuntime(repositories)
+context_store = orchestrator_runtime.context
 worker_id = os.getenv("AICF_WORKER_ID", "auto")
 worker_loop = WorkerLoop(orchestrator_runtime, worker_id=worker_id)
 
@@ -136,6 +139,7 @@ app.include_router(build_system_router(orchestrator_runtime))
 app.include_router(pipeline_router)
 app.include_router(build_shots_router(orchestrator_runtime))
 app.include_router(build_episode_router(orchestrator_runtime))
+app.include_router(build_context_router(project_repository, context_store))
 
 
 @app.get("/api/v1/health", tags=["system"])
