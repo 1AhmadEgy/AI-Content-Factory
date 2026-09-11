@@ -1,5 +1,7 @@
 from datetime import timedelta
 
+import pytest
+
 from backend.app.domain.jobs import GenerationJob, JobStatus, JobType, utc_now
 from backend.app.domain.projects import Project
 from backend.app.infrastructure.sqlite import SQLiteJobRepository, SQLiteRepositories
@@ -37,7 +39,37 @@ def test_claim_orders_by_priority_and_prevents_double_claim() -> None:
         repositories.close()
 
 
-def test_expired_lease_returns_job_to_retrying() -> None:
+def test_start_moves_lease_to_running_and_increments_attempt_once() -> None:
+    repositories = SQLiteRepositories(":memory:")
+    try:
+        repositories.projects.create(Project(id="project-1", name="Demo"))
+        repositories.jobs.create(_queued_job("job-1", 50))
+        queue = SQLiteJobQueue(repositories.store, repositories.jobs)
+        claimed = queue.claim_next("worker-a")
+        assert claimed is not None
+        leased, lease = claimed
+        assert leased.status is JobStatus.LEASED
+        assert leased.attempt == 0
+
+        running = queue.start(lease)
+        assert running.status is JobStatus.RUNNING
+        assert running.attempt == 1
+
+        persisted = repositories.jobs.get("job-1")
+        assert persisted is not None
+        assert persisted.status is JobStatus.RUNNING
+        assert persisted.attempt == 1
+
+        with pytest.raises(RuntimeError, match="no longer LEASED"):
+            queue.start(lease)
+        persisted_after = repositories.jobs.get("job-1")
+        assert persisted_after is not None
+        assert persisted_after.attempt == 1
+    finally:
+        repositories.close()
+
+
+def test_expired_lease_returns_job_to_runnable_queue() -> None:
     repositories = SQLiteRepositories(":memory:")
     try:
         repositories.projects.create(Project(id="project-1", name="Demo"))
@@ -56,7 +88,10 @@ def test_expired_lease_returns_job_to_retrying() -> None:
         assert queue.release_expired() == 1
         restored = repositories.jobs.get("job-1")
         assert restored is not None
-        assert restored.status is JobStatus.RETRYING
+        assert restored.status is JobStatus.QUEUED
         assert restored.error_code == "LEASE_EXPIRED"
+        reclaimed = queue.claim_next("worker-b")
+        assert reclaimed is not None
+        assert reclaimed[0].id == "job-1"
     finally:
         repositories.close()

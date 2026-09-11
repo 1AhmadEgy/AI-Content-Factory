@@ -1,11 +1,11 @@
-from __future__ import annotations
-
 """Country-library content contract.
 
 This schema is intentionally data-only: every country can provide its own
 characters, locations, culture, production rules and six series templates
 without changing the API or another country's records.
 """
+
+from __future__ import annotations
 
 from typing import Any
 

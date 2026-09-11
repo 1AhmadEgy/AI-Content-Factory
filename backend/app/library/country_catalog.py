@@ -1,11 +1,11 @@
-from __future__ import annotations
-
 """Scalable country-library registry.
 
 A country entry is metadata until a content seed is provided. Each country has
 an independent stable libraryId, so adding content never requires changing the
 API contract or touching another country's records.
 """
+
+from __future__ import annotations
 
 from .languages import LANGUAGES
 

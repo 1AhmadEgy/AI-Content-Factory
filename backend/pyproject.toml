@@ -20,6 +20,11 @@ test = [
 [tool.pytest.ini_options]
 pythonpath = [".."]
 
+[tool.ruff.lint]
+# CI correctness gate: syntax/import/runtime-safety diagnostics only.
+select = ["E4", "E9", "F"]
+ignore = ["F401"]
+
 [tool.setuptools.packages.find]
 include = ["app*"]
 

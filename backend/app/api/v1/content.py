@@ -1,9 +1,13 @@
 from __future__ import annotations
-import json, uuid
+
+import json
+import uuid
 from datetime import datetime, timezone
 from typing import Any
+
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
+
 from ...domain.characters import CharacterProfile
 from ...domain.locations import LocationProfile
 from ...domain.jobs import JobInput, JobType
