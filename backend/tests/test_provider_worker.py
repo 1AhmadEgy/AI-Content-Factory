@@ -67,15 +67,23 @@ def test_provider_generation_worker_does_not_succeed_without_real_provider(tmp_p
     assert assets.items == {}
 
 
-def test_provider_success_without_provider_run_id_is_rejected(tmp_path: Path) -> None:
+def test_provider_success_without_external_provider_run_id_still_persists_real_output(tmp_path: Path) -> None:
     worker, assets = _worker(
         tmp_path,
         ProviderResponse(success=True, output_bytes=b"real-output", output_mime_type="image/png"),
     )
     result = worker.execute(_job(), _context())
-    assert result.success is False
-    assert result.error_code == "PROVIDER_RUN_ID_MISSING"
-    assert assets.items == {}
+    assert result.success is True
+    assert result.provider_run_id is None
+    assert len(result.asset_ids) == 1
+    asset = assets.items[result.asset_ids[0]]
+    assert asset.project_id == "project-1"
+    assert asset.type == AssetType.IMAGE
+    assert asset.size_bytes == len(b"real-output")
+    assert asset.provenance.license_status.value == "VERIFIED"
+    assert asset.provenance.metadata["internalRunId"]
+    assert "providerRunId" not in asset.provenance.metadata
+    assert Path(asset.path).read_bytes() == b"real-output"
 
 
 def test_provider_success_with_real_output_and_run_id_persists_asset(tmp_path: Path) -> None:
@@ -92,6 +100,7 @@ def test_provider_success_with_real_output_and_run_id_persists_asset(tmp_path: P
     assert asset.type == AssetType.IMAGE
     assert asset.size_bytes == len(b"real-output")
     assert asset.provenance.license_status.value == "VERIFIED"
+    assert asset.provenance.metadata["providerRunId"] == "provider-run-1"
     assert Path(asset.path).read_bytes() == b"real-output"
 
 
