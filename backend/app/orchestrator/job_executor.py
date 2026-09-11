@@ -43,6 +43,11 @@ class JobExecutor:
         worker: Worker = self.workers.get(worker_id)
         if not worker.health_check():
             return self._fail(job, lease, "WORKER_UNHEALTHY", "Worker health check failed", retryable=True)
+        if job.status is JobStatus.LEASED:
+            starter = getattr(self.queue, "start", None)
+            if starter is None:
+                raise RuntimeError("QUEUE_START_NOT_SUPPORTED")
+            job = starter(lease)
         if job.status is not JobStatus.RUNNING:
             raise ValueError(f"Job must be RUNNING before execution: {job.status}")
         self._event(job, "JOB_STARTED", {"workerId": worker_id, "attempt": job.attempt})
@@ -71,17 +76,19 @@ class JobExecutor:
             job.error_code = gate.code or "COMPLETION_GATE_BLOCKED"
             job.error_message = gate.message or "Completion gate rejected the output"
             self._require_persisted(job, lease)
-            transition(job, JobStatus.BLOCKED)
-            self.queue.acknowledge(lease, JobStatus.BLOCKED)
-            self._event(job, "JOB_BLOCKED", {"errorCode": job.error_code, "qcCount": len(gate.qc_results)})
-            return ExecutionResult(job, JobStatus.BLOCKED)
-        self._set_progress(job, "completed", 1.0, persist=False, lease=lease)
-        self._require_persisted(job, lease)
-        transition(job, JobStatus.COMPLETED)
-        self.queue.acknowledge(lease, JobStatus.COMPLETED)
-        self._event(job, "JOB_COMPLETED", {"assetIds": result.asset_ids, "providerRunId": result.provider_run_id, "qcCount": len(gate.qc_results), "progress": 1.0})
+            transition(job, JobStatus.FAILED)
+            self.queue.acknowledge(lease, JobStatus.FAILED)
+            self._event(job, "JOB_FAILED", {"errorCode": job.error_code, "qcCount": len(gate.qc_results)})
+            return ExecutionResult(job, JobStatus.FAILED)
+        self._set_progress(job, "qc_pending", max(job.progress, 0.95), persist=False, lease=lease)
+        transition(job, JobStatus.QC_PENDING)
+        self.queue.acknowledge(lease, JobStatus.QC_PENDING)
+        self._event(job, "JOB_QC_PENDING", {"assetIds": result.asset_ids, "qcCount": len(gate.qc_results)})
+        transition(job, JobStatus.SUCCEEDED)
+        self.queue.acknowledge(lease, JobStatus.SUCCEEDED)
+        self._event(job, "JOB_SUCCEEDED", {"assetIds": result.asset_ids, "providerRunId": result.provider_run_id, "qcCount": len(gate.qc_results), "progress": 1.0})
         self._notify_completed(job)
-        return ExecutionResult(job, JobStatus.COMPLETED)
+        return ExecutionResult(job, JobStatus.SUCCEEDED)
 
     def cancel_claimed(self, job: GenerationJob, lease: JobLease, worker_id: str | None = None) -> ExecutionResult:
         if not self.queue.is_lease_active(lease):
@@ -115,11 +122,9 @@ class JobExecutor:
         job.error_message = message
         if retryable and job.attempt < job.max_attempts:
             self._require_persisted(job, lease)
-            transition(job, JobStatus.RETRYING)
-            self.queue.acknowledge(lease, JobStatus.RETRYING)
-            transition(job, JobStatus.QUEUED)
-            self._event(job, "JOB_RETRY_SCHEDULED", {"errorCode": code, "attempt": job.attempt, "maxAttempts": job.max_attempts})
-            return ExecutionResult(job, JobStatus.QUEUED, retried=True)
+            transition(job, JobStatus.FAILED)
+            self.queue.acknowledge(lease, JobStatus.FAILED)
+            return ExecutionResult(job, JobStatus.FAILED, retried=True)
         self._require_persisted(job, lease)
         transition(job, JobStatus.FAILED)
         self.queue.acknowledge(lease, JobStatus.FAILED)
