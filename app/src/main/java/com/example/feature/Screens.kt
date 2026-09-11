@@ -12,13 +12,10 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Autorenew
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -55,7 +52,7 @@ fun DashboardScreen(
                 ProjectCard(project, onClick = { onProjectClick(project.id) })
             }
         }
-        
+
         if (showDialog) {
             AddProjectDialog(
                 onDismiss = { showDialog = false },
@@ -148,7 +145,7 @@ fun ProjectDetailScreen(
                 }
             }
         }
-        
+
         if (showDialog) {
             AddProjectDialog(
                 onDismiss = { showDialog = false },
@@ -216,7 +213,7 @@ fun SeriesDetailScreen(
                 }
             }
         }
-        
+
         if (showDialog) {
             AddProjectDialog(
                 onDismiss = { showDialog = false },
@@ -239,10 +236,10 @@ fun EpisodeDetailScreen(
     val allEpisodes by viewModel.episodes.collectAsState()
     val allScenes by viewModel.scenes.collectAsState()
     val allJobs by viewModel.jobs.collectAsState()
-    
+
     val episode = allEpisodes.find { it.id == episodeId }
     val scenes = allScenes.filter { it.episodeId == episodeId }.sortedBy { it.number }
-    
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -274,7 +271,7 @@ fun EpisodeDetailScreen(
                             Spacer(Modifier.weight(1f))
                             Text(scene.status, color = when (scene.status) {
                                 "DONE" -> SuccessGreen
-                                "FAILED" -> ErrorRed
+                                "FAILED" -> MaterialTheme.colorScheme.error
                                 else -> WarningOrange
                             })
                         }
