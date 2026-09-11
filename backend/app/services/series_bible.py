@@ -7,11 +7,12 @@ from .project_context import ProjectContextStore
 
 
 class SeriesBibleService:
-    """Structured continuity layer backed by the durable project context store.
+    """Canonical continuity state backed by durable project context.
 
-    The bible is materialized in ``context_json`` while the context store keeps
-    an append-only event history. Every mutation therefore has both a current
-    canonical state and an auditable history.
+    Every mutation creates exactly one materialized-context version and one
+    append-only event. The bible is deliberately structured so generation
+    systems can consume stable character/location/story state without relying
+    on an unstructured last-event field.
     """
 
     def __init__(self, context: ProjectContextStore) -> None:
@@ -29,66 +30,71 @@ class SeriesBibleService:
         bible.setdefault("relationships", {})
         bible.setdefault("storyState", {})
         bible.setdefault("episodes", {})
+        bible.setdefault("scenes", {})
+        bible.setdefault("shots", {})
+        bible.setdefault("assets", {})
         bible.setdefault("continuity", {})
         bible.setdefault("latest", {})
         bible["contextVersion"] = current.get("version", 0)
         return bible
 
+    def _save(self, project_id: str, bible: dict[str, Any], event_type: str, payload: dict[str, Any], entity_type: str | None = None, entity_id: str | None = None) -> dict[str, Any]:
+        return self.context.save(project_id, bible, event_type=event_type, entity_type=entity_type, entity_id=entity_id, event_payload=payload)
+
     def initialize(self, project_id: str, series: dict[str, Any], rules: list[str] | None = None) -> dict[str, Any]:
-        current = self.snapshot(project_id)
-        current["series"] = {**current.get("series", {}), **series}
+        bible = self.snapshot(project_id)
+        bible["series"] = {**bible["series"], **series}
         if rules:
-            current["rules"] = list(dict.fromkeys([*current.get("rules", []), *rules]))
-        saved = self.context.save(project_id, current)
-        self.context.append_event(project_id, "series.bible.initialized", {"series": series, "rules": rules or []}, entity_type="series", entity_id=project_id)
-        return saved
+            bible["rules"] = list(dict.fromkeys([*bible["rules"], *rules]))
+        bible["latest"]["seriesId"] = project_id
+        return self._save(project_id, bible, "series.bible.initialized", {"series": series, "rules": rules or []}, "series", project_id)
 
     def upsert_character(self, project_id: str, character: dict[str, Any]) -> dict[str, Any]:
         bible = self.snapshot(project_id)
-        character_id = str(character["id"])
-        previous = bible["characters"].get(character_id, {})
-        bible["characters"][character_id] = {**previous, **character}
-        bible["latest"]["characterId"] = character_id
-        saved = self.context.save(project_id, bible)
-        self.context.append_event(project_id, "character.saved", character, entity_type="character", entity_id=character_id)
-        return saved
+        cid = str(character["id"])
+        bible["characters"][cid] = {**bible["characters"].get(cid, {}), **deepcopy(character)}
+        bible["latest"]["characterId"] = cid
+        return self._save(project_id, bible, "character.saved", character, "character", cid)
 
     def upsert_location(self, project_id: str, location: dict[str, Any]) -> dict[str, Any]:
         bible = self.snapshot(project_id)
-        location_id = str(location["id"])
-        previous = bible["locations"].get(location_id, {})
-        bible["locations"][location_id] = {**previous, **location}
-        bible["latest"]["locationId"] = location_id
-        saved = self.context.save(project_id, bible)
-        self.context.append_event(project_id, "location.saved", location, entity_type="location", entity_id=location_id)
-        return saved
+        lid = str(location["id"])
+        bible["locations"][lid] = {**bible["locations"].get(lid, {}), **deepcopy(location)}
+        bible["latest"]["locationId"] = lid
+        return self._save(project_id, bible, "location.saved", location, "location", lid)
 
     def record_episode(self, project_id: str, episode_id: str, data: dict[str, Any]) -> dict[str, Any]:
         bible = self.snapshot(project_id)
-        previous = bible["episodes"].get(episode_id, {})
-        bible["episodes"][episode_id] = {**previous, **data}
+        bible["episodes"][episode_id] = {**bible["episodes"].get(episode_id, {}), **deepcopy(data)}
         bible["latest"]["episodeId"] = episode_id
-        saved = self.context.save(project_id, bible)
-        self.context.append_event(project_id, "episode.saved", data, entity_type="episode", entity_id=episode_id)
-        return saved
+        return self._save(project_id, bible, "episode.saved", data, "episode", episode_id)
+
+    def record_scene(self, project_id: str, scene_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        bible = self.snapshot(project_id)
+        bible["scenes"][scene_id] = {**bible["scenes"].get(scene_id, {}), **deepcopy(data)}
+        bible["latest"]["sceneId"] = scene_id
+        return self._save(project_id, bible, "scene.saved", data, "scene", scene_id)
 
     def record_shot(self, project_id: str, shot_id: str, data: dict[str, Any]) -> dict[str, Any]:
         bible = self.snapshot(project_id)
-        bible["storyState"]["latestShot"] = {"id": shot_id, **data}
+        bible["shots"][shot_id] = {**bible["shots"].get(shot_id, {}), **deepcopy(data)}
+        bible["storyState"]["latestShot"] = {"id": shot_id, **deepcopy(data)}
         bible["latest"]["shotId"] = shot_id
-        saved = self.context.save(project_id, bible)
-        self.context.append_event(project_id, "shot.saved", data, entity_type="shot", entity_id=shot_id)
-        return saved
+        return self._save(project_id, bible, "shot.saved", data, "shot", shot_id)
+
+    def record_asset(self, project_id: str, asset_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        bible = self.snapshot(project_id)
+        bible["assets"][asset_id] = {**bible["assets"].get(asset_id, {}), **deepcopy(data)}
+        bible["latest"]["assetId"] = asset_id
+        return self._save(project_id, bible, "asset.saved", data, "asset", asset_id)
 
     def record_job(self, project_id: str, job: dict[str, Any]) -> dict[str, Any]:
         bible = self.snapshot(project_id)
-        bible["storyState"]["latestJob"] = job
+        bible["storyState"]["latestJob"] = deepcopy(job)
         bible["latest"]["jobId"] = job.get("jobId")
-        saved = self.context.save(project_id, bible)
-        self.context.append_event(project_id, "generation.job", job, entity_type="job", entity_id=job.get("jobId"))
-        return saved
+        return self._save(project_id, bible, "generation.job", job, "job", job.get("jobId"))
 
     def update_continuity(self, project_id: str, continuity: dict[str, Any]) -> dict[str, Any]:
         bible = self.snapshot(project_id)
-        bible["continuity"] = {**bible.get("continuity", {}), **continuity}
-        return self.context.save(project_id, bible)
+        bible["continuity"] = {**bible.get("continuity", {}), **deepcopy(continuity)}
+        return self._save(project_id, bible, "continuity.updated", continuity, "continuity", project_id)
