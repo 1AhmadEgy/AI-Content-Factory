@@ -1,6 +1,5 @@
-from __future__ import annotations
+from __future__
 
-import sqlite3
 from datetime import datetime, timezone
 
 from app.domain.characters import CharacterProfile
