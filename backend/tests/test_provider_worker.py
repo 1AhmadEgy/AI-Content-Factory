@@ -110,7 +110,23 @@ def test_default_registry_requires_explicit_provider_configuration(monkeypatch) 
     for name in (
         "AICF_TEXT_PROVIDER_ENDPOINT", "AICF_TEXT_PROVIDER_MODEL",
         "AICF_MEDIA_PROVIDER_ENDPOINT", "AICF_MEDIA_PROVIDER_MODEL",
+        "HF_TOKEN", "HF_MODEL", "HF_MEDIA_TOKEN", "HF_MEDIA_MODEL",
     ):
         monkeypatch.delenv(name, raising=False)
     registry = default_provider_registry()
     assert registry.ids() == []
+
+
+def test_default_registry_registers_real_huggingface_media_task(monkeypatch) -> None:
+    for name in (
+        "AICF_TEXT_PROVIDER_ENDPOINT", "AICF_TEXT_PROVIDER_MODEL",
+        "AICF_MEDIA_PROVIDER_ENDPOINT", "AICF_MEDIA_PROVIDER_MODEL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HF_MEDIA_TOKEN", "hf-test")
+    monkeypatch.setenv("HF_MEDIA_MODEL", "black-forest-labs/FLUX.1-schnell")
+    monkeypatch.setenv("HF_MEDIA_TASK", "text-to-image")
+    registry = default_provider_registry()
+    assert registry.ids() == ["huggingface-media:black-forest-labs/FLUX.1-schnell"]
+    registered = registry.get("huggingface-media:black-forest-labs/FLUX.1-schnell")
+    assert registered.adapter.capability().capabilities == frozenset({"image"})
