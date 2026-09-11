@@ -6,39 +6,35 @@ from ..domain.locations import LocationProfile
 from ..providers.contracts import ProviderRequest
 from ..providers.registry import ModelRegistry
 from .ai_json import parse_json_object
-from .content_planner import DeterministicContentPlanner
 
 
 class AIStoryEngine:
-    """AI-first story director using reusable country-scoped character/location identity."""
+    """AI story director; provider failure is explicit and never replaced by synthetic content."""
 
     def __init__(self, registry: ModelRegistry) -> None:
         self.registry = registry
-        self.fallback = DeterministicContentPlanner()
 
     def generate(self, brief: ContentBrief, model_id: str | None = None,
                  characters: tuple[CharacterProfile, ...] = (),
                  locations: tuple[LocationProfile, ...] = ()) -> StoryPlan:
         model = self.registry.get(model_id) if model_id else self.registry.route("generation", "story")
         if model is None:
-            return self.fallback.plan(brief)
-        prompt = _story_prompt(brief, characters, locations)
-        response = model.adapter.execute(ProviderRequest(model=model.id, parameters={"prompt": prompt, "temperature": 0.7}))
+            raise RuntimeError("AI_PROVIDER_NOT_CONFIGURED:story")
+        response = model.adapter.execute(ProviderRequest(model=model.id, parameters={"prompt": _story_prompt(brief, characters, locations), "temperature": 0.7, "response_format": "json"}))
         if not response.success or not response.output_text:
-            return self.fallback.plan(brief)
+            raise RuntimeError(response.error_code or "AI_PROVIDER_FAILED:story")
         data = parse_json_object(response.output_text)
         if data is None:
-            return self.fallback.plan(brief)
+            raise RuntimeError("AI_PROVIDER_INVALID_JSON:story")
         try:
             story = _story_from_dict(data)
             _validate_identity_scope(story, characters, locations)
             return story
-        except (KeyError, TypeError, ValueError):
-            return self.fallback.plan(brief)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError(f"AI_PROVIDER_INVALID_STORY:{exc}") from exc
 
 
 def _validate_identity_scope(story: StoryPlan, characters: tuple[CharacterProfile, ...], locations: tuple[LocationProfile, ...]) -> None:
-    """Reject provider output that references identities outside the supplied library scope."""
     allowed_characters = {c.id for c in characters}
     allowed_locations = {l.id for l in locations}
     for scene in story.scenes:
@@ -85,21 +81,27 @@ def _story_prompt(brief: ContentBrief, characters: tuple[CharacterProfile, ...],
 def _story_from_dict(data: dict[str, object]) -> StoryPlan:
     title, logline, synopsis = str(data["title"]).strip(), str(data["logline"]).strip(), str(data["synopsis"]).strip()
     raw_scenes = data["scenes"]
-    if not isinstance(raw_scenes, list) or not raw_scenes: raise ValueError("scenes must be a non-empty list")
+    if not isinstance(raw_scenes, list) or not raw_scenes:
+        raise ValueError("scenes must be a non-empty list")
     scenes: list[ScenePlan] = []
     for raw_scene in raw_scenes:
-        if not isinstance(raw_scene, dict): raise TypeError("invalid scene")
+        if not isinstance(raw_scene, dict):
+            raise TypeError("invalid scene")
         raw_shots = raw_scene.get("shots", [])
-        if not isinstance(raw_shots, list): raise TypeError("invalid shots")
+        if not isinstance(raw_shots, list):
+            raise TypeError("invalid shots")
         normalized_shots = []
         for shot in raw_shots:
             if isinstance(shot, dict):
                 item = dict(shot)
                 item["character_ids"] = tuple(item.get("character_ids", item.get("characterIds", [])))
                 item["location_ids"] = tuple(item.get("location_ids", item.get("locationIds", [])))
-                item.pop("characterIds", None); item.pop("locationIds", None)
+                item.pop("characterIds", None)
+                item.pop("locationIds", None)
                 normalized_shots.append(ShotPlan(**item))
-        if not normalized_shots: raise ValueError("scene has no shots")
-        scene = dict(raw_scene); scene["shots"] = tuple(normalized_shots)
+        if not normalized_shots:
+            raise ValueError("scene has no shots")
+        scene = dict(raw_scene)
+        scene["shots"] = tuple(normalized_shots)
         scenes.append(ScenePlan(**scene))
     return StoryPlan(title=title, logline=logline, synopsis=synopsis, scenes=tuple(scenes))
