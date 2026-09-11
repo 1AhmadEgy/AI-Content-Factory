@@ -1,3 +1,3 @@
-from .adapters import AdapterRegistry, DryRunAdapter, PublishRequest, PublishResult, PublishingAdapter
+from .adapters import AdapterRegistry, HttpPublishingAdapter, PublishRequest, PublishResult, PublishingAdapter
 
-__all__ = ["AdapterRegistry", "DryRunAdapter", "PublishRequest", "PublishResult", "PublishingAdapter"]
+__all__ = ["AdapterRegistry", "HttpPublishingAdapter", "PublishRequest", "PublishResult", "PublishingAdapter"]
