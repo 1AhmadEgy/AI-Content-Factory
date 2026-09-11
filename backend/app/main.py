@@ -94,7 +94,7 @@ app = FastAPI(title="AI Content Factory API", version="0.8.0", docs_url="/api/v1
 async def request_id_middleware(request: Request, call_next):
     request_id = request.headers.get("X-Request-Id") or f"req_{uuid4().hex}"
     request.state.request_id = request_id
-    if _api_token() and request.url.path not in {"/api/v1/health", "/api/v1/ready"}:
+    if _api_token() and request.url.path not in {"/api/v1/health", "/api/v1/ready", "/api/v1/readiness"}:
         if request.headers.get("Authorization", "") != f"Bearer {_api_token()}":
             return JSONResponse(status_code=401, content={"error": {"code": "UNAUTHORIZED", "message": "Authentication required", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
     response = await call_next(request)
@@ -140,8 +140,7 @@ def health(request: Request):
     return {"status": "ok", "data": {"status": "OK", "service": "ai-content-factory-backend", "version": app.version}, "requestId": request.state.request_id}
 
 
-@app.get("/api/v1/ready", tags=["system"])
-def readiness(request: Request):
+def _readiness_response(request: Request):
     try:
         repositories.store.connection.execute("SELECT 1").fetchone()
         return {"status": "ready", "data": {"status": "READY", "service": "ai-content-factory-backend", "version": app.version}, "requestId": request.state.request_id}
@@ -150,16 +149,11 @@ def readiness(request: Request):
         return JSONResponse(status_code=503, content={"error": {"code": "RESOURCE_UNAVAILABLE", "message": "Required dependencies are not ready", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
 
 
-@app.get("/api/v1/worker/status", tags=["system"])
-def worker_status(request: Request):
-    return {"data": {"workerId": worker_loop.worker_id, "running": worker_loop.running, "autostart": _worker_autostart_enabled(), "iterations": worker_loop.iterations, "lastError": worker_loop.last_error}, "requestId": request.state.request_id}
+@app.get("/api/v1/ready", tags=["system"])
+def readiness(request: Request):
+    return _readiness_response(request)
 
 
-@app.get("/api/v1/scheduler/status", tags=["scheduling"])
-def scheduler_status(request: Request):
-    return {"data": {"running": scheduler_loop.running, "autostart": _scheduler_autostart_enabled(), "ticks": scheduler_loop.ticks, "lastError": scheduler_loop.last_error}, "requestId": request.state.request_id}
-
-
-@app.get("/api/v1/readiness", include_in_schema=False)
-def readiness_alias(request: Request):
-    return readiness(request)
+@app.get("/api/v1/readiness", tags=["system"])
+def readiness_compat(request: Request):
+    return _readiness_response(request)
