@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import os
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ...domain.jobs import JobInput, JobType
@@ -53,7 +51,6 @@ class GenerateImageRequest(BaseModel):
     outputFormat: str = "png"
 
 
-
 def build_router(runtime: OrchestratorRuntime) -> APIRouter:
     router = APIRouter(prefix="/api/v1/shots", tags=["shots"])
     links = SQLiteShotCompositionRepository(runtime.repositories.store)
@@ -95,48 +92,58 @@ def build_router(runtime: OrchestratorRuntime) -> APIRouter:
     @router.post("/compose")
     def compose(body: ComposeShotRequest, request: Request):
         selected, location, result, continuity = _compose(body)
-        return {
-            "data": {
-                "prompt": result["prompt"], "negativePrompt": result["negative_prompt"], "continuityHash": continuity,
-                "characters": [{"id": c.id, "name": c.name} for c, _ in selected],
-                "location": {"id": location.id, "name": location.name} if location else None,
-            },
-            "requestId": request.state.request_id,
-        }
+        return {"data": {"prompt": result["prompt"], "negativePrompt": result["negative_prompt"], "continuityHash": continuity,
+                          "characters": [{"id": c.id, "name": c.name} for c, _ in selected],
+                          "location": {"id": location.id, "name": location.name} if location else None},
+                "requestId": request.state.request_id}
 
     @router.post("/{shot_id}/compose")
     def compose_existing(shot_id: str, body: ComposeShotRequest, request: Request):
-        shot = runtime.repositories.shots.get(shot_id)
-        if shot is None:
+        if runtime.repositories.shots.get(shot_id) is None:
             raise HTTPException(404, "SHOT_NOT_FOUND")
         selected, location, result, continuity = _compose(body)
-        links.replace_characters([
-            ShotCharacterLink(
-                id=f"shotchar_{uuid.uuid4().hex}", shot_id=shot_id, character_id=character.id,
-                position_order=item.positionOrder, action=item.action, emotion=item.emotion, dialogue=item.dialogue,
-                pose=item.pose, expression_override=item.expressionOverride, is_speaking=bool(item.dialogue),
-            ) for character, item in selected
-        ])
+        links.replace_characters([ShotCharacterLink(
+            id=f"shotchar_{uuid.uuid4().hex}", shot_id=shot_id, character_id=character.id,
+            position_order=item.positionOrder, action=item.action, emotion=item.emotion, dialogue=item.dialogue,
+            pose=item.pose, expression_override=item.expressionOverride, is_speaking=bool(item.dialogue),
+        ) for character, item in selected])
         if location:
             links.set_location(shot_id, location.id)
         style = body.visualStyle or (selected[0][0].visual_style if selected else {})
-        links.update_generation(shot_id, prompt=result["prompt"], negative_prompt=result["negative_prompt"],
-                               status="pending", error="", continuity_hash=continuity, camera_angle=body.cameraAngle,
-                               mood=body.mood, visual_style=style)
-        return {"data": {"shotId": shot_id, "prompt": result["prompt"], "negativePrompt": result["negative_prompt"], "continuityHash": continuity}, "requestId": request.state.request_id}
+        links.update_generation(shot_id, prompt=result["prompt"], negative_prompt=result["negative_prompt"], status="pending", error="",
+                                continuity_hash=continuity, camera_angle=body.cameraAngle, mood=body.mood, visual_style=style)
+        return {"data": {"shotId": shot_id, "prompt": result["prompt"], "negativePrompt": result["negative_prompt"], "continuityHash": continuity},
+                "requestId": request.state.request_id}
+
+    @router.get("/{shot_id}")
+    def get_shot(shot_id: str, request: Request):
+        shot = runtime.repositories.shots.get(shot_id)
+        if shot is None:
+            raise HTTPException(404, "SHOT_NOT_FOUND")
+        row = runtime.repositories.store._get("shots", shot_id)
+        image_jobs = [job for job in runtime.repositories.jobs.list(limit=200) if job.type is JobType.IMAGE and job.target_type == "shot" and job.target_id == shot_id]
+        latest = image_jobs[0] if image_jobs else None
+        return {"data": {
+            "id": shot.id, "sceneId": shot.scene_id, "orderIndex": shot.order_index, "prompt": row["prompt"] if row else shot.prompt,
+            "negativePrompt": row["generated_negative_prompt"] if row else None, "cameraAngle": row["camera_angle"] if row else "medium",
+            "mood": row["mood"] if row else None, "generationStatus": row["generation_status"] if row else "pending",
+            "continuityHash": row["continuity_hash"] if row else None,
+            "imageAssetIds": latest.output.asset_ids if latest and latest.output else [],
+            "imageJobId": latest.id if latest else None,
+            "imageJobStatus": latest.status.value if latest else None,
+            "characters": [{"characterId": link.character_id, "action": link.action, "emotion": link.emotion, "dialogue": link.dialogue} for link in links.list_characters(shot_id)],
+        }, "requestId": request.state.request_id}
 
     @router.post("/{shot_id}/attach-characters")
     def attach_characters(shot_id: str, body: AttachCharactersRequest, request: Request):
         if runtime.repositories.shots.get(shot_id) is None:
             raise HTTPException(404, "SHOT_NOT_FOUND")
         selected = _characters(body.characters)
-        links.replace_characters([
-            ShotCharacterLink(
-                id=f"shotchar_{uuid.uuid4().hex}", shot_id=shot_id, character_id=character.id,
-                position_order=item.positionOrder, action=item.action, emotion=item.emotion, dialogue=item.dialogue,
-                pose=item.pose, expression_override=item.expressionOverride, is_speaking=bool(item.dialogue),
-            ) for character, item in selected
-        ])
+        links.replace_characters([ShotCharacterLink(
+            id=f"shotchar_{uuid.uuid4().hex}", shot_id=shot_id, character_id=character.id,
+            position_order=item.positionOrder, action=item.action, emotion=item.emotion, dialogue=item.dialogue,
+            pose=item.pose, expression_override=item.expressionOverride, is_speaking=bool(item.dialogue),
+        ) for character, item in selected])
         return {"data": {"shotId": shot_id, "attached": len(selected)}, "requestId": request.state.request_id}
 
     @router.put("/{shot_id}/location")
@@ -176,9 +183,8 @@ def build_router(runtime: OrchestratorRuntime) -> APIRouter:
         ).fetchone()
         if project_id is None:
             raise HTTPException(422, "SHOT_PROJECT_NOT_RESOLVED")
-        project = project_id[0]
         model = os.getenv("AICF_IMAGE_MODEL", "gpt-image-2")
-        job = jobs.create(project_id=project, job_type=JobType.IMAGE, target_type="shot", target_id=shot_id,
+        job = jobs.create(project_id=project_id[0], job_type=JobType.IMAGE, target_type="shot", target_id=shot_id,
                           priority=50, provider="openai", model=model,
                           input=JobInput(parameters={"prompt": prompt, "size": body.size, "output_format": body.outputFormat, **({"quality": body.quality} if body.quality else {})}))
         runtime.queue.enqueue(job)
@@ -187,8 +193,7 @@ def build_router(runtime: OrchestratorRuntime) -> APIRouter:
 
     @router.post("/{shot_id}/generate-voice", status_code=202)
     def generate_voice(shot_id: str, request: Request):
-        shot = runtime.repositories.shots.get(shot_id)
-        if shot is None:
+        if runtime.repositories.shots.get(shot_id) is None:
             raise HTTPException(404, "SHOT_NOT_FOUND")
         row = runtime.repositories.store.connection.execute("SELECT project_id FROM episodes e JOIN scenes s ON s.episode_id=e.id JOIN shots sh ON sh.scene_id=s.id WHERE sh.id=?", (shot_id,)).fetchone()
         if row is None:
