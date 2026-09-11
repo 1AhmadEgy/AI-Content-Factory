@@ -85,6 +85,9 @@ class OrchestratorRuntime:
         self.library_seed = ensure_egypt_library(repositories)
         self.libya_library_seed = ensure_libya_library(repositories)
 
+    def context_snapshot(self, project_id: str) -> dict:
+        return self.series_bible.snapshot(project_id)
+
     def _on_job_completed(self, job: GenerationJob) -> None:
         """Persist provider outputs and materialize every completed generation in the bible."""
         if job.status is JobStatus.COMPLETED and job.output and job.output.asset_ids:
@@ -103,6 +106,8 @@ class OrchestratorRuntime:
             }
             try:
                 self.series_bible.record_job(job.project_id, event)
+                for asset_id in event["assetIds"]:
+                    self.series_bible.record_asset(job.project_id, asset_id, {"jobId": job.id, "type": job.type.value, "targetType": job.target_type, "targetId": job.target_id, "status": job.status.value})
             except Exception:
                 logger.exception("Failed to materialize job %s in series bible", job.id)
             try:
