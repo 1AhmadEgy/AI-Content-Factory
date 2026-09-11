@@ -2,6 +2,7 @@ name: Build & Release APK
 
 on:
   push:
+    branches: ['main']
     tags: ['v*']
   workflow_dispatch:
 
@@ -10,6 +11,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install media build tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg librsvg2-bin
+
+      - name: Build Afham Wadhak branding assets
+        run: bash scripts/build_afham_wadhak_assets.sh
 
       - uses: actions/setup-python@v5
         with:
@@ -21,10 +28,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run tests
+      - name: Run backend tests
         run: |
           cd backend
-          python -m pytest tests/ -v
+          PYTHONPATH=. python -m pytest tests/ -v
+
+      - name: Build backend Docker image
+        run: docker build -t ai-content-factory-backend:latest ./backend
+
+      - name: Upload branding assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: afham-wadhak-branding-assets
+          path: assets/branding/afham_wadhak/
+          retention-days: 30
 
   build-apk:
     needs: test-backend
