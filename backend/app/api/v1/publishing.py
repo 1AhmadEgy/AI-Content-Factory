@@ -31,7 +31,7 @@ def _fingerprint(body: PublishRequest) -> str:
 
 def build_router(runtime: OrchestratorRuntime, jobs: SQLiteJobRepository) -> APIRouter:
     router = APIRouter(prefix="/api/v1/publish", tags=["publishing"])
-    service = JobService(jobs)
+    service = JobService(jobs, context_provider=runtime.context_snapshot)
 
     @router.get("/providers")
     def providers(request: Request) -> dict[str, Any]:
@@ -55,7 +55,7 @@ def build_router(runtime: OrchestratorRuntime, jobs: SQLiteJobRepository) -> API
             job = jobs.get(existing["resource_id"])
             if job is None:
                 raise HTTPException(status_code=409, detail="IDEMPOTENCY_RESOURCE_MISSING")
-            return {"data": {"jobId": job.id, "status": job.status.value}, "requestId": request.state.request_id, "idempotentReplay": True}
+            return {"data": {"jobId": job.id, "status": job.status.value, "contextVersion": job.input.parameters.get("contextVersion", 0)}, "requestId": request.state.request_id, "idempotentReplay": True}
         job = service.create(
             project_id=body.projectId,
             job_type=JobType.PUBLISH,
@@ -72,14 +72,14 @@ def build_router(runtime: OrchestratorRuntime, jobs: SQLiteJobRepository) -> API
         if not jobs.store.claim_idempotency(idempotency_key, operation, fingerprint, job.id):
             raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
         runtime.queue.enqueue(job)
-        return {"data": {"jobId": job.id, "status": job.status.value}, "requestId": request.state.request_id}
+        return {"data": {"jobId": job.id, "status": job.status.value, "contextVersion": job.input.parameters.get("contextVersion", 0)}, "requestId": request.state.request_id}
 
     @router.get("/{publish_job_id}")
     def get_publish(publish_job_id: str, request: Request) -> dict[str, Any]:
         job = jobs.get(publish_job_id)
         if job is None or job.type is not JobType.PUBLISH:
             raise HTTPException(status_code=404, detail="PUBLISH_JOB_NOT_FOUND")
-        return {"data": {"jobId": job.id, "status": job.status.value, "progress": job.progress, "output": job.output.asset_ids if job.output else None, "error": job.error_code}, "requestId": request.state.request_id}
+        return {"data": {"jobId": job.id, "status": job.status.value, "progress": job.progress, "output": job.output.asset_ids if job.output else None, "error": job.error_code, "contextVersion": job.input.parameters.get("contextVersion", 0)}, "requestId": request.state.request_id}
 
     @router.post("/{publish_job_id}/cancel")
     def cancel_publish(publish_job_id: str, request: Request) -> dict[str, Any]:
