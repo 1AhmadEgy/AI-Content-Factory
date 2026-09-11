@@ -26,6 +26,7 @@ from .api.v1.qc import build_router as build_qc_router
 from .api.v1.render import build_router as build_render_router
 from .api.v1.scheduling import build_router as build_scheduling_router
 from .api.v1.series import build_router as build_series_router
+from .api.v1.series_bible import build_router as build_series_bible_router
 from .api.v1.shots import build_router as build_shots_router
 from .api.v1.system import build_router as build_system_router
 from .api.v1.translations import build_router as build_translation_router
@@ -34,7 +35,6 @@ from .infrastructure.sqlite import SQLiteJobRepository, SQLiteProjectRepository,
 from .orchestrator.job_service import JobService
 from .orchestrator.runtime import OrchestratorRuntime
 from .orchestrator.worker_loop import WorkerLoop
-from .services.project_context import ProjectContextStore
 from .scheduling.loop import SchedulerLoop
 from .scheduling.persistent import PersistentScheduler, SQLiteScheduleRepository
 
@@ -71,6 +71,7 @@ def _enqueue_scheduled(schedule):
     payload = schedule.payload
     job_type = JobType(payload.get("type", schedule.operation).upper())
     job = job_service.create(project_id=schedule.project_id, job_type=job_type, target_type=payload.get("targetType", "scheduled"), target_id=payload.get("targetId"), parent_job_id=payload.get("parentJobId"), priority=int(payload.get("priority", 100)), max_attempts=int(payload.get("maxAttempts", 3)), provider=payload.get("provider"), model=payload.get("model"), input=JobInput(parameters=payload.get("parameters", payload), reference_asset_ids=payload.get("referenceAssetIds", []), constraints=payload.get("constraints", {}), seed=payload.get("seed"), deterministic=bool(payload.get("deterministic", False))))
+    orchestrator_runtime.context.append_event(schedule.project_id, "job.queued", {"jobId": job.id, "type": job.type.value, "targetType": job.target_type, "targetId": job.target_id}, entity_type="job", entity_id=job.id)
     orchestrator_runtime.queue.enqueue(job)
     return job
 
@@ -140,6 +141,7 @@ app.include_router(pipeline_router)
 app.include_router(build_shots_router(orchestrator_runtime))
 app.include_router(build_episode_router(orchestrator_runtime))
 app.include_router(build_context_router(project_repository, context_store))
+app.include_router(build_series_bible_router(orchestrator_runtime))
 
 
 @app.get("/api/v1/health", tags=["system"])
