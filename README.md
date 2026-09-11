@@ -1,32 +1,25 @@
 # 🤖 AI Content Factory
 
-AI Content Factory هو نظام لإنتاج المحتوى بشكل آلي، يبدأ من الفكرة أو القصة، ثم يحولها إلى مشاريع وحلقات ومشاهد ولقطات وأصول صوتية وبصرية، مع تنفيذ عمليات QC واختيار أفضل Take وتجميع الناتج النهائي.
+AI Content Factory هو نظام إنتاج محتوى آلي يبدأ من الفكرة أو القصة، ثم يحولها إلى مشاريع وحلقات ومشاهد ولقطات وأصول صوتية وبصرية، مع QC واختيار أفضل Take وتجميع الناتج النهائي.
+
+**مهم:** مسار الإنتاج لم يعد يعتمد على بيانات تجريبية أو ملفات Media وهمية. التوليد الإنتاجي يتطلب مزود AI حقيقي، والرندر الإنتاجي يتم بواسطة FFmpeg/FFprobe.
 
 ---
 
-## 📱 تحميل التطبيق
+## 🚀 التشغيل الإنتاجي
 
-### ⬇️ تحميل APK مباشرة
+1. انسخ `.env.example` إلى `.env`.
+2. ضع `OPENAI_API_KEY` في بيئة الخادم فقط.
+3. اضبط النماذج عبر `AICF_TEXT_MODEL` و`AICF_IMAGE_MODEL` و`AICF_TTS_MODEL` عند الحاجة.
+4. ثبّت FFmpeg وFFprobe.
+5. شغّل الـBackend.
+6. استخدم تطبيق Android كواجهة تحكم؛ لا يقوم بإنشاء بيانات Demo تلقائيًا.
 
-[![📱 تحميل APK](https://img.shields.io/badge/📱_تحميل_APK-تحميل_مباشر-success?style=for-the-badge)](https://github.com/1AhmadEgy/AI-Content-Factory/releases/latest/download/AI-Content-Factory.apk)
+التفاصيل الكاملة في `PRODUCTION_PROVIDER_SETUP.md`.
 
-> اضغط على الزر وسيبدأ تحميل أحدث ملف APK مباشرة.
+إذا لم توجد بيانات اعتماد المزود، لا يتم إنشاء ناتج وهمي؛ يفشل الطلب بوضوح بدل الادعاء بأنه اكتمل.
 
 ---
-
-## 🚀 آخر إصدار
-
-يتم إنشاء APK تلقائيًا بواسطة GitHub Actions عند تحديث فرع `main`.
-
-اسم الملف:
-
-```text
-AI-Content-Factory.apk
-```
-
-رابط التحميل المباشر:
-
-https://github.com/1AhmadEgy/AI-Content-Factory/releases/latest/download/AI-Content-Factory.apk
 
 ## 🏗️ Architecture
 
@@ -37,19 +30,14 @@ Android App
      ▼
   FastAPI
      │
-     ├── Jobs
-     ├── Projects
-     ├── Assets
-     ├── Pipeline
-     ├── Scheduler
-     ├── Workers
+     ├── Projects / Series / Episodes
+     ├── Durable Jobs + Queue
+     ├── Real AI Providers
+     ├── Assets + Provenance
+     ├── QC + Best Take
+     ├── Timeline
+     ├── FFmpeg / FFprobe
      └── Publishing
-            │
-            ▼
-       Media Engine
-            │
-            ▼
-       FFmpeg / QC
             │
             ▼
         Final MP4
@@ -57,16 +45,7 @@ Android App
 
 ## 📱 Android
 
-التطبيق مبني باستخدام:
-
-- Kotlin
-- Jetpack Compose
-- Android Gradle Plugin
-- Room
-- Retrofit
-- OkHttp
-- Kotlin Coroutines
-- Material 3
+التطبيق مبني باستخدام Kotlin وJetpack Compose وRoom وRetrofit وOkHttp وCoroutines وMaterial 3.
 
 ### متطلبات البناء
 
@@ -76,73 +55,30 @@ Android App
 
 ## ⚙️ GitHub Actions
 
-يتم بناء APK تلقائيًا عند:
-
-```text
-push → main
-```
-
-ويمكن تشغيل البناء يدويًا من:
-
-```text
-GitHub
-→ Actions
-→ Build Android APK
-→ Run workflow
-```
-
-بعد نجاح البناء يتم:
-
-1. إنشاء APK.
-2. تسميته `AI-Content-Factory.apk`.
-3. رفعه كـ GitHub Actions Artifact.
-4. إنشاء/تحديث Release باسم `latest`.
-5. توفير رابط تحميل مباشر من README.
+يتم بناء APK تلقائيًا عند تحديث `main`، ويمكن تشغيل البناء يدويًا من GitHub Actions.
 
 ## 📦 Backend
 
-الـBackend مبني باستخدام FastAPI ويوفر API لإدارة:
-
-- Projects
-- Jobs
-- Assets
-- Batches
-- Scheduling
-- Rendering
-- Quality Control
-- Publishing
-- Media Processing
+الـBackend مبني باستخدام FastAPI ويوفر API لإدارة Projects وJobs وAssets وScheduling وRendering وQC وPublishing وMedia Processing.
 
 ## 🧪 الاختبارات
 
-قبل اعتبار المشروع جاهزًا للإنتاج، يوصى بتشغيل:
-
 ```bash
 ./gradlew test
+cd backend
+pytest
 ```
 
-وبناء التطبيق:
+وبناء Android:
 
 ```bash
 ./gradlew :app:assembleDebug
 ```
 
-## 🔐 ملاحظات الأمان
+## 🔐 الأمان
 
-لا تضع داخل Git:
-
-- API Keys
-- Passwords
-- Keystores
-- Firebase credentials
-- Production secrets
-
-استخدم GitHub Secrets عند الحاجة.
+لا تضع داخل Git أي API Keys أو كلمات مرور أو Keystores أو بيانات اعتماد الإنتاج. استخدم متغيرات البيئة وGitHub Secrets.
 
 ## 📄 الترخيص
 
 راجع إعدادات الترخيص في المستودع قبل التوزيع التجاري.
-
-## 🔗 Repository
-
-urlGitHub Repositoryhttps://github.com/1AhmadEgy/AI-Content-Factory
