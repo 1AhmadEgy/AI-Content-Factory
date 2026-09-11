@@ -87,3 +87,9 @@ class LanguagePackWorker(Worker):
             {"bytes": size, "languageCount": len(variants), "sourceFingerprint": source_hash},
             f"{self.worker_type}-{job.id}",
         )
+
+    def cancel(self, job_id: str) -> None:
+        return None
+
+    def shutdown(self) -> None:
+        self._initialized = False
