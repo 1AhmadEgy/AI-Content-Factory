@@ -72,8 +72,8 @@ class QualityControlWorker(Worker):
         )
         self.assets.create(report_asset)
         if not passed:
-            return JobExecutionResult(False, asset_ids=[report_id], metrics={"score": score, "passed": 0.0}, provider_run_id=f"qc-{job.id}", error_code="QC_FAILED", error_message=f"Technical QC failed with score {score}", retryable=False)
-        return JobExecutionResult(success=True, asset_ids=[report_id], metrics={"score": score, "passed": 1.0}, provider_run_id=f"qc-{job.id}")
+            return JobExecutionResult(False, asset_ids=[report_id], metrics={"score": score, "passed": 0.0}, error_code="QC_FAILED", error_message=f"Technical QC failed with score {score}", retryable=False)
+        return JobExecutionResult(success=True, asset_ids=[report_id], metrics={"score": score, "passed": 1.0})
 
     def cancel(self, job_id: str) -> None:
         return None
