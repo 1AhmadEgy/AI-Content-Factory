@@ -14,7 +14,7 @@ from ..publishing.adapters import AdapterRegistry, PublishRequest
 
 
 class PublishWorker(Worker):
-    """Prepare provider-neutral publication packages through platform adapters."""
+    """Publish only through concrete adapters that return an external id."""
 
     worker_type = "publish"
 
@@ -51,7 +51,7 @@ class PublishWorker(Worker):
         if not Path(asset.path).is_file():
             return JobExecutionResult(False, error_code="PUBLISH_ASSET_MISSING", error_message=asset.path, retryable=True)
 
-        raw_platforms = job.input.parameters.get("platforms", ["youtube", "tiktok", "instagram", "facebook"])
+        raw_platforms = job.input.parameters.get("platforms", [])
         if not isinstance(raw_platforms, (list, tuple)):
             return JobExecutionResult(False, error_code="PUBLISH_PLATFORMS_INVALID", error_message="platforms must be a list")
         platforms = list(dict.fromkeys(str(platform).lower().strip() for platform in raw_platforms if str(platform).strip()))
@@ -74,50 +74,34 @@ class PublishWorker(Worker):
                 adapter = self.adapters.get(platform)
             except KeyError:
                 failures.append(platform)
-                packages.append({"platform": platform, "adapter": None, "status": "FAILED", "error": "PUBLISH_ADAPTER_NOT_FOUND", "payload": {}})
+                packages.append({"platform": platform, "adapter": None, "status": "FAILED", "error": "PUBLISH_ADAPTER_NOT_FOUND", "externalId": None, "payload": {}})
                 continue
-            request = PublishRequest(
-                asset_path=asset.path,
-                title=title,
-                description=description,
-                scheduled_at=str(scheduled_at) if scheduled_at else None,
-                metadata={"tags": ",".join(tags), "language": str(job.input.parameters.get("language", "en"))},
-            )
+            request = PublishRequest(asset_path=asset.path, title=title, description=description, scheduled_at=str(scheduled_at) if scheduled_at else None, metadata={"tags": ",".join(tags), "language": str(job.input.parameters.get("language", "en"))})
             errors = adapter.validate(request)
             if errors:
                 failures.append(platform)
-                packages.append({"platform": platform, "adapter": adapter.name, "status": "FAILED", "error": ";".join(errors), "payload": {}})
+                packages.append({"platform": platform, "adapter": adapter.name, "status": "FAILED", "error": ";".join(errors), "externalId": None, "payload": {}})
                 continue
             prepared = adapter.schedule(request) if scheduled_at else adapter.publish(request)
             status = prepared.status
-            if status == "FAILED":
+            if status not in {"PUBLISHED", "SCHEDULED"} or not prepared.external_id:
                 failures.append(platform)
-            packages.append({"platform": platform, "adapter": adapter.name, "status": status, "error": prepared.error, "payload": dict(prepared.payload or {})})
-            context.report_progress((index + 1) / len(platforms), f"publish:{platform}:prepared")
+                error = prepared.error or "PUBLISH_EXTERNAL_ID_REQUIRED"
+                status = "FAILED"
+            else:
+                error = None
+            packages.append({"platform": platform, "adapter": adapter.name, "status": status, "externalId": prepared.external_id, "error": error, "payload": dict(prepared.payload or {})})
+            context.report_progress((index + 1) / len(platforms), f"publish:{platform}:complete")
 
-        package_status = "FAILED" if len(failures) == len(platforms) else ("PARTIAL" if failures else "READY_FOR_EXTERNAL_PUBLISH")
-        package = {
-            "jobId": job.id,
-            "projectId": job.project_id,
-            "assetIds": list(job.input.reference_asset_ids),
-            "sourceAssetId": asset.id,
-            "platforms": packages,
-            "title": title,
-            "description": description,
-            "tags": tags,
-            "scheduledAt": scheduled_at,
-            "status": package_status,
-        }
+        package_status = "FAILED" if len(failures) == len(platforms) else ("PARTIAL" if failures else "PUBLISHED")
+        package = {"jobId": job.id, "projectId": job.project_id, "assetIds": list(job.input.reference_asset_ids), "sourceAssetId": asset.id, "platforms": packages, "title": title, "description": description, "tags": tags, "scheduledAt": scheduled_at, "status": package_status}
         payload = (json.dumps(package, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
         digest, path, size = self.storage.put_bytes(payload)
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"publish:{job.id}:{digest}"))
-        self.assets.create(Asset(
-            asset_id, job.project_id, AssetType.DOCUMENT, path, "application/json; charset=utf-8", size, digest, AssetStatus.READY,
-            build_provenance(job, source_asset_ids=[asset.id], metadata={"publicationPackage": True, "adapterCount": len(platforms), "status": package_status, "failureCount": len(failures)}, license_status=LicenseStatus.VERIFIED),
-        ))
+        self.assets.create(Asset(asset_id, job.project_id, AssetType.DOCUMENT, path, "application/json; charset=utf-8", size, digest, AssetStatus.READY, build_provenance(job, source_asset_ids=[asset.id], metadata={"publicationPackage": True, "adapterCount": len(platforms), "status": package_status, "failureCount": len(failures)}, license_status=LicenseStatus.VERIFIED)))
         context.report_progress(1.0, "publish:complete")
         if failures:
-            return JobExecutionResult(False, [asset_id], {"platformCount": len(platforms), "failedPlatforms": failures, "status": package_status}, f"publish-{job.id}", error_code="PUBLISH_PREPARATION_FAILED", error_message=",".join(failures), retryable=False)
+            return JobExecutionResult(False, [asset_id], {"platformCount": len(platforms), "failedPlatforms": failures, "status": package_status}, f"publish-{job.id}", error_code="PUBLISH_FAILED", error_message=",".join(failures), retryable=False)
         return JobExecutionResult(True, [asset_id], {"platformCount": len(platforms), "status": package_status}, f"publish-{job.id}")
 
     def cancel(self, job_id: str) -> None:
