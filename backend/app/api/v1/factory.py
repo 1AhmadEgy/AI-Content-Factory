@@ -32,15 +32,7 @@ class StartFactoryRequest(BriefRequest):
 
 
 def _brief(request: BriefRequest) -> ContentBrief:
-    return ContentBrief(
-        topic=request.topic,
-        language=request.language,
-        duration_seconds=request.durationSeconds,
-        style=request.style,
-        audience=request.audience,
-        platform=request.platform,
-        aspect_ratio=request.aspectRatio,
-    )
+    return ContentBrief(topic=request.topic, language=request.language, duration_seconds=request.durationSeconds, style=request.style, audience=request.audience, platform=request.platform, aspect_ratio=request.aspectRatio)
 
 
 def _serialize_plan(plan: Any) -> dict[str, Any]:
@@ -55,17 +47,7 @@ def _serialize_plan(plan: Any) -> dict[str, Any]:
                 "durationSeconds": scene.duration_seconds,
                 "visual": scene.visual,
                 "narration": scene.narration,
-                "shots": [
-                    {
-                        "number": shot.number,
-                        "prompt": shot.prompt,
-                        "durationSeconds": shot.duration_seconds,
-                        "camera": shot.camera,
-                        "lighting": shot.lighting,
-                        "style": shot.style,
-                    }
-                    for shot in scene.shots
-                ],
+                "shots": [{"number": shot.number, "prompt": shot.prompt, "durationSeconds": shot.duration_seconds, "camera": shot.camera, "lighting": shot.lighting, "style": shot.style} for shot in scene.shots],
             }
             for scene in plan.scenes
         ],
@@ -73,92 +55,53 @@ def _serialize_plan(plan: Any) -> dict[str, Any]:
 
 
 def _fingerprint(request: StartFactoryRequest) -> str:
-    canonical = json.dumps(
-        request.model_dump(mode="json"),
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    )
+    canonical = json.dumps(request.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def build_router(
-    projects: SQLiteProjectRepository,
-    jobs: SQLiteJobRepository,
-    runtime: OrchestratorRuntime,
-) -> APIRouter:
+def _provider_error(exc: RuntimeError) -> HTTPException:
+    code = str(exc)
+    if code.startswith("AI_PROVIDER_NOT_CONFIGURED:"):
+        return HTTPException(status_code=503, detail=code)
+    raise exc
+
+
+def build_router(projects: SQLiteProjectRepository, jobs: SQLiteJobRepository, runtime: OrchestratorRuntime) -> APIRouter:
     job_service = JobService(jobs)
 
     @router.post("/plan")
     def plan_factory(request: BriefRequest, http_request: Request) -> dict[str, Any]:
-        plan = runtime.plan_content(_brief(request))
-        return {
-            "data": {"mode": "ai", "brief": request.model_dump(), "plan": _serialize_plan(plan)},
-            "requestId": http_request.state.request_id,
-        }
+        try:
+            plan = runtime.plan_content(_brief(request))
+        except RuntimeError as exc:
+            raise _provider_error(exc)
+        return {"data": {"mode": "ai", "brief": request.model_dump(), "plan": _serialize_plan(plan)}, "requestId": http_request.state.request_id}
 
     @router.post("/projects/{project_id}/start", status_code=status.HTTP_202_ACCEPTED)
-    def start_factory(
-        project_id: str,
-        request: StartFactoryRequest,
-        http_request: Request,
-        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    ) -> dict[str, Any]:
+    def start_factory(project_id: str, request: StartFactoryRequest, http_request: Request, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> dict[str, Any]:
         if projects.get(project_id) is None:
             raise HTTPException(status_code=404, detail="PROJECT_NOT_FOUND")
         if not idempotency_key:
             raise HTTPException(status_code=400, detail="IDEMPOTENCY_KEY_REQUIRED")
-
         operation = f"POST:/api/v1/factory/projects/{project_id}/start"
         fingerprint = _fingerprint(request)
         brief = _brief(request)
-        plan = runtime.plan_content(brief, request.model)
-        job_input = JobInput(
-            parameters={**request.model_dump(), "plan": _serialize_plan(plan)},
-            deterministic=request.model is None,
-        )
-        result = job_service.create_with_idempotency(
-            key=idempotency_key,
-            operation=operation,
-            fingerprint=fingerprint,
-            project_id=project_id,
-            job_type=JobType.STORY,
-            target_type="project",
-            target_id=project_id,
-            priority=100,
-            provider=request.provider or "mock",
-            model=request.model or "mock-deterministic",
-            input=job_input,
-        )
+        try:
+            plan = runtime.plan_content(brief, request.model)
+        except RuntimeError as exc:
+            raise _provider_error(exc)
+        job_input = JobInput(parameters={**request.model_dump(), "plan": _serialize_plan(plan)}, deterministic=False)
+        result = job_service.create_with_idempotency(key=idempotency_key, operation=operation, fingerprint=fingerprint, project_id=project_id, job_type=JobType.STORY, target_type="project", target_id=project_id, priority=100, provider=request.provider, model=request.model, input=job_input)
         if result.conflict:
             raise HTTPException(status_code=409, detail="IDEMPOTENCY_CONFLICT")
         if result.existing_resource_id:
             existing_job = jobs.get(result.existing_resource_id)
             if existing_job is None:
                 raise HTTPException(status_code=409, detail="IDEMPOTENCY_RESOURCE_MISSING")
-            return {
-                "data": {
-                    "projectId": project_id,
-                    "jobId": existing_job.id,
-                    "stage": existing_job.type.value,
-                    "status": existing_job.status.value,
-                },
-                "requestId": http_request.state.request_id,
-                "idempotentReplay": True,
-            }
+            return {"data": {"projectId": project_id, "jobId": existing_job.id, "stage": existing_job.type.value, "status": existing_job.status.value}, "requestId": http_request.state.request_id, "idempotentReplay": True}
         if result.job is None:
             raise HTTPException(status_code=500, detail="JOB_CREATION_FAILED")
-
         runtime.queue.enqueue(result.job)
-        return {
-            "data": {
-                "projectId": project_id,
-                "jobId": result.job.id,
-                "stage": "STORY",
-                "status": result.job.status.value,
-                "plan": _serialize_plan(plan),
-            },
-            "requestId": http_request.state.request_id,
-        }
+        return {"data": {"projectId": project_id, "jobId": result.job.id, "stage": "STORY", "status": result.job.status.value, "plan": _serialize_plan(plan)}, "requestId": http_request.state.request_id}
 
     return router
