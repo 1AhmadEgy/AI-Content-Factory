@@ -1,36 +1,10 @@
 from __future__ import annotations
 
-import hashlib
 import json
-import uuid
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from .contracts import ModelAdapter, ModelCapability, ProviderRequest, ProviderResponse
-
-
-class MockModelAdapter(ModelAdapter):
-    """Zero-cost deterministic adapter used for offline pipeline execution."""
-
-    def __init__(self, model_id: str = "mock-deterministic") -> None:
-        self.model_id = model_id
-
-    def capability(self) -> ModelCapability:
-        return ModelCapability(category="generation", capabilities=frozenset({"story", "script", "scene", "shot", "image", "video", "tts", "music", "sfx", "qc", "render"}), runtime="MOCK", license_status="OPEN")
-
-    def health_check(self) -> bool:
-        return True
-
-    def execute(self, request: ProviderRequest) -> ProviderResponse:
-        material = f"{self.model_id}|{request.model}|{request.seed}|{sorted(request.parameters.items())}"
-        digest = hashlib.sha256(material.encode("utf-8")).hexdigest()
-        mock_text = request.parameters.get("mock_text")
-        if mock_text is None and request.parameters.get("response_format") == "json":
-            mock_text = request.parameters.get("mock_json", "{}")
-        return ProviderResponse(success=True, output_text=mock_text, provider_run_id=f"mock-{uuid.uuid5(uuid.NAMESPACE_URL, digest)}", metrics={"deterministic": 1.0})
-
-    def cancel(self, provider_run_id: str) -> bool:
-        return provider_run_id.startswith("mock-")
 
 
 class LocalModelAdapter(ModelAdapter):
@@ -62,26 +36,6 @@ class LocalModelAdapter(ModelAdapter):
             return ProviderResponse(success=True, output_text=text, provider_run_id=str(data.get("id") or "local"), metrics={"local": 1.0})
         except (KeyError, IndexError, json.JSONDecodeError, OSError, URLError) as exc:
             return ProviderResponse(success=False, error_code="LOCAL_PROVIDER_ERROR", error_message=str(exc))
-
-    def cancel(self, provider_run_id: str) -> bool:
-        return False
-
-
-class CloudModelAdapter(ModelAdapter):
-    """Safe extension point for cloud providers; no hidden network calls in core."""
-
-    def __init__(self, provider_name: str, capabilities: frozenset[str] | None = None) -> None:
-        self.provider_name = provider_name
-        self._capabilities = capabilities or frozenset()
-
-    def capability(self) -> ModelCapability:
-        return ModelCapability(category="generation", capabilities=self._capabilities, runtime="CLOUD")
-
-    def health_check(self) -> bool:
-        return bool(self.provider_name)
-
-    def execute(self, request: ProviderRequest) -> ProviderResponse:
-        return ProviderResponse(success=False, error_code="CLOUD_ADAPTER_NOT_CONFIGURED", error_message=f"Configure adapter for {self.provider_name}")
 
     def cancel(self, provider_run_id: str) -> bool:
         return False
