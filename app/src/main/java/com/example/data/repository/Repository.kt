@@ -74,8 +74,8 @@ class Repository(private val dao: FactoryDao) {
                     type = "IMAGE",
                     targetType = "scene",
                     targetId = sceneId,
-                    provider = "openai",
-                    model = "gpt-image-2",
+                    provider = null,
+                    model = null,
                     input = JobInputRequest(
                         parameters = mapOf(
                             "prompt" to "${scene.description}. Location: ${scene.location}. Emotion: ${scene.emotion}. Create a production-ready cinematic frame with consistent character and environment identity.",
