@@ -6,7 +6,7 @@ from app.main import app
 client = TestClient(app)
 
 
-def test_pipeline_api_runs_golden_mock_flow():
+def test_pipeline_api_fails_closed_without_real_video():
     response = client.post(
         "/api/v1/pipeline/run",
         json={
@@ -22,6 +22,7 @@ def test_pipeline_api_runs_golden_mock_flow():
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["qcPassed"] is True
+    assert body["qcPassed"] is False
     assert body["bestAssetId"] == "a1"
-    assert body["renderedPath"].endswith("mock-render.mp4")
+    assert body["renderedPath"] is None
+    assert "TIMELINE_HAS_NO_VIDEO" in body["errors"]
