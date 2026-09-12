@@ -10,24 +10,37 @@ def build_provenance(
     source_asset_ids: list[str] | None = None,
     metadata: dict[str, object] | None = None,
     license_status: LicenseStatus = LicenseStatus.UNKNOWN,
+    provider: str | None = None,
+    model: str | None = None,
 ) -> AssetProvenance:
-    """Build a normalized provenance record for every produced asset."""
-    if not job.provider:
+    """Build a normalized provenance record for every produced asset.
+
+    Provider-backed workers should pass the resolved provider/model explicitly so
+    provenance reflects the adapter that actually produced the asset. Internal
+    deterministic workers may identify themselves explicitly (for example,
+    ``provider="internal"``) rather than fabricating an external AI provider.
+    """
+    resolved_provider = provider or getattr(job, "provider", None)
+    resolved_model = model if model is not None else getattr(job, "model", None)
+    if not resolved_provider:
         raise ValueError("PROVENANCE_PROVIDER_REQUIRED")
+
+    input_data = job.input
+    parameters = input_data.parameters
     return AssetProvenance(
-        provider=job.provider,
-        model=job.model,
-        prompt=str(job.input.parameters.get("prompt", "")) or None,
-        negative_prompt=str(job.input.parameters.get("negativePrompt", "")) or None,
-        seed=job.input.seed,
-        source_asset_ids=list(source_asset_ids or job.input.reference_asset_ids),
+        provider=resolved_provider,
+        model=resolved_model,
+        prompt=str(parameters.get("prompt", "")) or None,
+        negative_prompt=str(parameters.get("negativePrompt", "")) or None,
+        seed=input_data.seed,
+        source_asset_ids=list(source_asset_ids or input_data.reference_asset_ids),
         job_id=job.id,
         license_status=license_status,
         metadata={
             "jobType": job.type.value,
             "targetType": job.target_type,
             "targetId": job.target_id,
-            "parentJobId": job.parent_job_id,
+            "parentJobId": getattr(job, "parent_job_id", None),
             **(metadata or {}),
         },
     )
