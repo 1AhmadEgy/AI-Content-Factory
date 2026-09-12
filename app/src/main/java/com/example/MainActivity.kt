@@ -36,10 +36,20 @@ class MainActivity : ComponentActivity() {
 fun MainScreen() {
     val navController = rememberNavController()
     val viewModel: FactoryViewModel = viewModel()
+    val error by viewModel.error.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
+    LaunchedEffect(error) {
+        error?.let {
+            snackbarHostState.showSnackbar(message = it, duration = SnackbarDuration.Long)
+            viewModel.clearError()
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             NavigationBar(containerColor = DarkBlue) {
                 NavigationBarItem(
