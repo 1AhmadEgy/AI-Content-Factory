@@ -60,7 +60,7 @@ def test_executor_persists_success_and_emits_events():
     assert result.status is JobStatus.COMPLETED
     assert jobs.job.output == JobOutput(["asset-1"], {"score": 1.0}, "run-1")
     assert queue.acknowledged == [JobStatus.COMPLETED]
-    assert [event.event_type for event in events] == ["JOB_STARTED", "JOB_PROGRESS", "JOB_COMPLETED"]
+    assert [event.event_type for event in events] == ["JOB_STARTED", "JOB_PROGRESS", "JOB_PROGRESS", "JOB_COMPLETED"]
 
 
 def test_executor_retries_retryable_failure_until_limit():
