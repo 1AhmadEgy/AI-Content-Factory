@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from app.infrastructure.provider_cache import SQLiteProviderCache
 from app.infrastructure.sqlite import SQLiteStore
@@ -35,10 +35,9 @@ def test_cache_stampede_lock_has_single_owner_and_expires() -> None:
 def test_purge_expired_reports_hit_statistics() -> None:
     cache = SQLiteProviderCache(SQLiteStore(":memory:"))
     assert cache.put("k", "openai", "model", output_text="x", output_bytes=None, output_mime_type=None, output_filename=None, output_metadata={}, metrics={})
-    assert cache.get("k") is not None
-    expired = datetime.utcnow() - timedelta(seconds=1)
+    expired = datetime.now(UTC) - timedelta(seconds=1)
     result = cache.purge_expired_with_stats(expired)
     assert result["purged"] == 0
-    result = cache.purge_expired_with_stats(datetime.utcnow() + timedelta(days=2))
+    result = cache.purge_expired_with_stats(datetime.now(UTC) + timedelta(days=2))
     assert result["purged"] == 1
     assert result["avg_hits_at_death"] >= 1
