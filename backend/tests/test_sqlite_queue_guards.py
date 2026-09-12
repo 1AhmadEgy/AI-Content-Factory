@@ -2,11 +2,11 @@ from datetime import timedelta
 
 import pytest
 
-from backend.app.domain.jobs import GenerationJob, JobStatus, JobType, utc_now
-from backend.app.domain.projects import Project
-from backend.app.infrastructure.sqlite import SQLiteRepositories
-from backend.app.infrastructure.sqlite_queue import SQLiteJobQueue
-from backend.app.orchestrator.queue import JobLease
+from app.domain.jobs import GenerationJob, JobStatus, JobType, utc_now
+from app.domain.projects import Project
+from app.infrastructure.sqlite import SQLiteRepositories
+from app.infrastructure.sqlite_queue import SQLiteJobQueue
+from app.orchestrator.queue import JobLease
 
 
 def _job(job_id: str, *, max_attempts: int = 3) -> GenerationJob:

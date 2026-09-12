@@ -1,8 +1,8 @@
-from backend.app.domain.jobs import JobInput, JobType
-from backend.app.domain.projects import Project
-from backend.app.orchestrator.job_service import JobService
-from backend.app.orchestrator.runtime import OrchestratorRuntime
-from backend.app.infrastructure.sqlite import SQLiteRepositories
+from app.domain.jobs import JobInput, JobType
+from app.domain.projects import Project
+from app.orchestrator.job_service import JobService
+from app.orchestrator.runtime import OrchestratorRuntime
+from app.infrastructure.sqlite import SQLiteRepositories
 
 
 def test_runtime_executes_queued_job_and_persists_events(tmp_path):

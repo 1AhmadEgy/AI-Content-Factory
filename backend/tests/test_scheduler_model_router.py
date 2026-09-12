@@ -1,5 +1,5 @@
-from backend.app.orchestrator.model_router import ModelRoute, ModelRouter
-from backend.app.orchestrator.scheduler import JobScheduler
+from app.orchestrator.model_router import ModelRoute, ModelRouter
+from app.orchestrator.scheduler import JobScheduler
 
 
 def test_model_router_prefers_lowest_priority():

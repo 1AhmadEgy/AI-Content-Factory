@@ -4,8 +4,8 @@ import multiprocessing as mp
 import time
 from pathlib import Path
 
-from backend.app.infrastructure.resilience import SQLiteCircuitBreaker
-from backend.app.infrastructure.sqlite import SQLiteStore
+from app.infrastructure.resilience import SQLiteCircuitBreaker
+from app.infrastructure.sqlite import SQLiteStore
 
 
 def _attempt(db_path: str, name: str, result_queue) -> None:

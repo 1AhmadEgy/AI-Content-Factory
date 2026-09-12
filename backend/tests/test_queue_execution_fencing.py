@@ -1,9 +1,9 @@
 from datetime import timedelta
 
-from backend.app.domain.jobs import GenerationJob, JobStatus, JobType, utc_now
-from backend.app.domain.projects import Project
-from backend.app.infrastructure.sqlite import SQLiteRepositories
-from backend.app.infrastructure.sqlite_queue import SQLiteJobQueue
+from app.domain.jobs import GenerationJob, JobStatus, JobType, utc_now
+from app.domain.projects import Project
+from app.infrastructure.sqlite import SQLiteRepositories
+from app.infrastructure.sqlite_queue import SQLiteJobQueue
 
 
 def _job(job_id: str) -> GenerationJob:

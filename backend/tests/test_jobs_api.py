@@ -4,7 +4,7 @@ os.environ["AICF_DATABASE_PATH"] = ":memory:"
 
 from fastapi.testclient import TestClient
 
-from backend.app.main import app
+from app.main import app
 
 
 def test_create_project_then_job() -> None:

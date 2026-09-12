@@ -1,8 +1,8 @@
 import time
 
-from backend.app.orchestrator.cancellation import CancellationRegistry
-from backend.app.orchestrator.heartbeat import LeaseHeartbeat
-from backend.app.orchestrator.queue import JobLease
+from app.orchestrator.cancellation import CancellationRegistry
+from app.orchestrator.heartbeat import LeaseHeartbeat
+from app.orchestrator.queue import JobLease
 
 
 def test_cancellation_registry_is_cooperative():

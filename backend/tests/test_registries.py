@@ -1,7 +1,7 @@
-from backend.app.providers.contracts import ModelAdapter, ModelCapability, ProviderRequest, ProviderResponse
-from backend.app.providers.registry import ModelRegistry, RegisteredModel
-from backend.app.workers.contracts import Worker
-from backend.app.workers.registry import WorkerRegistry
+from app.providers.contracts import ModelAdapter, ModelCapability, ProviderRequest, ProviderResponse
+from app.providers.registry import ModelRegistry, RegisteredModel
+from app.workers.contracts import Worker
+from app.workers.registry import WorkerRegistry
 
 
 class HealthyWorker(Worker):

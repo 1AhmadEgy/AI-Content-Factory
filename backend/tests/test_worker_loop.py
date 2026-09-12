@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from backend.app.orchestrator.worker_loop import WorkerLoop, WorkerLoopConfig
+from app.orchestrator.worker_loop import WorkerLoop, WorkerLoopConfig
 
 
 class FakeRuntime:

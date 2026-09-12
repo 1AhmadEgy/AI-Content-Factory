@@ -5,7 +5,7 @@ os.environ.pop("OPENAI_API_KEY", None)
 
 from fastapi.testclient import TestClient
 
-from backend.app.main import app
+from app.main import app
 
 
 def test_factory_plan_fails_closed_without_real_provider() -> None:

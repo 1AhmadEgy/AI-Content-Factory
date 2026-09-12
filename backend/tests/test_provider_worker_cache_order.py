@@ -3,11 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from backend.app.domain.jobs import GenerationJob, JobInput, JobStatus, JobType
-from backend.app.infrastructure.storage import LocalAssetStorage
-from backend.app.providers.contracts import ModelAdapter, ModelCapability, ProviderRequest, ProviderResponse
-from backend.app.providers.registry import ModelRegistry, RegisteredModel
-from backend.app.workers.provider_worker import ProviderGenerationWorker
+from app.domain.jobs import GenerationJob, JobInput, JobStatus, JobType
+from app.infrastructure.storage import LocalAssetStorage
+from app.providers.contracts import ModelAdapter, ModelCapability, ProviderRequest, ProviderResponse
+from app.providers.registry import ModelRegistry, RegisteredModel
+from app.workers.provider_worker import ProviderGenerationWorker
 
 
 class Adapter(ModelAdapter):

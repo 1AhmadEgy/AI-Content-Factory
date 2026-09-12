@@ -1,5 +1,5 @@
-from backend.app.domain.jobs import GenerationJob, JobStatus, JobType
-from backend.app.orchestrator.job_state import InvalidJobTransition, transition
+from app.domain.jobs import GenerationJob, JobStatus, JobType
+from app.orchestrator.job_state import InvalidJobTransition, transition
 
 
 def make_job() -> GenerationJob:
