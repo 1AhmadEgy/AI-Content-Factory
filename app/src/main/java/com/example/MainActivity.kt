@@ -10,6 +10,9 @@ import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -28,7 +31,11 @@ import com.example.feature.scenes.SceneBuilderScreen
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { AppTheme { MainScreen() } }
+        setContent {
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                AppTheme { MainScreen() }
+            }
+        }
     }
 }
 
@@ -53,22 +60,22 @@ fun MainScreen() {
         bottomBar = {
             NavigationBar(containerColor = DarkBlue) {
                 NavigationBarItem(
-                    icon = { Icon(Icons.Filled.VideoLibrary, contentDescription = "Projects") },
-                    label = { Text("Projects") },
+                    icon = { Icon(Icons.Filled.VideoLibrary, contentDescription = "المشاريع") },
+                    label = { Text("المشاريع") },
                     selected = currentRoute?.startsWith("projects") == true,
                     onClick = { navController.navigate("projects") { launchSingleTop = true } },
                     colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan),
                 )
                 NavigationBarItem(
-                    icon = { Icon(Icons.Filled.List, contentDescription = "Characters") },
-                    label = { Text("Characters") },
+                    icon = { Icon(Icons.Filled.List, contentDescription = "الشخصيات") },
+                    label = { Text("الشخصيات") },
                     selected = currentRoute == "characters" || currentRoute?.startsWith("character/") == true || currentRoute == "scene-builder",
                     onClick = { navController.navigate("characters") { launchSingleTop = true } },
                     colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan),
                 )
                 NavigationBarItem(
-                    icon = { Icon(Icons.Filled.List, contentDescription = "Control") },
-                    label = { Text("Control") },
+                    icon = { Icon(Icons.Filled.List, contentDescription = "مركز التحكم") },
+                    label = { Text("التحكم") },
                     selected = currentRoute == "control",
                     onClick = { navController.navigate("control") { launchSingleTop = true } },
                     colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan),
