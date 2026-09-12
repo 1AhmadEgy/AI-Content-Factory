@@ -49,6 +49,14 @@ class SQLiteProviderCache:
                 );
             """)
 
+    @staticmethod
+    def _utc_now(value: datetime | None = None) -> datetime:
+        """Normalize caller-provided timestamps to timezone-aware UTC."""
+        current = value or datetime.now(UTC)
+        if current.tzinfo is None:
+            return current.replace(tzinfo=UTC)
+        return current.astimezone(UTC)
+
     def get(self, cache_key: str) -> ProviderCacheEntry | None:
         with self.store._lock, self.store.connection:
             row = self.store.connection.execute(
@@ -113,13 +121,13 @@ class SQLiteProviderCache:
             return True
 
     def purge_expired(self, now: datetime | None = None) -> int:
-        cutoff = (now or datetime.now(UTC)).isoformat()
+        cutoff = self._utc_now(now).isoformat()
         with self.store._lock, self.store.connection:
             result = self.store.connection.execute("DELETE FROM provider_cache WHERE expires_at IS NOT NULL AND expires_at<=?", (cutoff,))
             return result.rowcount
 
     def purge_expired_with_stats(self, now: datetime | None = None) -> dict[str, float | int]:
-        cutoff = (now or datetime.now(UTC)).isoformat()
+        cutoff = self._utc_now(now).isoformat()
         with self.store._lock, self.store.connection:
             row = self.store.connection.execute(
                 "SELECT COUNT(*) AS total, COALESCE(SUM(hits),0) AS total_hits, COALESCE(AVG(hits),0) AS avg_hits FROM provider_cache WHERE expires_at IS NOT NULL AND expires_at<=?",
