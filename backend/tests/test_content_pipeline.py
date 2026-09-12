@@ -1,5 +1,5 @@
-from backend.app.domain.jobs import GenerationJob, JobInput, JobStatus, JobType
-from backend.app.orchestrator.content_pipeline import ContentPipelineOrchestrator
+from app.domain.jobs import GenerationJob, JobInput, JobStatus, JobType
+from app.orchestrator.content_pipeline import ContentPipelineOrchestrator
 
 
 def _job(job_type: JobType, parameters: dict, parent: str | None = None) -> GenerationJob:
