@@ -12,6 +12,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -21,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.example.data.remote.BackendJob
 import com.example.data.remote.NetworkClient
@@ -31,12 +33,14 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun ControlCenterScreen() {
+    val context = LocalContext.current
     var jobs by remember { mutableStateOf<List<BackendJob>>(emptyList()) }
     var worker by remember { mutableStateOf<WorkerData?>(null) }
     var backendOk by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var selectedJobId by remember { mutableStateOf<String?>(null) }
     var selectedRuns by remember { mutableStateOf<List<ProviderRunModel>>(emptyList()) }
+    var apiBaseUrl by remember { mutableStateOf(NetworkClient.getConfiguredBaseUrl(context)) }
     val scope = rememberCoroutineScope()
 
     suspend fun refresh() {
@@ -65,6 +69,35 @@ fun ControlCenterScreen() {
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Control Center", style = MaterialTheme.typography.headlineMedium)
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Backend connection", style = MaterialTheme.typography.titleMedium)
+                OutlinedTextField(
+                    value = apiBaseUrl,
+                    onValueChange = { apiBaseUrl = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Backend URL") },
+                    placeholder = { Text("http://192.168.1.10:8000/") },
+                    supportingText = { Text("Use the server LAN IP on a physical phone; 10.0.2.2 is emulator-only.") },
+                )
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    Button(onClick = {
+                        scope.launch {
+                            try {
+                                NetworkClient.setBaseUrl(context, apiBaseUrl)
+                                refresh()
+                            } catch (t: Throwable) {
+                                backendOk = false
+                                error = t.message ?: "Invalid backend URL"
+                            }
+                        }
+                    }) { Text("Save & test") }
+                }
+            }
+        }
+
         Text(if (backendOk) "Backend: ONLINE" else "Backend: OFFLINE", color = if (backendOk) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
         worker?.let { Text("Worker: ${it.workerId} · ${if (it.running) "RUNNING" else "STOPPED"} · iterations ${it.iterations}") }
         worker?.lastError?.let { Text("Worker error: $it", color = MaterialTheme.colorScheme.error) }
