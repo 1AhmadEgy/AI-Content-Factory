@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from app.domain.jobs import GenerationJob, JobInput, JobType, JobStatus
 from app.infrastructure.provider_cache import SQLiteProviderCache
@@ -67,7 +67,7 @@ def test_provider_cache_expires_and_purge_removes_it() -> None:
             output_metadata={},
             metrics={},
         )
-        future = datetime.utcnow() + timedelta(seconds=2)
+        future = datetime.now(UTC) + timedelta(seconds=2)
         assert cache.get("key-expire") is not None
         assert cache.purge_expired(future) == 1
         assert cache.get("key-expire") is None
