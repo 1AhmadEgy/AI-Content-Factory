@@ -16,7 +16,6 @@ data class Project(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
     val name: String,
     val description: String? = null,
-    val mode: String = "MOCK",
     val status: String = "ACTIVE"
 )
 
@@ -124,7 +123,7 @@ data class GenerationJob(
 )
 
 @JsonClass(generateAdapter = true)
-data class ProjectCreateRequest(val name: String, val description: String? = null, val mode: String = "MOCK")
+data class ProjectCreateRequest(val name: String, val description: String? = null)
 
 @JsonClass(generateAdapter = true)
 data class SeriesCreateRequest(@Json(name = "project_id") val projectId: String, val title: String, val genre: String? = null, val language: String = "ar")
