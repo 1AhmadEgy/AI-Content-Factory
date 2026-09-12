@@ -39,12 +39,14 @@ object NetworkClient {
     }
 
     fun initialize(context: Context) {
-        val stored = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getString(API_BASE_URL_KEY, null)
-            ?.trim()
-            .orEmpty()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val stored = prefs.getString(API_BASE_URL_KEY, null)?.trim().orEmpty()
         synchronized(this) {
-            baseUrlOverride = stored.takeIf { it.isNotBlank() }?.let(::normalizeBaseUrl)
+            baseUrlOverride = stored.takeIf { it.isNotBlank() }?.let { value ->
+                runCatching { normalizeBaseUrl(value) }
+                    .onFailure { prefs.edit().remove(API_BASE_URL_KEY).apply() }
+                    .getOrNull()
+            }
             service = null
             serviceBaseUrl = null
         }
