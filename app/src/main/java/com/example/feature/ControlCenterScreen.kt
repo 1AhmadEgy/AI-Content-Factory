@@ -28,6 +28,7 @@ import com.example.data.remote.BackendJob
 import com.example.data.remote.NetworkClient
 import com.example.data.remote.ProviderRunModel
 import com.example.data.remote.WorkerData
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -55,8 +56,9 @@ fun ControlCenterScreen() {
             }
             error = null
         } catch (t: Throwable) {
+            if (t is CancellationException) throw t
             backendOk = false
-            error = t.message ?: "Backend unavailable"
+            error = t.message ?: "تعذر الاتصال بالخادم"
         }
     }
 
@@ -68,19 +70,19 @@ fun ControlCenterScreen() {
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Control Center", style = MaterialTheme.typography.headlineMedium)
+        Text("مركز التحكم", style = MaterialTheme.typography.headlineMedium)
 
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Backend connection", style = MaterialTheme.typography.titleMedium)
+                Text("اتصال الخادم", style = MaterialTheme.typography.titleMedium)
                 OutlinedTextField(
                     value = apiBaseUrl,
                     onValueChange = { apiBaseUrl = it },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    label = { Text("Backend URL") },
+                    label = { Text("عنوان الخادم") },
                     placeholder = { Text("http://192.168.1.10:8000/") },
-                    supportingText = { Text("Use the server LAN IP on a physical phone; 10.0.2.2 is emulator-only.") },
+                    supportingText = { Text("على الهاتف الحقيقي استخدم عنوان الشبكة المحلية للخادم. العنوان 10.0.2.2 خاص بالمحاكي.") },
                 )
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     Button(onClick = {
@@ -89,20 +91,21 @@ fun ControlCenterScreen() {
                                 NetworkClient.setBaseUrl(context, apiBaseUrl)
                                 refresh()
                             } catch (t: Throwable) {
+                                if (t is CancellationException) throw t
                                 backendOk = false
-                                error = t.message ?: "Invalid backend URL"
+                                error = t.message ?: "عنوان الخادم غير صالح"
                             }
                         }
-                    }) { Text("Save & test") }
+                    }) { Text("حفظ واختبار الاتصال") }
                 }
             }
         }
 
-        Text(if (backendOk) "Backend: ONLINE" else "Backend: OFFLINE", color = if (backendOk) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
-        worker?.let { Text("Worker: ${it.workerId} · ${if (it.running) "RUNNING" else "STOPPED"} · iterations ${it.iterations}") }
-        worker?.lastError?.let { Text("Worker error: $it", color = MaterialTheme.colorScheme.error) }
+        Text(if (backendOk) "الخادم: متصل" else "الخادم: غير متصل", color = if (backendOk) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
+        worker?.let { Text("العامل: ${it.workerId} · ${if (it.running) "يعمل" else "متوقف"} · التكرارات ${it.iterations}") }
+        worker?.lastError?.let { Text("خطأ العامل: $it", color = MaterialTheme.colorScheme.error) }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        Text("Jobs (${jobs.size})", style = MaterialTheme.typography.titleLarge)
+        Text("المهام (${jobs.size})", style = MaterialTheme.typography.titleLarge)
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(jobs, key = { it.id }) { job ->
                 ControlCenterJobCard(
@@ -120,13 +123,19 @@ fun ControlCenterScreen() {
                     onCancel = {
                         scope.launch {
                             try { NetworkClient.apiService.cancelJob(job.id); refresh() }
-                            catch (t: Throwable) { error = t.message ?: "Cancel failed" }
+                            catch (t: Throwable) {
+                                if (t is CancellationException) throw t
+                                error = t.message ?: "تعذر إلغاء المهمة"
+                            }
                         }
                     },
                     onRetry = {
                         scope.launch {
                             try { NetworkClient.apiService.retryJob(job.id); refresh() }
-                            catch (t: Throwable) { error = t.message ?: "Retry failed" }
+                            catch (t: Throwable) {
+                                if (t is CancellationException) throw t
+                                error = t.message ?: "تعذر إعادة المحاولة"
+                            }
                         }
                     },
                 )
@@ -149,21 +158,21 @@ private fun ControlCenterJobCard(
             Text(job.type, style = MaterialTheme.typography.titleMedium)
             Text("${job.status} · ${job.projectId}")
             LinearProgressIndicator(progress = { job.progress.coerceIn(0.0, 1.0).toFloat() }, modifier = Modifier.fillMaxWidth())
-            Text("Progress ${(job.progress * 100).toInt()}% · Attempt ${job.attempt}/${job.maxAttempts}")
-            job.errorCode?.let { Text("Error: $it", color = MaterialTheme.colorScheme.error) }
+            Text("التقدم ${(job.progress * 100).toInt()}% · المحاولة ${job.attempt}/${job.maxAttempts}")
+            job.errorCode?.let { Text("رمز الخطأ: $it", color = MaterialTheme.colorScheme.error) }
             job.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                if (job.status in setOf("PENDING", "QUEUED", "RUNNING", "RETRYING")) Button(onClick = onCancel) { Text("Cancel") }
-                if (job.status == "FAILED") Button(onClick = onRetry) { Text("Retry") }
+                if (job.status in setOf("PENDING", "QUEUED", "RUNNING", "RETRYING")) Button(onClick = onCancel) { Text("إلغاء") }
+                if (job.status == "FAILED") Button(onClick = onRetry) { Text("إعادة المحاولة") }
             }
 
             if (selected) {
-                Text("Provider Runs (${runs.size})", style = MaterialTheme.typography.labelLarge)
+                Text("تشغيلات مزودي الخدمة (${runs.size})", style = MaterialTheme.typography.labelLarge)
                 runs.take(5).forEach { run ->
-                    val duration = run.durationMs?.let { " · ${it}ms" } ?: ""
+                    val duration = run.durationMs?.let { " · ${it} مللي ثانية" } ?: ""
                     Text("${run.provider}${run.model?.let { "/$it" } ?: ""} · ${run.status}$duration")
-                    run.errorCode?.let { Text("Error: $it", color = MaterialTheme.colorScheme.error) }
+                    run.errorCode?.let { Text("رمز الخطأ: $it", color = MaterialTheme.colorScheme.error) }
                 }
             }
         }
