@@ -16,7 +16,7 @@ def health(request: Request) -> dict:
     }
 
 
-@router.get("/api/v1/ready")
+@router.get("/api/v1/ready", response_model=None)
 def readiness(request: Request) -> dict | JSONResponse:
     """يتحقق من جاهزية مخزن البيانات قبل قبول العمل الجديد."""
     try:
@@ -44,7 +44,7 @@ def readiness(request: Request) -> dict | JSONResponse:
         )
 
 
-@router.get("/api/v1/readiness", include_in_schema=False)
+@router.get("/api/v1/readiness", include_in_schema=False, response_model=None)
 def readiness_alias(request: Request) -> dict | JSONResponse:
     """يوفر المسار القديم لفحص الجاهزية مع نفس آلية الفحص الأساسية."""
     return readiness(request)
