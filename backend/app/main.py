@@ -18,6 +18,7 @@ from .api.v1.context import build_router as build_context_router
 from .api.v1.episode_translations import build_router as build_episode_translation_router
 from .api.v1.episodes import build_router as build_episode_router
 from .api.v1.factory import build_router as build_factory_router
+from .api.v1.health import router as health_router
 from .api.v1.library import build_router as build_library_router
 from .api.v1.models import build_router as build_models_router
 from .api.v1.pipeline import router as pipeline_router
@@ -40,8 +41,6 @@ from .scheduling.loop import SchedulerLoop
 from .scheduling.persistent import PersistentScheduler, SQLiteScheduleRepository
 
 DATABASE_PATH = os.getenv("AICF_DATABASE_PATH", "./data/factory.db")
-# Fail during startup when credentials are enabled but provider model IDs are absent.
-# This prevents a production deployment from silently guessing model names.
 validate_openai_configuration()
 repositories = SQLiteRepositories(DATABASE_PATH)
 job_repository = SQLiteJobRepository(repositories.store)
@@ -72,10 +71,34 @@ job_service = JobService(job_repository, context_provider=orchestrator_runtime.c
 
 def _enqueue_scheduled(schedule):
     from .domain.jobs import JobInput, JobType
+
     payload = schedule.payload
     job_type = JobType(payload.get("type", schedule.operation).upper())
-    job = job_service.create(project_id=schedule.project_id, job_type=job_type, target_type=payload.get("targetType", "scheduled"), target_id=payload.get("targetId"), parent_job_id=payload.get("parentJobId"), priority=int(payload.get("priority", 100)), max_attempts=int(payload.get("maxAttempts", 3)), provider=payload.get("provider"), model=payload.get("model"), input=JobInput(parameters=payload.get("parameters", payload), reference_asset_ids=payload.get("referenceAssetIds", []), constraints=payload.get("constraints", {}), seed=payload.get("seed"), deterministic=bool(payload.get("deterministic", False))))
-    orchestrator_runtime.context.append_event(schedule.project_id, "job.queued", {"jobId": job.id, "type": job.type.value, "targetType": job.target_type, "targetId": job.target_id}, entity_type="job", entity_id=job.id)
+    job = job_service.create(
+        project_id=schedule.project_id,
+        job_type=job_type,
+        target_type=payload.get("targetType", "scheduled"),
+        target_id=payload.get("targetId"),
+        parent_job_id=payload.get("parentJobId"),
+        priority=int(payload.get("priority", 100)),
+        max_attempts=int(payload.get("maxAttempts", 3)),
+        provider=payload.get("provider"),
+        model=payload.get("model"),
+        input=JobInput(
+            parameters=payload.get("parameters", payload),
+            reference_asset_ids=payload.get("referenceAssetIds", []),
+            constraints=payload.get("constraints", {}),
+            seed=payload.get("seed"),
+            deterministic=bool(payload.get("deterministic", False)),
+        ),
+    )
+    orchestrator_runtime.context.append_event(
+        schedule.project_id,
+        "job.queued",
+        {"jobId": job.id, "type": job.type.value, "targetType": job.target_type, "targetId": job.target_id},
+        entity_type="job",
+        entity_id=job.id,
+    )
     orchestrator_runtime.queue.enqueue(job)
     return job
 
@@ -97,7 +120,14 @@ async def lifespan(_: FastAPI):
         worker_loop.stop()
 
 
-app = FastAPI(title="AI Content Factory API", version="0.9.0", docs_url="/api/v1/docs", redoc_url="/api/v1/redoc", openapi_url="/api/v1/openapi.json", lifespan=lifespan)
+app = FastAPI(
+    title="AI Content Factory API",
+    version="0.9.0",
+    docs_url="/api/v1/docs",
+    redoc_url="/api/v1/redoc",
+    openapi_url="/api/v1/openapi.json",
+    lifespan=lifespan,
+)
 
 
 @app.middleware("http")
@@ -146,21 +176,7 @@ app.include_router(build_shots_router(orchestrator_runtime))
 app.include_router(build_episode_router(orchestrator_runtime))
 app.include_router(build_context_router(project_repository, context_store))
 app.include_router(build_series_bible_router(orchestrator_runtime))
-
-
-@app.get("/api/v1/health", tags=["system"])
-def health(request: Request):
-    return {"status": "ok", "data": {"status": "OK", "service": "ai-content-factory-backend", "version": app.version}, "requestId": request.state.request_id}
-
-
-@app.get("/api/v1/ready", tags=["system"])
-def readiness(request: Request):
-    try:
-        repositories.store.connection.execute("SELECT 1").fetchone()
-        return {"status": "ready", "data": {"status": "READY", "service": "ai-content-factory-backend", "version": app.version}, "requestId": request.state.request_id}
-    except Exception:
-        request_id = getattr(request.state, "request_id", "unknown")
-        return JSONResponse(status_code=503, content={"error": {"code": "RESOURCE_UNAVAILABLE", "message": "Required dependencies are not ready", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
+app.include_router(health_router)
 
 
 @app.get("/api/v1/worker/status", tags=["system"])
@@ -171,8 +187,3 @@ def worker_status(request: Request):
 @app.get("/api/v1/scheduler/status", tags=["scheduling"])
 def scheduler_status(request: Request):
     return {"data": {"running": scheduler_loop.running, "autostart": _scheduler_autostart_enabled(), "ticks": scheduler_loop.ticks, "lastError": scheduler_loop.last_error}, "requestId": request.state.request_id}
-
-
-@app.get("/api/v1/readiness", include_in_schema=False)
-def readiness_alias(request: Request):
-    return readiness(request)
