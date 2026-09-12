@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: android-apk-${{ github.event.pull_request.number || github.ref }}
@@ -15,7 +15,6 @@ concurrency:
 
 env:
   APK_NAME: AI-Content-Factory.apk
-  GRADLE_VERSION: "9.3.1"
 
 jobs:
   build:
@@ -44,11 +43,12 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: ${{ env.GRADLE_VERSION }}
 
-      - name: Verify Gradle installation
-        run: gradle --version
+      - name: Prepare Gradle wrapper
+        run: chmod +x ./gradlew
+
+      - name: Verify Gradle wrapper
+        run: ./gradlew --version
 
       - name: Prepare CI release signing key
         run: |
@@ -66,13 +66,13 @@ jobs:
           echo "KEY_PASSWORD=android" >> "$GITHUB_ENV"
 
       - name: Run Android lint
-        run: gradle lint --no-daemon
+        run: ./gradlew lint --no-daemon
 
       - name: Run unit tests
-        run: gradle test --no-daemon
+        run: ./gradlew test --no-daemon
 
       - name: Build release APK
-        run: gradle :app:assembleRelease --no-daemon --stacktrace
+        run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
 
       - name: Verify APK
         run: |
