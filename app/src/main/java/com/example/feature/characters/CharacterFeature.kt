@@ -24,7 +24,9 @@ data class CharacterUi(
 fun CharacterDto.toUi() = CharacterUi(id, projectId, name, description, appearance, voice, visualStyle)
 
 class CharacterRepository {
-    private val api = NetworkClient.apiService
+    // Resolve the client only when a request is executed. This prevents an invalid or
+    // missing backend URL from crashing ViewModel construction and therefore the screen.
+    private val api by lazy { NetworkClient.apiService }
 
     suspend fun list(projectId: String? = null): List<CharacterUi> =
         api.listCharacters(projectId).data.map(CharacterDto::toUi)
