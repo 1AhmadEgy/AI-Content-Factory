@@ -19,7 +19,7 @@ import java.util.TimeZone
 
 class Repository(private val dao: FactoryDao) {
     private val scope = CoroutineScope(Dispatchers.IO)
-    private val api = NetworkClient.apiService
+    private val api get() = NetworkClient.apiService
     private val isoParser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSX", Locale.US).apply {
         timeZone = TimeZone.getTimeZone("UTC")
     }
@@ -31,7 +31,10 @@ class Repository(private val dao: FactoryDao) {
     val jobs: StateFlow<List<GenerationJob>> = dao.getAllJobs().stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
-        scope.launch { syncJobs() }
+        scope.launch {
+            runCatching { syncJobs() }
+                .onFailure { Log.w("Repository", "Initial backend sync skipped", it) }
+        }
     }
 
     suspend fun addProject(name: String, description: String) {
