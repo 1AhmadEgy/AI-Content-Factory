@@ -49,22 +49,19 @@ jobs:
           unzip -q -t "$ZIP_FILE"
           unzip -q "$ZIP_FILE" -d "$TMP/raw"
 
-          # The supplied archive contains one top-level project directory.
           ROOT="$TMP/raw"
           entries=("$ROOT"/*)
           if [ ${#entries[@]} -eq 1 ] && [ -d "${entries[0]}" ]; then
             ROOT="${entries[0]}"
           fi
 
-          # Never import generated caches or local signing material.
           find "$ROOT" -type d \( -name __pycache__ -o -name .pytest_cache \) -prune -exec rm -rf {} +
           find "$ROOT" -type f \( -name '*.pyc' -o -name 'debug.keystore' \) -delete
-
-          # Keep repository metadata/workflows from the repository itself.
           rm -rf "$ROOT/.git"
 
-          # Replace the project tree with the archive contents, while preserving uploads/.
-          rsync -a --delete --exclude 'uploads/' "$ROOT/" ./
+          # Merge the supplied project snapshot without deleting repository-only
+          # automation or metadata. Preserve uploads/ so the ZIP can be removed below.
+          rsync -a --exclude 'uploads/' "$ROOT/" ./
           rm -f "$ZIP_FILE"
 
       - name: Commit extracted project
@@ -82,8 +79,6 @@ jobs:
           git commit -m 'chore: extract uploaded AI-Content-Factory snapshot'
           git push origin HEAD:main
 
-      # A push made with GITHUB_TOKEN does not recursively trigger another workflow.
-      # Explicitly dispatch the existing APK workflow instead.
       - name: Start Android APK workflow
         if: steps.zip.outputs.path != ''
         env:
