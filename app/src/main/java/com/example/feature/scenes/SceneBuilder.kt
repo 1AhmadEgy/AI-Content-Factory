@@ -30,7 +30,9 @@ data class SceneUiState(
 )
 
 class SceneBuilderRepository {
-    private val api = NetworkClient.apiService
+    // Defer Retrofit construction until the coroutine's guarded request path.
+    // A missing backend configuration must become UI error state, never a screen crash.
+    private val api by lazy { NetworkClient.apiService }
 
     suspend fun load(): Pair<List<SceneCharacter>, List<SceneLocation>> {
         val chars = api.listCharacters().data.map(CharacterDto::toScene)
