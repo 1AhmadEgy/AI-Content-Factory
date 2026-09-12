@@ -57,5 +57,6 @@ def test_shot_completion_creates_only_supported_generation_jobs() -> None:
     shot = _job(JobType.SHOT, {"shot": {"number": 1, "prompt": "cinematic city"}, "shotNumber": 1})
 
     created = pipeline.on_completed(shot)
-    assert [j.type for j in created] == [JobType.IMAGE]
-    assert len(queued) == 1
+    assert [j.type for j in created] == [JobType.IMAGE] * 4
+    assert len(queued) == 4
+    assert [j.input.parameters["takeNumber"] for j in created] == [1, 2, 3, 4]
