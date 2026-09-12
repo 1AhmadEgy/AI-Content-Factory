@@ -19,11 +19,12 @@ object NetworkClient {
     private val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
     private var service: FactoryApiService? = null
     private var serviceBaseUrl: String? = null
+    private var baseUrlOverride: String? = null
 
     private fun normalizeBaseUrl(value: String): String {
         val configured = value.trim()
         check(configured.isNotBlank() && configured != NOT_CONFIGURED) {
-            "AICF_API_BASE_URL is not configured. Set the backend URL in Control Center."
+            "Backend URL is not configured. Set it in Control Center."
         }
         val uri = runCatching { URI(configured) }.getOrElse {
             throw IllegalArgumentException("Invalid backend URL: $configured", it)
@@ -37,13 +38,20 @@ object NetworkClient {
         return if (configured.endsWith('/')) configured else "$configured/"
     }
 
-    fun getConfiguredBaseUrl(context: Context): String {
+    fun initialize(context: Context) {
         val stored = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getString(API_BASE_URL_KEY, null)
             ?.trim()
             .orEmpty()
-        if (stored.isNotBlank()) return stored
-        return BuildConfig.AICF_API_BASE_URL.trim().let { if (it == NOT_CONFIGURED) "" else it }
+        synchronized(this) {
+            baseUrlOverride = stored.takeIf { it.isNotBlank() }?.let(::normalizeBaseUrl)
+            service = null
+            serviceBaseUrl = null
+        }
+    }
+
+    fun getConfiguredBaseUrl(context: Context): String = synchronized(this) {
+        baseUrlOverride ?: BuildConfig.AICF_API_BASE_URL.trim().let { if (it == NOT_CONFIGURED) "" else it }
     }
 
     fun setBaseUrl(context: Context, value: String) {
@@ -53,6 +61,7 @@ object NetworkClient {
             .putString(API_BASE_URL_KEY, normalized)
             .apply()
         synchronized(this) {
+            baseUrlOverride = normalized
             service = null
             serviceBaseUrl = null
         }
@@ -64,12 +73,15 @@ object NetworkClient {
             .remove(API_BASE_URL_KEY)
             .apply()
         synchronized(this) {
+            baseUrlOverride = null
             service = null
             serviceBaseUrl = null
         }
     }
 
-    private fun configuredBaseUrl(): String = normalizeBaseUrl(BuildConfig.AICF_API_BASE_URL)
+    private fun configuredBaseUrl(): String = synchronized(this) {
+        normalizeBaseUrl(baseUrlOverride ?: BuildConfig.AICF_API_BASE_URL)
+    }
 
     private val authInterceptor = Interceptor { chain ->
         val builder = chain.request().newBuilder().header("Accept", "application/json")
@@ -90,7 +102,7 @@ object NetworkClient {
 
     val apiService: FactoryApiService
         get() = synchronized(this) {
-            val baseUrl = serviceBaseUrl ?: configuredBaseUrl()
+            val baseUrl = configuredBaseUrl()
             service?.takeIf { serviceBaseUrl == baseUrl } ?: Retrofit.Builder()
                 .baseUrl(baseUrl)
                 .client(client)
@@ -102,21 +114,4 @@ object NetworkClient {
                     serviceBaseUrl = baseUrl
                 }
         }
-
-    fun apiService(context: Context): FactoryApiService {
-        val configured = getConfiguredBaseUrl(context)
-        return synchronized(this) {
-            val baseUrl = normalizeBaseUrl(configured)
-            service?.takeIf { serviceBaseUrl == baseUrl } ?: Retrofit.Builder()
-                .baseUrl(baseUrl)
-                .client(client)
-                .addConverterFactory(MoshiConverterFactory.create(moshi))
-                .build()
-                .create(FactoryApiService::class.java)
-                .also {
-                    service = it
-                    serviceBaseUrl = baseUrl
-                }
-        }
-    }
 }
