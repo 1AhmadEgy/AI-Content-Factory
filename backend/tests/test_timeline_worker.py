@@ -1,7 +1,7 @@
-from backend.app.domain.jobs import GenerationJob, JobInput, JobOutput, JobStatus, JobType
-from backend.app.infrastructure.storage import LocalAssetStorage
-from backend.app.workers.timeline_worker import TimelineWorker
-from backend.app.orchestrator.queue import WorkerContext
+from app.domain.jobs import GenerationJob, JobInput, JobOutput, JobStatus, JobType
+from app.infrastructure.storage import LocalAssetStorage
+from app.workers.timeline_worker import TimelineWorker
+from app.orchestrator.queue import WorkerContext
 
 
 class Assets:

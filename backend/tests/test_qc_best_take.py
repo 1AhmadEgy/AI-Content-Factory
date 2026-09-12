@@ -1,5 +1,5 @@
-from backend.app.domain.best_take import TakeCandidate, select_best_take
-from backend.app.domain.qc import QcCategory, QcSeverity, QcResult, evaluate_asset
+from app.domain.best_take import TakeCandidate, select_best_take
+from app.domain.qc import QcCategory, QcSeverity, QcResult, evaluate_asset
 
 
 def test_qc_accepts_readable_asset_with_unknown_license_as_warning():

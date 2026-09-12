@@ -1,6 +1,6 @@
-from backend.app.domain.timeline import Timeline, TimelineClip, TimelineTrack, TrackType
-from backend.app.rendering.ffmpeg_renderer import FfmpegRenderer
-from backend.app.rendering.renderer import RenderProfile
+from app.domain.timeline import Timeline, TimelineClip, TimelineTrack, TrackType
+from app.rendering.ffmpeg_renderer import FfmpegRenderer
+from app.rendering.renderer import RenderProfile
 
 
 def test_timeline_rejects_out_of_bounds_clip():

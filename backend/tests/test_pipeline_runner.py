@@ -1,9 +1,9 @@
 from pathlib import Path
 
-from backend.app.application.pipeline import AssetCheckInput
-from backend.app.domain.best_take import TakeCandidate
-from backend.app.domain.timeline import Timeline
-from backend.app.orchestrator.pipeline_runner import PipelineRunner
+from app.application.pipeline import AssetCheckInput
+from app.domain.best_take import TakeCandidate
+from app.domain.timeline import Timeline
+from app.orchestrator.pipeline_runner import PipelineRunner
 
 
 def test_golden_mock_pipeline_qc_best_take_render(tmp_path: Path):

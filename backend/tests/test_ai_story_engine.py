@@ -1,10 +1,10 @@
 import json
 
-from backend.app.application.ai_story_engine import AIStoryEngine
-from backend.app.domain.content import ContentBrief
-from backend.app.providers.builtin import LocalModelAdapter
-from backend.app.providers.contracts import ProviderRequest
-from backend.app.providers.registry import ModelRegistry, RegisteredModel
+from app.application.ai_story_engine import AIStoryEngine
+from app.domain.content import ContentBrief
+from app.providers.builtin import LocalModelAdapter
+from app.providers.contracts import ProviderRequest
+from app.providers.registry import ModelRegistry, RegisteredModel
 
 
 def test_story_engine_requires_real_provider_when_unconfigured() -> None:
@@ -23,7 +23,7 @@ def test_local_adapter_parses_openai_compatible_response(monkeypatch) -> None:
         def read(self):
             return json.dumps({"id": "run-1", "choices": [{"message": {"content": "hello"}}]}).encode()
 
-    monkeypatch.setattr("backend.app.providers.builtin.urlopen", lambda *args, **kwargs: Response())
+    monkeypatch.setattr("app.providers.builtin.urlopen", lambda *args, **kwargs: Response())
     adapter = LocalModelAdapter("http://localhost:11434", frozenset({"story"}))
     result = adapter.execute(ProviderRequest(model="test", parameters={"prompt": "hi"}))
     assert result.success is True
@@ -41,7 +41,7 @@ def test_story_engine_uses_provider_json() -> None:
                 "number": 1, "title": "Opening", "duration_seconds": 10, "visual": "Visual", "narration": "Narration",
                 "shots": [{"number": 1, "prompt": "Shot", "duration_seconds": 10, "camera": "wide", "lighting": "soft", "style": "realistic", "character_ids": [], "location_ids": []}]
             }]}
-            from backend.app.providers.contracts import ProviderResponse
+            from app.providers.contracts import ProviderResponse
             return ProviderResponse(True, output_text=json.dumps(payload), provider_run_id="run-real-contract")
 
     registry = ModelRegistry()

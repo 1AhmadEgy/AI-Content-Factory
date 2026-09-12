@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from backend.app.domain.jobs import GenerationJob, JobInput, JobType, JobStatus
-from backend.app.infrastructure.provider_cache import SQLiteProviderCache
-from backend.app.infrastructure.sqlite import SQLiteRepositories
-from backend.app.workers.provider_worker import ProviderGenerationWorker
+from app.domain.jobs import GenerationJob, JobInput, JobType, JobStatus
+from app.infrastructure.provider_cache import SQLiteProviderCache
+from app.infrastructure.sqlite import SQLiteRepositories
+from app.workers.provider_worker import ProviderGenerationWorker
 
 
 def _job(job_id: str, parameters: dict) -> GenerationJob:

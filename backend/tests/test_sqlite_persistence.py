@@ -2,9 +2,9 @@ from datetime import timezone
 
 import pytest
 
-from backend.app.domain.jobs import GenerationJob, JobInput, JobStatus, JobType
-from backend.app.domain.projects import Project
-from backend.app.infrastructure.sqlite import SQLiteRepositories
+from app.domain.jobs import GenerationJob, JobInput, JobStatus, JobType
+from app.domain.projects import Project
+from app.infrastructure.sqlite import SQLiteRepositories
 
 
 def test_project_and_job_round_trip() -> None:
