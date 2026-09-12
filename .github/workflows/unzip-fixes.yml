@@ -23,23 +23,36 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Find uploaded ZIP
+      - name: Identify uploaded ZIP from triggering commit
         id: zip
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          shopt -s nullglob
-          zips=(uploads/*.zip)
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            mapfile -t zips < <(find uploads -maxdepth 1 -type f -name '*.zip' -printf '%T@ %p\n' | sort -nr | cut -d' ' -f2-)
+          else
+            if [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
+              mapfile -t zips < <(git ls-tree -r --name-only "$AFTER_SHA" -- 'uploads/*.zip')
+            else
+              mapfile -t zips < <(git diff --name-only --diff-filter=AM "$BEFORE_SHA" "$AFTER_SHA" -- 'uploads/*.zip')
+            fi
+          fi
           if [ ${#zips[@]} -eq 0 ]; then
-            echo 'No ZIP found in uploads/.'
-            exit 0
+            echo 'No triggering ZIP found in uploads/.' >&2
+            exit 1
           fi
           if [ ${#zips[@]} -gt 1 ]; then
-            echo 'More than one ZIP found; refusing to guess.' >&2
+            echo 'More than one ZIP was introduced or changed by the triggering revision; refusing to guess.' >&2
             printf '%s\n' "${zips[@]}" >&2
             exit 1
           fi
-          echo "path=${zips[0]}" >> "$GITHUB_OUTPUT"
+          ZIP_FILE="${zips[0]}"
+          [[ -f "$ZIP_FILE" ]] || { echo "ZIP does not exist: $ZIP_FILE" >&2; exit 1; }
+          echo "path=$ZIP_FILE" >> "$GITHUB_OUTPUT"
 
       - name: Validate and extract ZIP
         if: steps.zip.outputs.path != ''
@@ -49,17 +62,11 @@ jobs:
           ZIP_FILE="${{ steps.zip.outputs.path }}"
           TMP="$(mktemp -d)"
           trap 'rm -rf "$TMP"' EXIT
-
           unzip -q -t "$ZIP_FILE"
           unzip -q "$ZIP_FILE" -d "$TMP/raw"
-
           ROOT="$TMP/raw"
           entries=("$ROOT"/*)
-          if [ ${#entries[@]} -eq 1 ] && [ -d "${entries[0]}" ]; then
-            ROOT="${entries[0]}"
-          fi
-
-          # Reject path/symlink tricks and repository metadata before merging.
+          if [ ${#entries[@]} -eq 1 ] && [ -d "${entries[0]}" ]; then ROOT="${entries[0]}"; fi
           if find "$ROOT" -type l -print -quit | grep -q .; then
             echo 'ZIP contains symbolic links; refusing extraction.' >&2
             exit 1
@@ -67,9 +74,6 @@ jobs:
           find "$ROOT" -type d \( -name __pycache__ -o -name .pytest_cache \) -prune -exec rm -rf {} +
           find "$ROOT" -type f \( -name '*.pyc' -o -name 'debug.keystore' \) -delete
           rm -rf "$ROOT/.git"
-
-          # Merge without deleting repository-only automation/metadata.
-          # Preserve uploads/ so the triggering ZIP can then be removed explicitly.
           rsync -a --exclude 'uploads/' "$ROOT/" ./
           rm -f "$ZIP_FILE"
 
@@ -77,9 +81,12 @@ jobs:
         id: commit
         if: steps.zip.outputs.path != ''
         shell: bash
+        env:
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
-          BRANCH="automation/upload-import-${GITHUB_RUN_ID}"
+          BRANCH="automation/upload-import-${RUN_ID}-${RUN_ATTEMPT}"
           git switch -c "$BRANCH"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
@@ -91,7 +98,7 @@ jobs:
           fi
           git commit -m 'chore: import uploaded AI-Content-Factory snapshot'
           git push --set-upstream origin "$BRANCH"
-          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
 
       - name: Open draft pull request for imported snapshot
@@ -102,9 +109,4 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh pr create \
-            --base main \
-            --head "$IMPORT_BRANCH" \
-            --draft \
-            --title 'chore: review uploaded AI-Content-Factory snapshot' \
-            --body 'Automated import of an uploaded project snapshot. This workflow intentionally does not push extracted files directly to main. CI and human review must complete before merge.'
+          gh pr create --base main --head "$IMPORT_BRANCH" --draft --title 'chore: review uploaded AI-Content-Factory snapshot' --body 'Automated import of an uploaded project snapshot. This workflow intentionally does not push extracted files directly to main. CI and human review must complete before merge.'
