@@ -154,6 +154,7 @@ async def unhandled_exception(request: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"error": {"code": "INTERNAL_ERROR", "message": "Internal server error", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
 
 
+app.include_router(health_router)
 app.include_router(build_project_router(project_repository))
 app.include_router(build_job_router(job_repository, runtime=orchestrator_runtime, events=orchestrator_runtime.events))
 app.include_router(build_batch_router(project_repository, job_repository, orchestrator_runtime))
@@ -176,7 +177,6 @@ app.include_router(build_shots_router(orchestrator_runtime))
 app.include_router(build_episode_router(orchestrator_runtime))
 app.include_router(build_context_router(project_repository, context_store))
 app.include_router(build_series_bible_router(orchestrator_runtime))
-app.include_router(health_router)
 
 
 @app.get("/api/v1/worker/status", tags=["system"])
