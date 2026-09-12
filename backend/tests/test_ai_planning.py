@@ -9,7 +9,7 @@ from app.providers.contracts import ModelAdapter, ModelCapability, ProviderReque
 from app.providers.registry import ModelRegistry, RegisteredModel
 
 
-class TestAdapter(ModelAdapter):
+class StubAdapter(ModelAdapter):
     """Test-only transport stub; no production mock provider is exposed."""
     def __init__(self, response_text: str = "") -> None: self.response_text = response_text
     def capability(self) -> ModelCapability: return ModelCapability("generation", frozenset({"story", "scene", "shot", "text"}), runtime="TEST", license_status="OPEN")
@@ -19,7 +19,7 @@ class TestAdapter(ModelAdapter):
 
 
 def _registry(response_text: str = "") -> ModelRegistry:
-    registry = ModelRegistry(); registry.register(RegisteredModel("test-model", "test", TestAdapter(response_text), priority=1)); return registry
+    registry = ModelRegistry(); registry.register(RegisteredModel("test-model", "test", StubAdapter(response_text), priority=1)); return registry
 
 
 def _story() -> StoryPlan:
@@ -44,7 +44,7 @@ def test_story_engine_rejects_empty_scene_list() -> None:
 
 
 def test_scene_planner_updates_scene_direction_from_provider_json() -> None:
-    class SceneAdapter(TestAdapter):
+    class SceneAdapter(StubAdapter):
         def execute(self, request: ProviderRequest) -> ProviderResponse:
             if "JSON array" in request.parameters["prompt"]:
                 return ProviderResponse(True, output_text=json.dumps([{"number": 1, "prompt": "a precise cinematic shot", "duration_seconds": 99, "camera": "wide", "lighting": "soft", "style": "realistic"}]), provider_run_id="test-scene")
