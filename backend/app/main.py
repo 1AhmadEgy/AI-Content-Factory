@@ -57,7 +57,9 @@ def _worker_autostart_enabled() -> bool:
 
 
 def _scheduler_autostart_enabled() -> bool:
-    return os.getenv("AICF_SCHEDULER_AUTOSTART", "true").strip().lower() in {"1", "true", "yes", "on"}
+    # Scheduling must be enabled explicitly. Multiple API replicas sharing the
+    # same SQLite database otherwise risk executing the same due schedule twice.
+    return os.getenv("AICF_SCHEDULER_AUTOSTART", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _api_token() -> str | None:
