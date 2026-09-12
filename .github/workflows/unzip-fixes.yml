@@ -1,0 +1,94 @@
+name: Unzip uploaded fixes
+
+on:
+  push:
+    paths:
+      - 'uploads/*.zip'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  unzip:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find uploaded ZIP
+        id: zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          zips=(uploads/*.zip)
+          if [ ${#zips[@]} -eq 0 ]; then
+            echo 'No ZIP found in uploads/.'
+            exit 0
+          fi
+          if [ ${#zips[@]} -gt 1 ]; then
+            echo 'More than one ZIP found; refusing to guess.' >&2
+            printf '%s\n' "${zips[@]}" >&2
+            exit 1
+          fi
+          echo "path=${zips[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate and extract ZIP
+        if: steps.zip.outputs.path != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP_FILE="${{ steps.zip.outputs.path }}"
+          TMP="$(mktemp -d)"
+          trap 'rm -rf "$TMP"' EXIT
+
+          unzip -q -t "$ZIP_FILE"
+          unzip -q "$ZIP_FILE" -d "$TMP/raw"
+
+          # The supplied archive contains one top-level project directory.
+          ROOT="$TMP/raw"
+          entries=("$ROOT"/*)
+          if [ ${#entries[@]} -eq 1 ] && [ -d "${entries[0]}" ]; then
+            ROOT="${entries[0]}"
+          fi
+
+          # Never import generated caches or local signing material.
+          find "$ROOT" -type d \( -name __pycache__ -o -name .pytest_cache \) -prune -exec rm -rf {} +
+          find "$ROOT" -type f \( -name '*.pyc' -o -name 'debug.keystore' \) -delete
+
+          # Keep repository metadata/workflows from the repository itself.
+          rm -rf "$ROOT/.git"
+
+          # Replace the project tree with the archive contents, while preserving uploads/.
+          rsync -a --delete --exclude 'uploads/' "$ROOT/" ./
+          rm -f "$ZIP_FILE"
+
+      - name: Commit extracted project
+        if: steps.zip.outputs.path != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'No extracted changes to commit.'
+            exit 0
+          fi
+          git commit -m 'chore: extract uploaded AI-Content-Factory snapshot'
+          git push origin HEAD:main
+
+      # A push made with GITHUB_TOKEN does not recursively trigger another workflow.
+      # Explicitly dispatch the existing APK workflow instead.
+      - name: Start Android APK workflow
+        if: steps.zip.outputs.path != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run android-apk.yml --ref main
