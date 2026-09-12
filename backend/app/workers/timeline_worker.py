@@ -80,8 +80,6 @@ class TimelineWorker(Worker):
             video_ids = [str(x) for x in job.input.parameters.get("videoAssetIds", []) if str(x)]
             audio_ids = [str(x) for x in job.input.parameters.get("audioAssetIds", []) if str(x)]
             if not video_ids:
-                # Backward-compatible fallback for callers that predate explicit
-                # track lists: only actual playable video/image references qualify.
                 refs = [str(x) for x in job.input.reference_asset_ids if str(x)]
                 video_ids = [asset_id for asset_id in refs if (asset := self.assets.get(asset_id)) is not None and asset.type in {AssetType.VIDEO, AssetType.IMAGE}]
             if not video_ids:
@@ -141,7 +139,7 @@ class TimelineWorker(Worker):
             id=asset_id, project_id=job.project_id, type=AssetType.DOCUMENT,
             path=path, mime_type="application/json; charset=utf-8", size_bytes=size,
             sha256=digest, status=AssetStatus.READY,
-            provenance=build_provenance(job, source_asset_ids=asset_ids, metadata={"timelineId": timeline.id, "languageRender": language_render}, license_status=LicenseStatus.VERIFIED),
+            provenance=build_provenance(job, source_asset_ids=asset_ids, metadata={"timelineId": timeline.id, "languageRender": language_render}, license_status=LicenseStatus.VERIFIED, provider="internal", model="timeline-worker"),
         )
         self.assets.create(asset)
         return JobExecutionResult(True, [asset_id], {"durationUs": timeline.duration_us, "clipCount": sum(len(t.clips) for t in timeline.tracks), "languageRender": language_render}, f"timeline-{job.id}")
