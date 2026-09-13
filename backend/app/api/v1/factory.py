@@ -45,6 +45,14 @@ def _fingerprint(request: StartFactoryRequest) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _provider_http_error(exc: RuntimeError) -> HTTPException:
+    detail = str(exc)
+    code, _, message = detail.partition(":")
+    if code == "AI_PROVIDER_UNAVAILABLE":
+        return HTTPException(status_code=503, detail=code)
+    return HTTPException(status_code=503, detail=detail)
+
+
 def build_router(projects: SQLiteProjectRepository, jobs: SQLiteJobRepository, runtime: OrchestratorRuntime) -> APIRouter:
     job_service = JobService(jobs, context_provider=runtime.context_snapshot)
 
@@ -53,7 +61,7 @@ def build_router(projects: SQLiteProjectRepository, jobs: SQLiteJobRepository, r
         try:
             plan = runtime.plan_content(_brief(request))
         except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+            raise _provider_http_error(exc) from exc
         return {"data": {"mode": "ai", "brief": request.model_dump(), "plan": _serialize_plan(plan)}, "requestId": http_request.state.request_id}
 
     @router.post("/projects/{project_id}/start", status_code=status.HTTP_202_ACCEPTED)
@@ -68,7 +76,7 @@ def build_router(projects: SQLiteProjectRepository, jobs: SQLiteJobRepository, r
         try:
             plan = runtime.plan_content(brief, request.model)
         except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+            raise _provider_http_error(exc) from exc
         model_id = request.model or os.getenv("AICF_TEXT_MODEL", "gpt-5.6-luna")
         provider = request.provider or "openai"
         job_input = JobInput(parameters={**request.model_dump(), "plan": _serialize_plan(plan)}, deterministic=False)

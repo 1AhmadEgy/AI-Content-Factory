@@ -1,12 +1,13 @@
 package com.example.feature
 
-import com.example.core.model.*
-import com.example.data.repository.*
-
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.launch
+import com.example.core.model.*
+import com.example.data.repository.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 
 class FactoryViewModel : ViewModel() {
     private val repo = Graph.repository
@@ -17,27 +18,38 @@ class FactoryViewModel : ViewModel() {
     val scenes: StateFlow<List<Scene>> = repo.scenes
     val jobs: StateFlow<List<GenerationJob>> = repo.jobs
 
-    fun addProject(name: String, description: String) {
+    private val _errorMessage = MutableStateFlow<String?>(null)
+    val errorMessage: StateFlow<String?> = _errorMessage
+
+    fun clearError() {
+        _errorMessage.value = null
+    }
+
+    private fun launchSafely(block: suspend () -> Unit) {
         viewModelScope.launch {
-            repo.addProject(name, description)
+            try {
+                block()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                _errorMessage.value = error.message?.takeIf { it.isNotBlank() } ?: "Unexpected error"
+            }
         }
     }
 
-    fun addSeries(projectId: String, title: String) {
-        viewModelScope.launch {
-            repo.addSeries(projectId, title)
-        }
+    fun addProject(name: String, description: String) = launchSafely {
+        repo.addProject(name, description)
     }
 
-    fun addEpisode(seriesId: String, number: Int, title: String) {
-        viewModelScope.launch {
-            repo.addEpisode(seriesId, number, title)
-        }
+    fun addSeries(projectId: String, title: String) = launchSafely {
+        repo.addSeries(projectId, title)
     }
 
-    fun generateScene(sceneId: String) {
-        viewModelScope.launch {
-            repo.generateScene(sceneId)
-        }
+    fun addEpisode(seriesId: String, number: Int, title: String) = launchSafely {
+        repo.addEpisode(seriesId, number, title)
+    }
+
+    fun generateScene(sceneId: String) = launchSafely {
+        repo.generateScene(sceneId)
     }
 }
