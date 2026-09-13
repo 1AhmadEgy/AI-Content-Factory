@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: android-apk-${{ github.event.pull_request.number || github.ref }}
@@ -47,8 +47,16 @@ jobs:
         with:
           gradle-version: ${{ env.GRADLE_VERSION }}
 
-      - name: Verify Gradle installation
-        run: gradle --version
+      - name: Bootstrap and verify Gradle wrapper
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -x ./gradlew || ! -f gradle/wrapper/gradle-wrapper.jar ]]; then
+            gradle wrapper --gradle-version "${GRADLE_VERSION}" --distribution-type bin
+          fi
+          test -x ./gradlew
+          test -s gradle/wrapper/gradle-wrapper.jar
+          ./gradlew --version
 
       - name: Prepare CI release signing key
         run: |
@@ -66,18 +74,21 @@ jobs:
           echo "KEY_PASSWORD=android" >> "$GITHUB_ENV"
 
       - name: Run Android lint
-        run: gradle lint --no-daemon
+        run: ./gradlew lint --no-daemon
 
       - name: Run unit tests
-        run: gradle test --no-daemon
+        run: ./gradlew test --no-daemon
 
       - name: Build release APK
-        run: gradle :app:assembleRelease --no-daemon --stacktrace
+        run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
 
       - name: Verify APK
         run: |
-          test -s app/build/outputs/apk/release/app-release.apk
-          file app/build/outputs/apk/release/app-release.apk
+          set -euo pipefail
+          APK=app/build/outputs/apk/release/app-release.apk
+          test -s "$APK"
+          file "$APK"
+          apksigner verify --verbose "$APK"
 
       - name: Prepare APK
         run: |
@@ -91,21 +102,3 @@ jobs:
           path: release/${{ env.APK_NAME }}
           if-no-files-found: error
           retention-days: 30
-
-      - name: Delete previous latest release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
-
-      - name: Create latest release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create latest \
-            "release/${APK_NAME}" \
-            --title "AI Content Factory - Latest APK" \
-            --notes "Automated release APK from the latest main branch. Signed with an ephemeral CI key; use a production keystore for store distribution." \
-            --prerelease
