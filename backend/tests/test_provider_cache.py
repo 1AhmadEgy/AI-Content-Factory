@@ -8,28 +8,32 @@ from app.infrastructure.sqlite import SQLiteRepositories
 from app.workers.provider_worker import ProviderGenerationWorker
 
 
-def _job(job_id: str, parameters: dict) -> GenerationJob:
+def _job(job_id: str, parameters: dict, *, target_type: str = "shot", target_id: str = "shot-1") -> GenerationJob:
     return GenerationJob(
         id=job_id,
         project_id="project-1",
         type=JobType.IMAGE,
-        target_type="shot",
-        target_id="shot-1",
+        target_type=target_type,
+        target_id=target_id,
         status=JobStatus.QUEUED,
         priority=10,
         input=JobInput(parameters=parameters),
     )
 
 
-def test_provider_cache_key_changes_when_provider_model_or_parameters_change() -> None:
+def test_provider_cache_key_changes_when_provider_model_target_or_parameters_change() -> None:
     first = ProviderGenerationWorker._cache_key("openai", "image-model", _job("a", {"prompt": "cat", "size": "1024x1024"}))
     same_request = ProviderGenerationWorker._cache_key("openai", "image-model", _job("b", {"size": "1024x1024", "prompt": "cat"}))
     different_model = ProviderGenerationWorker._cache_key("openai", "other-model", _job("c", {"prompt": "cat", "size": "1024x1024"}))
     different_prompt = ProviderGenerationWorker._cache_key("openai", "image-model", _job("d", {"prompt": "dog", "size": "1024x1024"}))
+    different_target_id = ProviderGenerationWorker._cache_key("openai", "image-model", _job("e", {"prompt": "cat", "size": "1024x1024"}, target_id="shot-2"))
+    different_target_type = ProviderGenerationWorker._cache_key("openai", "image-model", _job("f", {"prompt": "cat", "size": "1024x1024"}, target_type="scene"))
 
     assert first == same_request
     assert first != different_model
     assert first != different_prompt
+    assert first != different_target_id
+    assert first != different_target_type
 
 
 def test_provider_cache_stores_success_and_counts_hits() -> None:
