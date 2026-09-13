@@ -15,6 +15,7 @@ concurrency:
 
 env:
   APK_NAME: AI-Content-Factory.apk
+  GRADLE_VERSION: "9.3.1"
 
 jobs:
   build:
@@ -43,12 +44,11 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
 
-      - name: Prepare Gradle wrapper
-        run: chmod +x ./gradlew
-
-      - name: Verify Gradle wrapper
-        run: ./gradlew --version
+      - name: Verify Gradle
+        run: gradle --version
 
       - name: Prepare CI release signing key
         run: |
@@ -66,13 +66,13 @@ jobs:
           echo "KEY_PASSWORD=android" >> "$GITHUB_ENV"
 
       - name: Run Android lint
-        run: ./gradlew lint --no-daemon
+        run: gradle lint --no-daemon
 
       - name: Run unit tests
-        run: ./gradlew test --no-daemon
+        run: gradle test --no-daemon
 
       - name: Build release APK
-        run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
+        run: gradle :app:assembleRelease --no-daemon --stacktrace
 
       - name: Verify APK
         run: |
