@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   android:
-    name: Android debug APK and release validation
+    name: Android APK build, tests and lint
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
@@ -45,21 +45,36 @@ jobs:
       - name: Build debug APK
         run: gradle --no-daemon :app:assembleDebug --stacktrace
 
-      - name: Build unsigned release APK for validation
-        run: gradle --no-daemon :app:assembleRelease --stacktrace
+      - name: Build release APK with ephemeral CI signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          keytool -genkeypair -v \
+            -keystore "$RUNNER_TEMP/ci-upload-key.jks" \
+            -storepass ci-password \
+            -keypass ci-password \
+            -alias upload \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 1 \
+            -dname "CN=AI Content Factory CI,O=CI,C=US"
+          gradle --no-daemon :app:assembleRelease --stacktrace
         env:
-          STORE_PASSWORD: ""
-          KEY_PASSWORD: ""
+          KEYSTORE_PATH: ${{ runner.temp }}/ci-upload-key.jks
+          STORE_PASSWORD: ci-password
+          KEY_PASSWORD: ci-password
 
       - name: Validate APK artifacts
         shell: bash
         run: |
           set -euo pipefail
           test -s app/build/outputs/apk/debug/app-debug.apk
-          test -s app/build/outputs/apk/release/app-release-unsigned.apk
+          test -s app/build/outputs/apk/release/app-release.apk
           file app/build/outputs/apk/debug/app-debug.apk
+          file app/build/outputs/apk/release/app-release.apk
           unzip -t app/build/outputs/apk/debug/app-debug.apk >/dev/null
-          unzip -t app/build/outputs/apk/release/app-release-unsigned.apk >/dev/null
+          unzip -t app/build/outputs/apk/release/app-release.apk >/dev/null
+          apksigner verify --verbose app/build/outputs/apk/release/app-release.apk
 
       - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
@@ -67,6 +82,6 @@ jobs:
           name: ai-content-factory-apks
           path: |
             app/build/outputs/apk/debug/app-debug.apk
-            app/build/outputs/apk/release/app-release-unsigned.apk
+            app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
