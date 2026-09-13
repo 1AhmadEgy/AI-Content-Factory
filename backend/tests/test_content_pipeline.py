@@ -51,7 +51,7 @@ def test_scene_completion_creates_shot_jobs() -> None:
 def test_shot_completion_creates_only_supported_generation_jobs() -> None:
     queued = []
     pipeline = ContentPipelineOrchestrator(_service(), queued.append)
-    shot = _job(JobType.SHOT, {"shot": {"number": 1, "prompt": "cinematic city"}, "shotNumber": 1})
+    shot = _job(JobType.SHOT, {"shot": {"number": 1, "prompt": "cinematic city"}, "shotNumber": 1, "takeCount": 1})
 
     created = pipeline.on_completed(shot)
     assert [j.type for j in created] == [JobType.IMAGE]
