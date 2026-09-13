@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   android:
-    name: Android APK build, tests and lint
+    name: Android APK/AAB build, tests and lint
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
@@ -45,7 +45,7 @@ jobs:
       - name: Build debug APK
         run: gradle --no-daemon :app:assembleDebug --stacktrace
 
-      - name: Build release APK with ephemeral CI signing key
+      - name: Build release APK and AAB with ephemeral CI signing key
         shell: bash
         run: |
           set -euo pipefail
@@ -58,30 +58,35 @@ jobs:
             -keysize 2048 \
             -validity 1 \
             -dname "CN=AI Content Factory CI,O=CI,C=US"
-          gradle --no-daemon :app:assembleRelease --stacktrace
+          gradle --no-daemon :app:assembleRelease :app:bundleRelease --stacktrace
         env:
           KEYSTORE_PATH: ${{ runner.temp }}/ci-upload-key.jks
           STORE_PASSWORD: ci-password
           KEY_PASSWORD: ci-password
+          KEY_ALIAS: upload
 
-      - name: Validate APK artifacts
+      - name: Validate APK and AAB artifacts
         shell: bash
         run: |
           set -euo pipefail
           test -s app/build/outputs/apk/debug/app-debug.apk
           test -s app/build/outputs/apk/release/app-release.apk
+          test -s app/build/outputs/bundle/release/app-release.aab
           file app/build/outputs/apk/debug/app-debug.apk
           file app/build/outputs/apk/release/app-release.apk
+          file app/build/outputs/bundle/release/app-release.aab
           unzip -t app/build/outputs/apk/debug/app-debug.apk >/dev/null
           unzip -t app/build/outputs/apk/release/app-release.apk >/dev/null
+          unzip -t app/build/outputs/bundle/release/app-release.aab >/dev/null
           apksigner verify --verbose app/build/outputs/apk/release/app-release.apk
 
-      - name: Upload APK artifacts
+      - name: Upload Android artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ai-content-factory-apks
+          name: ai-content-factory-android
           path: |
             app/build/outputs/apk/debug/app-debug.apk
             app/build/outputs/apk/release/app-release.apk
+            app/build/outputs/bundle/release/app-release.aab
           if-no-files-found: error
           retention-days: 14
