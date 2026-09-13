@@ -5,6 +5,7 @@ import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
+import java.net.URI
 import java.util.concurrent.TimeUnit
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
@@ -18,6 +19,13 @@ object NetworkClient {
         val configured = BuildConfig.AICF_API_BASE_URL.trim()
         check(configured.isNotBlank() && configured != NOT_CONFIGURED) {
             "AICF_API_BASE_URL is not configured. Configure the backend URL for this build."
+        }
+        val uri = URI(configured)
+        check(uri.scheme.equals("https", ignoreCase = true)) {
+            "AICF_API_BASE_URL must use HTTPS. Cleartext HTTP is disabled for production security."
+        }
+        check(!uri.userInfo.isNullOrBlank()) {
+            "AICF_API_BASE_URL must not embed credentials in the URL."
         }
         return if (configured.endsWith('/')) configured else "$configured/"
     }
