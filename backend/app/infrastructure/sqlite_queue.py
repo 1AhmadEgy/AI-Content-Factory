@@ -9,7 +9,7 @@ from .sqlite import SQLiteJobRepository, SQLiteStore
 
 
 class SQLiteJobQueue(JobQueue):
-    """Persistent single-database queue with atomic leases and recovery."""
+    """Persistent single-database queue with atomic leases and crash recovery."""
 
     def __init__(self, store: SQLiteStore, jobs: SQLiteJobRepository, lease_seconds: int = 300) -> None:
         if lease_seconds <= 0:
@@ -32,12 +32,7 @@ class SQLiteJobQueue(JobQueue):
             )
 
     def enqueue(self, job: GenerationJob) -> None:
-        """Validate queueability without rewriting a possibly stale job snapshot.
-
-        Jobs are already durably created before enqueue is called. Rewriting the
-        complete row here could overwrite a newer execution-owned state if a
-        stale in-memory instance reached this method concurrently.
-        """
+        """Validate queueability without rewriting a possibly stale job snapshot."""
         if job.status is not JobStatus.QUEUED:
             raise ValueError("Only QUEUED jobs may be enqueued")
         current = self.jobs.get(job.id)
@@ -66,7 +61,7 @@ class SQLiteJobQueue(JobQueue):
                     row = self.store.connection.execute(
                         """SELECT j.* FROM jobs j
                         LEFT JOIN job_leases l ON l.job_id = j.id
-                        WHERE j.status IN ('QUEUED', 'RETRYING') AND l.job_id IS NULL
+                        WHERE j.status = 'QUEUED' AND l.job_id IS NULL
                         ORDER BY j.priority DESC, j.created_at ASC
                         LIMIT 1"""
                     ).fetchone()
@@ -74,7 +69,7 @@ class SQLiteJobQueue(JobQueue):
                     row = self.store.connection.execute(
                         """SELECT j.* FROM jobs j
                         LEFT JOIN job_leases l ON l.job_id = j.id
-                        WHERE j.id = ? AND j.status IN ('QUEUED', 'RETRYING') AND l.job_id IS NULL""",
+                        WHERE j.id = ? AND j.status = 'QUEUED' AND l.job_id IS NULL""",
                         (job_id,),
                     ).fetchone()
                 if row is None:
@@ -96,7 +91,7 @@ class SQLiteJobQueue(JobQueue):
                 cursor = self.store.connection.execute(
                     """UPDATE jobs SET status='RUNNING', attempt=attempt+1,
                     started_at=?, completed_at=NULL, updated_at=?
-                    WHERE id=? AND status IN ('QUEUED', 'RETRYING')""",
+                    WHERE id=? AND status='QUEUED'""",
                     (now.isoformat(), now.isoformat(), lease.job_id),
                 )
                 if cursor.rowcount != 1:
@@ -116,8 +111,8 @@ class SQLiteJobQueue(JobQueue):
         expires = now + timedelta(seconds=self.lease_seconds)
         with self.store._lock, self.store.connection:
             cursor = self.store.connection.execute(
-                "UPDATE job_leases SET expires_at=? WHERE job_id=? AND lease_id=? AND expires_at > ?",
-                (expires.isoformat(), lease.job_id, lease.lease_id, now.isoformat()),
+                "UPDATE job_leases SET expires_at=? WHERE job_id=? AND worker_id=? AND lease_id=? AND expires_at > ?",
+                (expires.isoformat(), lease.job_id, lease.worker_id, lease.lease_id, now.isoformat()),
             )
             if cursor.rowcount != 1:
                 raise KeyError("JOB_LEASE_NOT_FOUND")
@@ -126,8 +121,8 @@ class SQLiteJobQueue(JobQueue):
         now = datetime.now(timezone.utc).isoformat()
         with self.store._lock:
             row = self.store.connection.execute(
-                "SELECT 1 FROM job_leases WHERE job_id=? AND lease_id=? AND expires_at > ?",
-                (lease.job_id, lease.lease_id, now),
+                "SELECT 1 FROM job_leases WHERE job_id=? AND worker_id=? AND lease_id=? AND expires_at > ?",
+                (lease.job_id, lease.worker_id, lease.lease_id, now),
             ).fetchone()
         return row is not None
 
@@ -146,8 +141,8 @@ class SQLiteJobQueue(JobQueue):
             try:
                 lease_row = self.store.connection.execute(
                     """SELECT job_id FROM job_leases
-                    WHERE job_id=? AND lease_id=? AND expires_at > ?""",
-                    (lease.job_id, lease.lease_id, now.isoformat()),
+                    WHERE job_id=? AND worker_id=? AND lease_id=? AND expires_at > ?""",
+                    (lease.job_id, lease.worker_id, lease.lease_id, now.isoformat()),
                 ).fetchone()
                 if lease_row is None:
                     raise KeyError("JOB_LEASE_NOT_FOUND")
@@ -157,6 +152,8 @@ class SQLiteJobQueue(JobQueue):
                     if status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}
                     else None
                 )
+                # RETRYING is an execution result, not a runnable queue state.
+                # Requeue it atomically while releasing the old lease.
                 persisted_status = JobStatus.QUEUED if status is JobStatus.RETRYING else status
                 cursor = self.store.connection.execute(
                     """UPDATE jobs SET status=?, completed_at=?, updated_at=?
@@ -166,12 +163,9 @@ class SQLiteJobQueue(JobQueue):
                 if cursor.rowcount != 1:
                     raise RuntimeError(f"Job is no longer RUNNING: {lease.job_id}")
 
-                # Retry requeue is completed inside the same transaction that
-                # releases the lease. This prevents another worker from claiming
-                # RETRYING and then being overwritten by the old executor.
                 self.store.connection.execute(
-                    "DELETE FROM job_leases WHERE job_id=? AND lease_id=?",
-                    (lease.job_id, lease.lease_id),
+                    "DELETE FROM job_leases WHERE job_id=? AND worker_id=? AND lease_id=?",
+                    (lease.job_id, lease.worker_id, lease.lease_id),
                 )
                 self.store.connection.commit()
             except Exception:
@@ -192,7 +186,8 @@ class SQLiteJobQueue(JobQueue):
                     (now.isoformat(),),
                 ).fetchall()
                 for row in rows:
-                    next_status = "RETRYING" if row["attempt"] < row["max_attempts"] else "FAILED"
+                    retryable = int(row["attempt"]) < int(row["max_attempts"])
+                    next_status = "QUEUED" if retryable else "FAILED"
                     cursor = self.store.connection.execute(
                         """UPDATE jobs SET status=?, updated_at=?, completed_at=?,
                         error_code='LEASE_EXPIRED', error_message=?
@@ -200,9 +195,9 @@ class SQLiteJobQueue(JobQueue):
                         (
                             next_status,
                             now.isoformat(),
-                            now.isoformat() if next_status == "FAILED" else None,
-                            "Worker lease expired; job scheduled for retry"
-                            if next_status == "RETRYING"
+                            now.isoformat() if not retryable else None,
+                            "Worker lease expired; job requeued for another attempt"
+                            if retryable
                             else "Worker lease expired; retry budget exhausted",
                             row["job_id"],
                         ),
