@@ -13,10 +13,10 @@ def build_provenance(
 ) -> AssetProvenance:
     """Build a normalized provenance record for every produced asset."""
     metadata_payload = dict(metadata or {})
-    provider = job.provider or str(metadata_payload.get("provider", "")).strip()
+    provider = getattr(job, "provider", None) or str(metadata_payload.get("provider", "")).strip()
     if not provider:
         raise ValueError("PROVENANCE_PROVIDER_REQUIRED")
-    model = job.model or str(metadata_payload.get("model", "")).strip() or None
+    model = getattr(job, "model", None) or str(metadata_payload.get("model", "")).strip() or None
     return AssetProvenance(
         provider=provider,
         model=model,
