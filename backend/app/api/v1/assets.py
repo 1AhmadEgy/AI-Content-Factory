@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -7,6 +8,8 @@ from fastapi.responses import FileResponse
 
 from ...domain.assets import AssetStatus
 from ...infrastructure.asset_repository import SQLiteAssetRepository
+
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _serialize(asset) -> dict:
@@ -22,6 +25,16 @@ def _serialize(asset) -> dict:
             "metadata": asset.provenance.metadata,
         },
     }
+
+
+def _safe_asset_path(asset) -> Path:
+    """Accept only the content-addressed layout produced by LocalAssetStorage."""
+    if not _SHA256_RE.fullmatch(asset.sha256 or ""):
+        raise HTTPException(status_code=500, detail="ASSET_METADATA_INVALID")
+    path = Path(asset.path)
+    if path.name != asset.sha256 or path.parent.name != asset.sha256[:2]:
+        raise HTTPException(status_code=500, detail="ASSET_PATH_INVALID")
+    return path
 
 
 def build_router(repository: SQLiteAssetRepository) -> APIRouter:
@@ -53,7 +66,7 @@ def build_router(repository: SQLiteAssetRepository) -> APIRouter:
         asset = repository.get(asset_id)
         if asset is None: raise HTTPException(status_code=404, detail="ASSET_NOT_FOUND")
         if asset.status is not AssetStatus.READY: raise HTTPException(status_code=409, detail="ASSET_NOT_READY")
-        path = Path(asset.path)
+        path = _safe_asset_path(asset)
         if not path.is_file(): raise HTTPException(status_code=404, detail="ASSET_FILE_NOT_FOUND")
         return FileResponse(path=str(path), media_type=asset.mime_type, filename=path.name)
 
