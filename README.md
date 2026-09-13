@@ -2,7 +2,7 @@
 
 AI Content Factory هو نظام إنتاج محتوى آلي يبدأ من الفكرة أو القصة، ثم يحولها إلى مشاريع وحلقات ومشاهد ولقطات وأصول صوتية وبصرية، مع QC واختيار أفضل Take وتجميع الناتج النهائي.
 
-**مهم:** مسار الإنتاج لم يعد يعتمد على بيانات تجريبية أو ملفات Media وهمية. التوليد الإنتاجي يتطلب مزود AI حقيقي، والرندر الإنتاجي يتم بواسطة FFmpeg/FFprobe.
+**مهم:** مسار الإنتاج لا يعتمد على بيانات تجريبية أو ملفات Media وهمية. التوليد الإنتاجي يتطلب مزود AI حقيقي، والرندر الإنتاجي يتم بواسطة FFmpeg/FFprobe.
 
 ---
 
@@ -15,7 +15,7 @@ AI Content Factory هو نظام إنتاج محتوى آلي يبدأ من ال
 5. شغّل الـBackend.
 6. استخدم تطبيق Android كواجهة تحكم؛ لا يقوم بإنشاء بيانات Demo تلقائيًا.
 
-التفاصيل الكاملة في `PRODUCTION_PROVIDER_SETUP.md`.
+راجع `PRODUCTION_PROVIDER_SETUP.md` لتفاصيل مزودي الإنتاج.
 
 إذا لم توجد بيانات اعتماد المزود، لا يتم إنشاء ناتج وهمي؛ يفشل الطلب بوضوح بدل الادعاء بأنه اكتمل.
 
@@ -43,6 +43,14 @@ Android App
         Final MP4
 ```
 
+## 📚 Documentation
+
+الوثائق الفنية المنظمة موجودة داخل `docs/specifications/`، وتشمل API والعقود وقاعدة البيانات والـQueue والـWorkers والـProviders والـAssets والـQC والـTimeline والنشر.
+
+خارطة الإصلاح والتقوية: `REPAIR_ROADMAP.md`.
+
+---
+
 ## 📱 Android
 
 التطبيق مبني باستخدام Kotlin وJetpack Compose وRoom وRetrofit وOkHttp وCoroutines وMaterial 3.
@@ -55,7 +63,10 @@ Android App
 
 ## ⚙️ GitHub Actions
 
-يتم بناء APK تلقائيًا عند تحديث `main`، ويمكن تشغيل البناء يدويًا من GitHub Actions.
+- `android-apk.yml`: فحص وبناء APK للـPR و`main`.
+- `ci.yml`: اختبارات Backend وفحص Docker والنشر إلى GHCR عند الدمج إلى `main`.
+- `release-apk.yml`: إصدار APK موقّع للإنتاج باستخدام GitHub Environment `production`.
+- `unzip-fixes.yml`: استيراد ZIPs المرفوعة إلى فرع مراجعة مستقل، دون الكتابة المباشرة إلى `main`.
 
 ## 📦 Backend
 
@@ -78,6 +89,8 @@ pytest
 ## 🔐 الأمان
 
 لا تضع داخل Git أي API Keys أو كلمات مرور أو Keystores أو بيانات اعتماد الإنتاج. استخدم متغيرات البيئة وGitHub Secrets.
+
+الـAndroid هو Control Plane؛ أسرار مزودي AI يجب أن تبقى على الخادم ولا تُضمّن داخل APK الإنتاجي.
 
 ## 📄 الترخيص
 
