@@ -16,6 +16,7 @@ concurrency:
 env:
   APK_NAME: AI-Content-Factory.apk
   GRADLE_VERSION: "9.3.1"
+  ANDROID_BUILD_TOOLS: "36.0.0"
 
 jobs:
   build:
@@ -48,7 +49,7 @@ jobs:
         run: yes | sdkmanager --licenses || true
 
       - name: Install Android SDK 36
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+        run: sdkmanager "platforms;android-36" "build-tools;${ANDROID_BUILD_TOOLS}"
 
       - name: Verify Gradle toolchain
         run: gradle --version
@@ -92,9 +93,11 @@ jobs:
         run: |
           set -euo pipefail
           APK=app/build/outputs/apk/release/app-release.apk
+          APKSIGNER="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/apksigner"
           test -s "$APK"
+          test -x "$APKSIGNER"
           file "$APK"
-          apksigner verify --verbose "$APK"
+          "$APKSIGNER" verify --verbose "$APK"
           SHA256="$(sha256sum "$APK" | cut -d' ' -f1)"
           COMMIT="$(git rev-parse HEAD)"
           EXPECTED="${{ github.event.pull_request.head.sha || github.sha }}"
@@ -108,7 +111,7 @@ jobs:
           mkdir -p release
           cp app/build/outputs/apk/release/app-release.apk "release/${APK_NAME}"
           APK_SHA256="$(sha256sum "release/${APK_NAME}" | cut -d' ' -f1)"
-          printf 'commit=%s\nsha256=%s\ngradle=%s\n' "$(git rev-parse HEAD)" "$APK_SHA256" "$GRADLE_VERSION" > release/BUILD_PROVENANCE.txt
+          printf 'commit=%s\nsha256=%s\ngradle=%s\nbuildTools=%s\n' "$(git rev-parse HEAD)" "$APK_SHA256" "$GRADLE_VERSION" "$ANDROID_BUILD_TOOLS" > release/BUILD_PROVENANCE.txt
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
