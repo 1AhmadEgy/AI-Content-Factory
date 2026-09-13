@@ -98,6 +98,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install media build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y inkscape ffmpeg
+
       - name: Build canonical brand assets
         run: |
           chmod +x build_brand_assets.sh build_video_assets.sh
