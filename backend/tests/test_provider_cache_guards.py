@@ -35,6 +35,8 @@ def test_cache_stampede_lock_has_single_owner_and_expires() -> None:
 def test_purge_expired_reports_hit_statistics() -> None:
     cache = SQLiteProviderCache(SQLiteStore(":memory:"))
     assert cache.put("k", "openai", "model", output_text="x", output_bytes=None, output_mime_type=None, output_filename=None, output_metadata={}, metrics={})
+    # Exercise the hit counter before measuring the value at expiry.
+    assert cache.get("k") is not None
     expired = datetime.now(UTC) - timedelta(seconds=1)
     result = cache.purge_expired_with_stats(expired)
     assert result["purged"] == 0
