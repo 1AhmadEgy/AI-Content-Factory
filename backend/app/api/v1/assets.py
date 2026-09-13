@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -28,12 +29,17 @@ def _serialize(asset) -> dict:
 
 
 def _safe_asset_path(asset) -> Path:
-    """Accept only the content-addressed layout produced by LocalAssetStorage."""
+    """Accept only files inside the configured content-addressed asset root."""
     if not _SHA256_RE.fullmatch(asset.sha256 or ""):
         raise HTTPException(status_code=500, detail="ASSET_METADATA_INVALID")
     path = Path(asset.path)
     if path.name != asset.sha256 or path.parent.name != asset.sha256[:2]:
         raise HTTPException(status_code=500, detail="ASSET_PATH_INVALID")
+    root = Path(os.getenv("AICF_ASSET_ROOT", "./data/assets")).resolve()
+    try:
+        path.resolve().relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail="ASSET_PATH_OUTSIDE_ROOT") from exc
     return path
 
 
