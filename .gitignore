@@ -1,18 +1,43 @@
+# Android / Gradle
 *.iml
-.gradle
-.kotlin
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
+.gradle/
+.kotlin/
 local.properties
+.idea/caches/
+.idea/libraries/
+.idea/modules.xml
+.idea/workspace.xml
+.idea/navEditor.xml
+.idea/assetWizardSettings.xml
+/build/
+/captures/
+.externalNativeBuild/
+.cxx/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+.venv/
+venv/
+env/
+
+# Build / packaging
+dist/
+build/
+*.egg-info/
+
+# Local configuration / secrets
 .env
+.env.*
+!.env.example
 debug.keystore
+
+# OS
+.DS_Store
+Thumbs.db

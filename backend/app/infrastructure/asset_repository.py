@@ -42,6 +42,22 @@ class SQLiteAssetRepository(AssetRepository):
                          license_status=LicenseStatus(p.get("licenseStatus", LicenseStatus.UNKNOWN.value)),
                          metadata=p.get("metadata", {})), created_at=_parse_dt(row["created_at"]))
 
+    @staticmethod
+    def _filters(project_id: str | None, asset_type: str | None, status: AssetStatus | None) -> tuple[str, list[object]]:
+        clauses: list[str] = []
+        params: list[object] = []
+        if project_id:
+            clauses.append("project_id=?")
+            params.append(project_id)
+        if asset_type:
+            clauses.append("type=?")
+            params.append(asset_type.value if isinstance(asset_type, AssetType) else asset_type)
+        if status:
+            clauses.append("status=?")
+            params.append(status.value)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        return where, params
+
     def create(self, asset: Asset) -> Asset:
         self.store._insert("INSERT INTO assets(id,project_id,type,path,mime_type,size_bytes,sha256,status,provenance_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
                            (asset.id, asset.project_id, asset.type.value, asset.path, asset.mime_type, asset.size_bytes,
@@ -61,13 +77,29 @@ class SQLiteAssetRepository(AssetRepository):
                 raise KeyError(f"Asset not found: {asset.id}")
         return asset
 
+    def count(self, *, project_id: str | None = None, asset_type: str | None = None,
+              status: AssetStatus | None = None) -> int:
+        where, params = self._filters(project_id, asset_type, status)
+        with self.store._lock:
+            row = self.store.connection.execute(f"SELECT COUNT(*) AS total FROM assets{where}", params).fetchone()
+        return int(row["total"] if row else 0)
+
     def list(self, *, project_id: str | None = None, asset_type: str | None = None,
              status: AssetStatus | None = None, limit: int = 100) -> list[Asset]:
-        limit = max(1, min(limit, 500)); clauses=[]; params=[]
-        if project_id: clauses.append("project_id=?"); params.append(project_id)
-        if asset_type: clauses.append("type=?"); params.append(asset_type.value if isinstance(asset_type, AssetType) else asset_type)
-        if status: clauses.append("status=?"); params.append(status.value)
-        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        limit = max(1, min(limit, 500))
+        where, params = self._filters(project_id, asset_type, status)
         with self.store._lock:
             rows = self.store.connection.execute(f"SELECT * FROM assets{where} ORDER BY created_at DESC,id DESC LIMIT ?", (*params, limit)).fetchall()
+        return [self._from_row(row) for row in rows]
+
+    def list_page(self, *, project_id: str | None = None, asset_type: str | None = None,
+                  status: AssetStatus | None = None, limit: int = 50, offset: int = 0) -> list[Asset]:
+        limit = max(1, min(limit, 500))
+        offset = max(0, offset)
+        where, params = self._filters(project_id, asset_type, status)
+        with self.store._lock:
+            rows = self.store.connection.execute(
+                f"SELECT * FROM assets{where} ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?",
+                (*params, limit, offset),
+            ).fetchall()
         return [self._from_row(row) for row in rows]

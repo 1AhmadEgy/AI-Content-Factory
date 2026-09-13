@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 from ..domain.assets import Asset
+
+
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class LocalAssetStorage:
@@ -16,6 +20,17 @@ class LocalAssetStorage:
     def __init__(self, root: str | Path) -> None:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _validate_sha256(sha256: str) -> str:
+        value = str(sha256 or "").strip().lower()
+        if not _SHA256_RE.fullmatch(value):
+            raise ValueError("Invalid SHA-256 asset identifier")
+        return value
+
+    def _path_for(self, sha256: str) -> Path:
+        digest = self._validate_sha256(sha256)
+        return self.root / digest[:2] / digest
 
     def put_bytes(self, data: bytes) -> tuple[str, str, int]:
         digest = hashlib.sha256(data).hexdigest()
@@ -69,22 +84,25 @@ class LocalAssetStorage:
                 temporary.unlink(missing_ok=True)
 
     def read_bytes(self, sha256: str) -> bytes:
-        path = self.root / sha256[:2] / sha256
+        path = self._path_for(sha256)
         data = path.read_bytes()
-        if hashlib.sha256(data).hexdigest() != sha256:
-            raise IOError(f"Asset checksum mismatch: {sha256}")
+        if hashlib.sha256(data).hexdigest() != path.name:
+            raise IOError(f"Asset checksum mismatch: {path.name}")
         return data
 
     def exists(self, sha256: str) -> bool:
-        return (self.root / sha256[:2] / sha256).is_file()
+        return self._path_for(sha256).is_file()
 
     def delete(self, sha256: str) -> None:
-        path = self.root / sha256[:2] / sha256
+        path = self._path_for(sha256)
         if path.exists():
             path.unlink()
 
     def verify(self, asset: Asset) -> bool:
-        path = self.root / asset.sha256[:2] / asset.sha256
+        try:
+            path = self._path_for(asset.sha256)
+        except ValueError:
+            return False
         if not path.is_file():
             return False
         try:

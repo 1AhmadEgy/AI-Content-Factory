@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import re
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -7,6 +9,8 @@ from fastapi.responses import FileResponse
 
 from ...domain.assets import AssetStatus
 from ...infrastructure.asset_repository import SQLiteAssetRepository
+
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _serialize(asset) -> dict:
@@ -24,17 +28,52 @@ def _serialize(asset) -> dict:
     }
 
 
+def _safe_asset_path(asset) -> Path:
+    """Accept only files inside the configured content-addressed asset root."""
+    if not _SHA256_RE.fullmatch(asset.sha256 or ""):
+        raise HTTPException(status_code=500, detail="ASSET_METADATA_INVALID")
+    path = Path(asset.path)
+    if path.name != asset.sha256 or path.parent.name != asset.sha256[:2]:
+        raise HTTPException(status_code=500, detail="ASSET_PATH_INVALID")
+    root = Path(os.getenv("AICF_ASSET_ROOT", "./data/assets")).resolve()
+    try:
+        path.resolve().relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail="ASSET_PATH_OUTSIDE_ROOT") from exc
+    return path
+
+
 def build_router(repository: SQLiteAssetRepository) -> APIRouter:
     router = APIRouter(prefix="/api/v1/assets", tags=["assets"])
 
     @router.get("")
-    def list_assets(request: Request, projectId: str | None = Query(default=None), type: str | None = Query(default=None), status: AssetStatus | None = Query(default=None), page: int = Query(default=1, ge=1), pageSize: int = Query(default=50, ge=1, le=200)) -> dict:
-        page_size = pageSize
-        items = repository.list(project_id=projectId, asset_type=type, status=status, limit=min(500, page * page_size))
-        total_items = len(items)
-        start = (page - 1) * page_size
-        page_items = items[start:start + page_size]
-        return {"data": [_serialize(asset) for asset in page_items], "pagination": {"page": page, "pageSize": page_size, "total": total_items, "hasNext": start + page_size < total_items}, "requestId": request.state.request_id}
+    def list_assets(
+        request: Request,
+        projectId: str | None = Query(default=None),
+        type: str | None = Query(default=None),
+        status: AssetStatus | None = Query(default=None),
+        page: int = Query(default=1, ge=1),
+        pageSize: int = Query(default=50, ge=1, le=200),
+    ) -> dict:
+        total_items = repository.count(project_id=projectId, asset_type=type, status=status)
+        start = (page - 1) * pageSize
+        page_items = repository.list_page(
+            project_id=projectId,
+            asset_type=type,
+            status=status,
+            limit=pageSize,
+            offset=start,
+        )
+        return {
+            "data": [_serialize(asset) for asset in page_items],
+            "pagination": {
+                "page": page,
+                "pageSize": pageSize,
+                "total": total_items,
+                "hasNext": start + len(page_items) < total_items,
+            },
+            "requestId": request.state.request_id,
+        }
 
     @router.get("/{asset_id}")
     def get_asset(asset_id: str, request: Request) -> dict:
@@ -53,7 +92,7 @@ def build_router(repository: SQLiteAssetRepository) -> APIRouter:
         asset = repository.get(asset_id)
         if asset is None: raise HTTPException(status_code=404, detail="ASSET_NOT_FOUND")
         if asset.status is not AssetStatus.READY: raise HTTPException(status_code=409, detail="ASSET_NOT_READY")
-        path = Path(asset.path)
+        path = _safe_asset_path(asset)
         if not path.is_file(): raise HTTPException(status_code=404, detail="ASSET_FILE_NOT_FOUND")
         return FileResponse(path=str(path), media_type=asset.mime_type, filename=path.name)
 
