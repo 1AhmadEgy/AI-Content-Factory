@@ -34,12 +34,8 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
-
-      - name: Accept Android licenses
-        run: yes | sdkmanager --licenses || true
-
-      - name: Install Android SDK 36
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+        with:
+          packages: "platform-tools platforms;android-36 build-tools;36.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -50,19 +46,35 @@ jobs:
         run: gradle --version
 
       - name: Prepare CI release signing key
+        env:
+          RELEASE_KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_B64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
         run: |
-          keytool -genkeypair -v \
-            -keystore ci-release.jks \
-            -storepass android \
-            -keypass android \
-            -alias upload \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 3650 \
-            -dname "CN=AI Content Factory, OU=CI, O=AI Content Factory, L=Tripoli, ST=Tripoli, C=LY"
-          echo "KEYSTORE_PATH=${GITHUB_WORKSPACE}/ci-release.jks" >> "$GITHUB_ENV"
-          echo "STORE_PASSWORD=android" >> "$GITHUB_ENV"
-          echo "KEY_PASSWORD=android" >> "$GITHUB_ENV"
+          if [ -n "$RELEASE_KEYSTORE_B64" ] && [ -n "$RELEASE_STORE_PASSWORD" ] && [ -n "$RELEASE_KEY_PASSWORD" ] && [ -n "$RELEASE_KEY_ALIAS" ]; then
+            echo "$RELEASE_KEYSTORE_B64" | base64 --decode > ci-release.jks
+            echo "KEYSTORE_PATH=${GITHUB_WORKSPACE}/ci-release.jks" >> "$GITHUB_ENV"
+            echo "STORE_PASSWORD=$RELEASE_STORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=$RELEASE_KEY_PASSWORD" >> "$GITHUB_ENV"
+            echo "KEY_ALIAS=$RELEASE_KEY_ALIAS" >> "$GITHUB_ENV"
+            echo "Using repository-managed production signing configuration."
+          else
+            keytool -genkeypair -v \
+              -keystore ci-release.jks \
+              -storepass android \
+              -keypass android \
+              -alias upload \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 3650 \
+              -dname "CN=AI Content Factory, OU=CI, O=AI Content Factory, C=LY"
+            echo "KEYSTORE_PATH=${GITHUB_WORKSPACE}/ci-release.jks" >> "$GITHUB_ENV"
+            echo "STORE_PASSWORD=android" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=android" >> "$GITHUB_ENV"
+            echo "KEY_ALIAS=upload" >> "$GITHUB_ENV"
+            echo "Using ephemeral CI signing key; configure RELEASE_* secrets for production releases."
+          fi
 
       - name: Run Android lint
         run: gradle lint --no-daemon
@@ -104,5 +116,5 @@ jobs:
           gh release create latest \
             "release/${APK_NAME}" \
             --title "AI Content Factory - Latest APK" \
-            --notes "Automated release APK from the latest main branch. Signed with an ephemeral CI key; use a production keystore for store distribution." \
+            --notes "Automated release APK from the latest main branch. Configure RELEASE_* repository secrets for production signing; otherwise this artifact uses an ephemeral CI key." \
             --prerelease
