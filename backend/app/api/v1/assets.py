@@ -47,13 +47,33 @@ def build_router(repository: SQLiteAssetRepository) -> APIRouter:
     router = APIRouter(prefix="/api/v1/assets", tags=["assets"])
 
     @router.get("")
-    def list_assets(request: Request, projectId: str | None = Query(default=None), type: str | None = Query(default=None), status: AssetStatus | None = Query(default=None), page: int = Query(default=1, ge=1), pageSize: int = Query(default=50, ge=1, le=200)) -> dict:
-        page_size = pageSize
-        items = repository.list(project_id=projectId, asset_type=type, status=status, limit=min(500, page * page_size))
-        total_items = len(items)
-        start = (page - 1) * page_size
-        page_items = items[start:start + page_size]
-        return {"data": [_serialize(asset) for asset in page_items], "pagination": {"page": page, "pageSize": page_size, "total": total_items, "hasNext": start + page_size < total_items}, "requestId": request.state.request_id}
+    def list_assets(
+        request: Request,
+        projectId: str | None = Query(default=None),
+        type: str | None = Query(default=None),
+        status: AssetStatus | None = Query(default=None),
+        page: int = Query(default=1, ge=1),
+        pageSize: int = Query(default=50, ge=1, le=200),
+    ) -> dict:
+        total_items = repository.count(project_id=projectId, asset_type=type, status=status)
+        start = (page - 1) * pageSize
+        page_items = repository.list_page(
+            project_id=projectId,
+            asset_type=type,
+            status=status,
+            limit=pageSize,
+            offset=start,
+        )
+        return {
+            "data": [_serialize(asset) for asset in page_items],
+            "pagination": {
+                "page": page,
+                "pageSize": pageSize,
+                "total": total_items,
+                "hasNext": start + len(page_items) < total_items,
+            },
+            "requestId": request.state.request_id,
+        }
 
     @router.get("/{asset_id}")
     def get_asset(asset_id: str, request: Request) -> dict:
