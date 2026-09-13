@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import os
+import sqlite3
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
@@ -43,6 +48,52 @@ from .scheduling.persistent import PersistentScheduler, SQLiteScheduleRepository
 DATABASE_PATH = os.getenv("AICF_DATABASE_PATH", "./data/factory.db")
 validate_openai_configuration()
 repositories = SQLiteRepositories(DATABASE_PATH)
+
+
+def _run_schema_migrations() -> int:
+    """Version the existing SQLite schema without destructive recreation."""
+    conn = repositories.store.connection
+    lock = repositories.store._lock
+    migrations = {
+        1: lambda c: None,
+        2: lambda c: (
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS schedules (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    operation TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    run_at TEXT NOT NULL,
+                    cron TEXT,
+                    interval_seconds INTEGER,
+                    timezone_name TEXT NOT NULL DEFAULT 'UTC',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    last_run_at TEXT,
+                    next_run_at TEXT,
+                    claim_token TEXT,
+                    claim_until TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )"""
+            ),
+            c.execute("CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(enabled,next_run_at)"),
+            c.execute("CREATE INDEX IF NOT EXISTS idx_schedules_claim ON schedules(claim_until)"),
+        ),
+    }
+    with lock:
+        conn.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
+        current = conn.execute("SELECT COALESCE(MAX(version), 0) FROM schema_migrations").fetchone()[0]
+        for version in sorted(migrations):
+            if version <= current:
+                continue
+            with conn:
+                migrations[version](conn)
+                conn.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)", (version, datetime.now(timezone.utc).isoformat()))
+            current = version
+        return current
+
+
+SCHEMA_VERSION = _run_schema_migrations()
 job_repository = SQLiteJobRepository(repositories.store)
 project_repository = SQLiteProjectRepository(repositories.store)
 asset_repository = SQLiteAssetRepository(repositories.store)
@@ -57,13 +108,13 @@ def _worker_autostart_enabled() -> bool:
 
 
 def _scheduler_autostart_enabled() -> bool:
-    # Scheduling must be enabled explicitly. Multiple API replicas sharing the
-    # same SQLite database otherwise risk executing the same due schedule twice.
     return os.getenv("AICF_SCHEDULER_AUTOSTART", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _api_token() -> str | None:
     token = os.getenv("AICF_API_TOKEN", "").strip()
+    if token and len(token) < 32:
+        raise RuntimeError("AICF_API_TOKEN must be at least 32 characters")
     return token or None
 
 
@@ -71,12 +122,23 @@ schedule_repository = SQLiteScheduleRepository(repositories.store)
 job_service = JobService(job_repository, context_provider=orchestrator_runtime.context_snapshot)
 
 
+def _scheduled_idempotency(schedule) -> tuple[str, str]:
+    occurrence = schedule.next_run_at.isoformat() if schedule.next_run_at else schedule.run_at.isoformat()
+    key = f"schedule:{schedule.id}:{occurrence}"
+    fingerprint = hashlib.sha256(json.dumps(schedule.payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return key, fingerprint
+
+
 def _enqueue_scheduled(schedule):
     from .domain.jobs import JobInput, JobType
 
     payload = schedule.payload
     job_type = JobType(payload.get("type", schedule.operation).upper())
-    job = job_service.create(
+    key, fingerprint = _scheduled_idempotency(schedule)
+    result = job_service.create_with_idempotency(
+        key=key,
+        operation=f"schedule:{schedule.operation}",
+        fingerprint=fingerprint,
         project_id=schedule.project_id,
         job_type=job_type,
         target_type=payload.get("targetType", "scheduled"),
@@ -94,6 +156,11 @@ def _enqueue_scheduled(schedule):
             deterministic=bool(payload.get("deterministic", False)),
         ),
     )
+    if result.conflict:
+        raise RuntimeError("SCHEDULE_IDEMPOTENCY_CONFLICT")
+    job = result.job or (job_repository.get(result.existing_resource_id) if result.existing_resource_id else None)
+    if job is None:
+        raise RuntimeError("SCHEDULE_JOB_NOT_FOUND")
     orchestrator_runtime.context.append_event(
         schedule.project_id,
         "job.queued",
@@ -122,22 +189,19 @@ async def lifespan(_: FastAPI):
         worker_loop.stop()
 
 
-app = FastAPI(
-    title="AI Content Factory API",
-    version="0.9.0",
-    docs_url="/api/v1/docs",
-    redoc_url="/api/v1/redoc",
-    openapi_url="/api/v1/openapi.json",
-    lifespan=lifespan,
-)
+app = FastAPI(title="AI Content Factory API", version="0.9.0", docs_url="/api/v1/docs", redoc_url="/api/v1/redoc", openapi_url="/api/v1/openapi.json", lifespan=lifespan)
 
 
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
     request_id = request.headers.get("X-Request-Id") or f"req_{uuid4().hex}"
     request.state.request_id = request_id
-    if _api_token() and request.url.path not in {"/api/v1/health", "/api/v1/ready", "/api/v1/readiness"} and request.headers.get("Authorization", "") != f"Bearer {_api_token()}":
-        return JSONResponse(status_code=401, content={"error": {"code": "UNAUTHORIZED", "message": "Authentication required", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
+    token = _api_token()
+    if token and request.url.path not in {"/api/v1/health", "/api/v1/ready", "/api/v1/readiness"}:
+        supplied = request.headers.get("Authorization", "")
+        expected = f"Bearer {token}"
+        if not hmac.compare_digest(supplied, expected):
+            return JSONResponse(status_code=401, content={"error": {"code": "UNAUTHORIZED", "message": "Authentication required", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
     response = await call_next(request)
     response.headers["X-Request-Id"] = request_id
     return response
@@ -188,4 +252,4 @@ def worker_status(request: Request):
 
 @app.get("/api/v1/scheduler/status", tags=["scheduling"])
 def scheduler_status(request: Request):
-    return {"data": {"running": scheduler_loop.running, "autostart": _scheduler_autostart_enabled(), "ticks": scheduler_loop.ticks, "lastError": scheduler_loop.last_error}, "requestId": request.state.request_id}
+    return {"data": {"running": scheduler_loop.running, "autostart": _scheduler_autostart_enabled(), "ticks": scheduler_loop.ticks, "lastError": scheduler_loop.last_error, "schemaVersion": SCHEMA_VERSION}, "requestId": request.state.request_id}
