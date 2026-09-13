@@ -20,6 +20,7 @@ concurrency:
 
 env:
   JAVA_VERSION: "17"
+  ANDROID_BUILD_TOOLS: "36.0.0"
 
 jobs:
   release:
@@ -63,7 +64,7 @@ jobs:
         run: yes | sdkmanager --licenses || true
 
       - name: Install Android SDK 36
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+        run: sdkmanager "platforms;android-36" "build-tools;${ANDROID_BUILD_TOOLS}"
 
       - name: Decode production keystore
         env:
@@ -73,7 +74,14 @@ jobs:
           test -n "$RELEASE_KEYSTORE_B64"
           printf '%s' "$RELEASE_KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/release.jks"
           chmod 600 "$RUNNER_TEMP/release.jks"
-          keytool -list -keystore "$RUNNER_TEMP/release.jks" -storepass '${{ secrets.RELEASE_STORE_PASSWORD }}' >/dev/null
+
+      - name: Verify production keystore
+        env:
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$RELEASE_STORE_PASSWORD"
+          keytool -list -keystore "$RUNNER_TEMP/release.jks" -storepass "$RELEASE_STORE_PASSWORD" >/dev/null
 
       - name: Configure signing environment
         env:
@@ -93,12 +101,14 @@ jobs:
       - name: Build production APK
         run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
 
-      - name: Verify APK
+      - name: Verify APK signature
         run: |
           set -euo pipefail
           APK=app/build/outputs/apk/release/app-release.apk
+          APKSIGNER="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/apksigner"
+          test -x "$APKSIGNER"
           test -s "$APK"
-          apksigner verify --verbose "$APK"
+          "$APKSIGNER" verify --verbose "$APK"
 
       - name: Publish GitHub release
         env:
