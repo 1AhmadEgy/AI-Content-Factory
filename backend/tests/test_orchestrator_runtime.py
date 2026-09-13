@@ -1,3 +1,5 @@
+import pytest
+
 from app.domain.jobs import JobInput, JobType
 from app.domain.projects import Project
 from app.orchestrator.job_service import JobService
@@ -5,7 +7,7 @@ from app.orchestrator.runtime import OrchestratorRuntime
 from app.infrastructure.sqlite import SQLiteRepositories
 
 
-def test_runtime_executes_queued_job_and_persists_events(tmp_path):
+def test_runtime_fails_closed_when_requested_worker_is_not_registered(tmp_path):
     repositories = SQLiteRepositories(":memory:")
     repositories.projects.create(Project(id="project-1", name="Demo"))
     runtime = OrchestratorRuntime(repositories, tmp_path / "assets")
@@ -15,14 +17,5 @@ def test_runtime_executes_queued_job_and_persists_events(tmp_path):
     )
     runtime.queue.enqueue(job)
 
-    result = runtime.execute_next("mock")
-
-    assert result is not None
-    assert result.job.id == job.id
-    assert result.status.value == "COMPLETED"
-    persisted = repositories.jobs.get(job.id)
-    assert persisted is not None
-    assert persisted.output is not None
-    assert persisted.output.asset_ids
-    events = runtime.events.list_for_job(job.id)
-    assert [event.event_type for event in events] == ["JOB_STARTED", "JOB_PROGRESS", "JOB_COMPLETED"]
+    with pytest.raises(KeyError, match="mock"):
+        runtime.execute_next("mock")

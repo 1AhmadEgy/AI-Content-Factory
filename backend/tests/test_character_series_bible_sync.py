@@ -6,6 +6,7 @@ from app.domain.characters import CharacterProfile
 from app.domain.projects import Project
 from app.infrastructure.sqlite import SQLiteRepositories
 from app.orchestrator.runtime import OrchestratorRuntime
+from app.services.project_context import ProjectContextStore
 
 
 def test_character_lifecycle_can_be_materialized_in_series_bible() -> None:
@@ -41,6 +42,7 @@ def test_character_lifecycle_can_be_materialized_in_series_bible() -> None:
 
 def test_context_schema_is_sqlite_compatible() -> None:
     repositories = SQLiteRepositories(":memory:")
+    ProjectContextStore(repositories.store)
     tables = {row[0] for row in repositories.store.connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert "project_contexts" in tables
     assert "project_context_events" in tables
