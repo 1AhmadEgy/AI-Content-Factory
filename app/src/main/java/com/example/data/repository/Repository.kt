@@ -7,8 +7,10 @@ import com.example.data.remote.BackendJob
 import com.example.data.remote.CreateJobRequest
 import com.example.data.remote.JobInputRequest
 import com.example.data.remote.NetworkClient
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -18,7 +20,7 @@ import java.util.Locale
 import java.util.TimeZone
 
 class Repository(private val dao: FactoryDao) {
-    private val scope = CoroutineScope(Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val api get() = NetworkClient.apiService
     private val isoParser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSX", Locale.US).apply {
         timeZone = TimeZone.getTimeZone("UTC")
@@ -32,8 +34,13 @@ class Repository(private val dao: FactoryDao) {
 
     init {
         scope.launch {
-            runCatching { syncJobs() }
-                .onFailure { Log.w("Repository", "Initial backend sync skipped", it) }
+            try {
+                syncJobs()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                Log.w("Repository", "Initial backend sync skipped", error)
+            }
         }
     }
 
@@ -41,9 +48,11 @@ class Repository(private val dao: FactoryDao) {
         try {
             val project = api.createProject(ProjectCreateRequest(name, description)).data
             dao.insertProject(Project(id = project.id, name = project.name, description = project.description))
-        } catch (e: Exception) {
-            Log.e("Repository", "createProject failed", e)
-            throw e
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            Log.e("Repository", "createProject failed", error)
+            throw error
         }
     }
 
@@ -93,11 +102,13 @@ class Repository(private val dao: FactoryDao) {
                 idempotencyKey = "android-scene-$sceneId",
             )
             dao.insertJob(response.data.toLocalJob())
-        } catch (e: Exception) {
-            Log.e("Repository", "generateScene failed", e)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            Log.e("Repository", "generateScene failed", error)
             scene.status = "FAILED"
             dao.updateScene(scene)
-            throw e
+            throw error
         }
     }
 
@@ -127,7 +138,11 @@ class Repository(private val dao: FactoryDao) {
     )
 
     suspend fun syncJobs(projectId: String? = null) {
-        api.listJobs(projectId = projectId, limit = 200).data.forEach { dao.insertJob(it.toLocalJob()) }
+        try {
+            api.listJobs(projectId = projectId, limit = 200).data.forEach { dao.insertJob(it.toLocalJob()) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        }
     }
 
     suspend fun cancelJob(jobId: String): GenerationJob? = api.cancelJob(jobId).data.toLocalJob().also { dao.insertJob(it) }
