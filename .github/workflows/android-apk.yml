@@ -20,7 +20,6 @@ jobs:
   build:
     name: Lint, test and build CI APK
     runs-on: ubuntu-24.04
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -49,8 +48,9 @@ jobs:
 
       - name: Prepare CI release signing key
         run: |
+          set -euo pipefail
           keytool -genkeypair -v \
-            -keystore ci-release.jks \
+            -keystore "$RUNNER_TEMP/ci-release.jks" \
             -storepass android \
             -keypass android \
             -alias upload \
@@ -58,23 +58,29 @@ jobs:
             -keysize 2048 \
             -validity 3650 \
             -dname "CN=AI Content Factory, OU=CI, O=AI Content Factory, L=Tripoli, ST=Tripoli, C=LY"
-          echo "KEYSTORE_PATH=${GITHUB_WORKSPACE}/ci-release.jks" >> "$GITHUB_ENV"
+          chmod 600 "$RUNNER_TEMP/ci-release.jks"
+          echo "KEYSTORE_PATH=$RUNNER_TEMP/ci-release.jks" >> "$GITHUB_ENV"
           echo "STORE_PASSWORD=android" >> "$GITHUB_ENV"
           echo "KEY_PASSWORD=android" >> "$GITHUB_ENV"
+          echo "KEY_ALIAS=upload" >> "$GITHUB_ENV"
 
       - name: Run Android lint
-        run: ./gradlew lint --no-daemon
+        run: ./gradlew lint --no-daemon --stacktrace
 
       - name: Run unit tests
-        run: ./gradlew test --no-daemon
+        run: ./gradlew test --no-daemon --stacktrace
 
       - name: Build CI APK
         run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
 
-      - name: Verify APK
+      - name: Verify APK signature
         run: |
-          test -s app/build/outputs/apk/release/app-release.apk
-          file app/build/outputs/apk/release/app-release.apk
+          set -euo pipefail
+          APK=app/build/outputs/apk/release/app-release.apk
+          APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          test -x "$APKSIGNER"
+          test -s "$APK"
+          "$APKSIGNER" verify --verbose "$APK"
 
       - name: Prepare APK
         run: |
