@@ -33,23 +33,18 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 fun SceneBuilderScreen(onBack: () -> Unit) {
     val vm: SceneBuilderViewModel = viewModel(factory = SceneBuilderViewModelFactory())
     val state by vm.state.collectAsState()
+    val cameraOptions = listOf("wide" to "واسعة", "medium" to "متوسطة", "close_up" to "قريبة", "low_angle" to "زاوية منخفضة", "high_angle" to "زاوية مرتفعة")
+    val moodOptions = listOf("action" to "حماسية", "epic" to "ملحمية", "comedic" to "كوميدية", "tense" to "متوترة", "peaceful" to "هادئة", "sad" to "حزينة")
     Scaffold(topBar = {
         TopAppBar(title = { Text("بناء مشهد حقيقي") }, navigationIcon = {
             IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "رجوع") }
         })
     }) { padding ->
-        Column(
-            Modifier.fillMaxSize().padding(padding).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
+        Column(Modifier.fillMaxSize().padding(padding).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("الشخصيات", style = MaterialTheme.typography.titleMedium)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(horizontal = 2.dp)) {
                 items(state.characters, key = { it.id }) { item ->
-                    FilterChip(
-                        selected = state.selectedCharacters.contains(item.id),
-                        onClick = { vm.toggleCharacter(item.id) },
-                        label = { Text(item.name) },
-                    )
+                    FilterChip(selected = state.selectedCharacters.contains(item.id), onClick = { vm.toggleCharacter(item.id) }, label = { Text(item.name) })
                 }
             }
             Text("المكان", style = MaterialTheme.typography.titleMedium)
@@ -60,24 +55,24 @@ fun SceneBuilderScreen(onBack: () -> Unit) {
             }
             Text("الكاميرا", style = MaterialTheme.typography.titleMedium)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(listOf("wide", "medium", "close_up", "low_angle", "high_angle")) { value ->
-                    FilterChip(selected = state.camera == value, onClick = { vm.setCamera(value) }, label = { Text(value) })
+                items(cameraOptions, key = { it.first }) { option ->
+                    FilterChip(selected = state.camera == option.first, onClick = { vm.setCamera(option.first) }, label = { Text(option.second) })
                 }
             }
             Text("المزاج", style = MaterialTheme.typography.titleMedium)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(listOf("action", "epic", "comedic", "tense", "peaceful", "sad")) { value ->
-                    FilterChip(selected = state.mood == value, onClick = { vm.setMood(value) }, label = { Text(value) })
+                items(moodOptions, key = { it.first }) { option ->
+                    FilterChip(selected = state.mood == option.first, onClick = { vm.setMood(option.first) }, label = { Text(option.second) })
                 }
             }
             if (state.error != null) Text(state.error!!, color = MaterialTheme.colorScheme.error)
             Button(onClick = vm::compose, enabled = !state.loading && state.selectedCharacters.isNotEmpty(), modifier = Modifier.fillMaxWidth()) {
-                if (state.loading) CircularProgressIndicator() else Text("🎨 بناء Prompt")
+                if (state.loading) CircularProgressIndicator() else Text("🎨 بناء الوصف")
             }
             state.prompt?.let {
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp)) {
-                        Text("Prompt مولّد من بيانات المشروع", style = MaterialTheme.typography.titleSmall)
+                        Text("الوصف المولّد من بيانات المشروع", style = MaterialTheme.typography.titleSmall)
                         Text(it, style = MaterialTheme.typography.bodySmall)
                     }
                 }
