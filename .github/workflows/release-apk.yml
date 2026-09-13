@@ -58,6 +58,9 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$AICF_API_BASE_URL"
+          test -n "$AICF_API_TOKEN"
+          test "$AICF_API_BASE_URL" != "__NOT_CONFIGURED__"
+          test "$AICF_API_TOKEN" != "__NOT_CONFIGURED__"
           case "$AICF_API_BASE_URL" in
             https://*) ;;
             *) echo "Production AICF_API_BASE_URL must use HTTPS." >&2; exit 1 ;;
