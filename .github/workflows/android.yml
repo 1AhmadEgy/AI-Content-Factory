@@ -16,7 +16,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -27,7 +27,7 @@ jobs:
 
       - name: Install required Android SDK packages
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
+          set -euo pipefail
           sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
       - name: Set up Gradle
@@ -63,18 +63,18 @@ jobs:
           KEYSTORE_PATH: ${{ runner.temp }}/ci-upload-key.jks
           STORE_PASSWORD: ci-password
           KEY_PASSWORD: ci-password
-          KEY_ALIAS: upload
 
-      - name: Validate APK and AAB artifacts
+      - name: Validate Android artifacts
         shell: bash
         run: |
           set -euo pipefail
-          test -s app/build/outputs/apk/debug/app-debug.apk
-          test -s app/build/outputs/apk/release/app-release.apk
-          test -s app/build/outputs/bundle/release/app-release.aab
-          file app/build/outputs/apk/debug/app-debug.apk
-          file app/build/outputs/apk/release/app-release.apk
-          file app/build/outputs/bundle/release/app-release.aab
+          for artifact in \
+            app/build/outputs/apk/debug/app-debug.apk \
+            app/build/outputs/apk/release/app-release.apk \
+            app/build/outputs/bundle/release/app-release.aab; do
+            test -s "$artifact"
+            file "$artifact"
+          done
           unzip -t app/build/outputs/apk/debug/app-debug.apk >/dev/null
           unzip -t app/build/outputs/apk/release/app-release.apk >/dev/null
           unzip -t app/build/outputs/bundle/release/app-release.aab >/dev/null
