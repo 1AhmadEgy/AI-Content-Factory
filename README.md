@@ -2,6 +2,12 @@
 
 AI Content Factory هو نظام إنتاج محتوى آلي يبدأ من الفكرة أو القصة، ثم يحولها إلى مشاريع وحلقات ومشاهد ولقطات وأصول صوتية وبصرية، مع QC واختيار أفضل Take وتجميع الناتج النهائي.
 
+<p align="center"><a href="https://github.com/1AhmadEgy/AI-Content-Factory/releases/latest">
+<img src="https://img.shields.io/badge/📥%20تحميل%20APK-Download%20Now-success?style=for-the-badge" alt="Download APK">
+</a> <a href="https://github.com/1AhmadEgy/AI-Content-Factory/releases">
+<img src="https://img.shields.io/github/v/release/1AhmadEgy/AI-Content-Factory?style=for-the-badge" alt="Latest Release">
+</a></p>
+
 **مهم:** مسار الإنتاج لا يعتمد على بيانات تجريبية أو ملفات Media وهمية. التوليد الإنتاجي يتطلب مزود AI حقيقي، والرندر الإنتاجي يتم بواسطة FFmpeg/FFprobe.
 
 ---
@@ -20,6 +26,16 @@ AI Content Factory هو نظام إنتاج محتوى آلي يبدأ من ال
 إذا لم توجد بيانات اعتماد المزود، لا يتم إنشاء ناتج وهمي؛ يفشل الطلب بوضوح بدل الادعاء بأنه اكتمل.
 
 ---
+
+## ✨ المميزات
+
+- 🤖 إنشاء المحتوى بالذكاء الاصطناعي
+- 🎨 واجهة Android حديثة باستخدام Jetpack Compose
+- 🌐 Retrofit / OkHttp
+- ⚡ Kotlin Coroutines
+- 🧪 Backend وAndroid unit tests
+- 🚀 GitHub Actions CI/CD
+- 📦 إصدار APK موقّع للإنتاج عبر workflow منفصل
 
 ## 🏗️ Architecture
 
@@ -59,7 +75,11 @@ Android App
 
 - JDK 17
 - Android SDK 36
-- Gradle Wrapper
+- سكربت Gradle bootstrap موجود في `gradlew` و`gradlew.bat` ويستخدم الإصدار المثبت في `gradle/wrapper/gradle-wrapper.properties`.
+
+### تحميل التطبيق
+
+يمكن تنزيل أحدث APK من قسم Releases في GitHub بعد إنشاء إصدار إنتاجي موقّع.
 
 ## ⚙️ GitHub Actions
 
@@ -95,3 +115,10 @@ pytest
 ## 📄 الترخيص
 
 راجع إعدادات الترخيص في المستودع قبل التوزيع التجاري.
+
+---
+
+<p align="center">
+<b>AI Content Factory</b><br>
+Build • Test • Automate 🚀
+</p>
