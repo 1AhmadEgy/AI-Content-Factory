@@ -10,6 +10,9 @@ data class ProjectDto(
     val id: String,
     val name: String,
     val description: String? = null,
+    val settings: Map<String, Any?> = emptyMap(),
+    val createdAt: String? = null,
+    val updatedAt: String? = null,
 )
 
 @JsonClass(generateAdapter = true)
