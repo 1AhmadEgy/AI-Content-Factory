@@ -1,4 +1,4 @@
-from app.domain.assets import Asset, AssetProvenance, AssetStatus, AssetType
+from app.domain.assets import Asset, AssetProvenance, AssetStatus, AssetType, LicenseStatus
 from app.domain.jobs import GenerationJob, JobInput, JobOutput, JobStatus, JobType
 from app.infrastructure.storage import LocalAssetStorage
 from app.workers.timeline_worker import TimelineWorker
@@ -23,7 +23,11 @@ def test_timeline_worker_builds_valid_manifest(tmp_path):
     storage = LocalAssetStorage(tmp_path)
     assets = Assets()
     for asset_id in ("asset-1", "asset-2"):
-        assets.items[asset_id] = Asset(asset_id, "project-1", AssetType.VIDEO, str(tmp_path / f"{asset_id}.mp4"), "video/mp4", 1, asset_id, AssetStatus.READY, AssetProvenance(provider="test", license_status=__import__("app.domain.assets", fromlist=["LicenseStatus"]).LicenseStatus.VERIFIED))
+        assets.items[asset_id] = Asset(
+            asset_id, "project-1", AssetType.VIDEO, str(tmp_path / f"{asset_id}.mp4"),
+            "video/mp4", 1, asset_id, AssetStatus.READY,
+            AssetProvenance(provider="test", license_status=LicenseStatus.VERIFIED),
+        )
     worker = TimelineWorker(storage, assets)
     worker.initialize()
     job = GenerationJob(
