@@ -9,16 +9,19 @@ import com.example.data.remote.JobInputRequest
 import com.example.data.remote.NetworkClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
 
 class Repository(private val dao: FactoryDao) {
-    private val scope = CoroutineScope(Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val api = NetworkClient.apiService
     private val isoParser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSX", Locale.US).apply {
         timeZone = TimeZone.getTimeZone("UTC")
@@ -31,7 +34,13 @@ class Repository(private val dao: FactoryDao) {
     val jobs: StateFlow<List<GenerationJob>> = dao.getAllJobs().stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
-        scope.launch { syncJobs() }
+        scope.launch {
+            while (isActive) {
+                runCatching { syncJobs() }
+                    .onFailure { Log.w("Repository", "periodic job sync failed", it) }
+                delay(30_000)
+            }
+        }
     }
 
     suspend fun addProject(name: String, description: String) {
