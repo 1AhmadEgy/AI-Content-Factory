@@ -82,6 +82,10 @@ jobs:
         run: gradle test --no-daemon --stacktrace
 
       - name: Build release APK
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/ci-release.jks
+          STORE_PASSWORD: android
+          KEY_PASSWORD: android
         run: gradle :app:assembleRelease --no-daemon --stacktrace
 
       - name: Verify APK
