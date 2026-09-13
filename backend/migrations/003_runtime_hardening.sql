@@ -1,4 +1,4 @@
--- Consolidated post-002 runtime hardening migration.
+-- Post-003 runtime hardening migration.
 -- The application currently initializes SQLite schema directly in
 -- backend/app/infrastructure/sqlite.py; this file is retained as the
 -- canonical forward migration for deployments that apply SQL migrations.
