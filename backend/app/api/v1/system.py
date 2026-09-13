@@ -13,7 +13,7 @@ def build_router(runtime: OrchestratorRuntime) -> APIRouter:
     def health(request: Request) -> dict:
         return {"status": "ok", "data": {"status": "OK", "service": "ai-content-factory-backend", "version": "0.9.0"}, "requestId": request.state.request_id}
 
-    @router.get("/ready")
+    @router.get("/ready", response_model=None)
     def readiness(request: Request) -> dict | JSONResponse:
         try:
             runtime.repositories.store.connection.execute("SELECT 1").fetchone()
@@ -22,7 +22,7 @@ def build_router(runtime: OrchestratorRuntime) -> APIRouter:
             request_id = getattr(request.state, "request_id", "unknown")
             return JSONResponse(status_code=503, content={"error": {"code": "RESOURCE_UNAVAILABLE", "message": "Required dependencies are not ready", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
 
-    @router.get("/readiness", include_in_schema=False)
+    @router.get("/readiness", include_in_schema=False, response_model=None)
     def readiness_alias(request: Request) -> dict | JSONResponse:
         return readiness(request)
 
