@@ -24,7 +24,7 @@ object NetworkClient {
         check(uri.scheme.equals("https", ignoreCase = true)) {
             "AICF_API_BASE_URL must use HTTPS. Cleartext HTTP is disabled for production security."
         }
-        check(!uri.userInfo.isNullOrBlank()) {
+        check(uri.userInfo.isNullOrBlank()) {
             "AICF_API_BASE_URL must not embed credentials in the URL."
         }
         return if (configured.endsWith('/')) configured else "$configured/"
