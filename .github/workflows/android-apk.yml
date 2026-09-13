@@ -19,7 +19,7 @@ env:
 
 jobs:
   build:
-    name: Lint, test and build release APK
+    name: Lint, test and build CI APK
     runs-on: ubuntu-24.04
 
     steps:
@@ -71,7 +71,7 @@ jobs:
       - name: Run unit tests
         run: gradle test --no-daemon
 
-      - name: Build release APK
+      - name: Build CI APK
         run: gradle :app:assembleRelease --no-daemon --stacktrace
 
       - name: Verify APK
@@ -91,21 +91,3 @@ jobs:
           path: release/${{ env.APK_NAME }}
           if-no-files-found: error
           retention-days: 30
-
-      - name: Delete previous latest release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
-
-      - name: Create latest release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create latest \
-            "release/${APK_NAME}" \
-            --title "AI Content Factory - Latest APK" \
-            --notes "Automated release APK from the latest main branch. Signed with an ephemeral CI key; use a production keystore for store distribution." \
-            --prerelease
