@@ -23,9 +23,12 @@ import java.util.TimeZone
 class Repository(private val dao: FactoryDao) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val api = NetworkClient.apiService
-    private val isoParser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSX", Locale.US).apply {
-        timeZone = TimeZone.getTimeZone("UTC")
-    }
+    private val isoParsers = listOf(
+        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSX", Locale.US),
+        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssX", Locale.US),
+        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.US),
+        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US),
+    ).onEach { it.timeZone = TimeZone.getTimeZone("UTC") }
 
     val projects: StateFlow<List<Project>> = dao.getAllProjects().stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
     val series: StateFlow<List<Series>> = dao.getAllSeries().stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -109,8 +112,14 @@ class Repository(private val dao: FactoryDao) {
 
     private fun parseTime(value: String?): Long? {
         if (value == null) return null
-        val normalized = value.replace(Regex("\\.(\\d{3})\\d*Z$"), ".$1Z")
-        return runCatching { synchronized(isoParser) { isoParser.parse(normalized)?.time } }.getOrNull()
+        val normalized = value.trim()
+        if (normalized.isEmpty()) return null
+        for (parser in isoParsers) {
+            runCatching { synchronized(parser) { parser.parse(normalized)?.time } }
+                .getOrNull()
+                ?.let { return it }
+        }
+        return null
     }
 
     private fun BackendJob.toLocalJob(): GenerationJob = GenerationJob(
