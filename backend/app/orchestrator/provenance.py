@@ -30,10 +30,10 @@ def build_provenance(
         job_id=job.id,
         license_status=license_status,
         metadata={
-            "jobType": job.type.value,
-            "targetType": job.target_type,
-            "targetId": job.target_id,
-            "parentJobId": job.parent_job_id,
+            "jobType": getattr(getattr(job, "type", None), "value", None),
+            "targetType": getattr(job, "target_type", None),
+            "targetId": getattr(job, "target_id", None),
+            "parentJobId": getattr(job, "parent_job_id", None),
             **metadata_payload,
         },
     )
