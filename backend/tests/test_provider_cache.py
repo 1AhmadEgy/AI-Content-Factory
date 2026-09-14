@@ -8,28 +8,42 @@ from app.infrastructure.sqlite import SQLiteRepositories
 from app.workers.provider_worker import ProviderGenerationWorker
 
 
-def _job(job_id: str, parameters: dict) -> GenerationJob:
+def _job(job_id: str, parameters: dict, *, project_id: str = "project-1", target_id: str | None = "shot-1", target_type: str = "shot", references: list[str] | None = None, constraints: dict | None = None, seed: int | None = None, deterministic: bool = False) -> GenerationJob:
     return GenerationJob(
         id=job_id,
-        project_id="project-1",
+        project_id=project_id,
         type=JobType.IMAGE,
-        target_type="shot",
-        target_id="shot-1",
+        target_type=target_type,
+        target_id=target_id,
         status=JobStatus.QUEUED,
         priority=10,
-        input=JobInput(parameters=parameters),
+        input=JobInput(parameters=parameters, reference_asset_ids=references or [], constraints=constraints or {}, seed=seed, deterministic=deterministic),
     )
 
 
-def test_provider_cache_key_changes_when_provider_model_or_parameters_change() -> None:
+def test_provider_cache_key_changes_when_provider_model_or_request_identity_changes() -> None:
     first = ProviderGenerationWorker._cache_key("openai", "image-model", _job("a", {"prompt": "cat", "size": "1024x1024"}))
     same_request = ProviderGenerationWorker._cache_key("openai", "image-model", _job("b", {"size": "1024x1024", "prompt": "cat"}))
     different_model = ProviderGenerationWorker._cache_key("openai", "other-model", _job("c", {"prompt": "cat", "size": "1024x1024"}))
     different_prompt = ProviderGenerationWorker._cache_key("openai", "image-model", _job("d", {"prompt": "dog", "size": "1024x1024"}))
+    different_target = ProviderGenerationWorker._cache_key("openai", "image-model", _job("e", {"prompt": "cat", "size": "1024x1024"}, target_id="shot-2"))
+    different_project = ProviderGenerationWorker._cache_key("openai", "image-model", _job("f", {"prompt": "cat", "size": "1024x1024"}, project_id="project-2"))
+    different_target_type = ProviderGenerationWorker._cache_key("openai", "image-model", _job("g", {"prompt": "cat", "size": "1024x1024"}, target_type="scene"))
+    different_reference = ProviderGenerationWorker._cache_key("openai", "image-model", _job("h", {"prompt": "cat", "size": "1024x1024"}, references=["asset-2"]))
+    different_constraints = ProviderGenerationWorker._cache_key("openai", "image-model", _job("i", {"prompt": "cat", "size": "1024x1024"}, constraints={"style": "cinematic"}))
+    different_seed = ProviderGenerationWorker._cache_key("openai", "image-model", _job("j", {"prompt": "cat", "size": "1024x1024"}, seed=42))
+    different_determinism = ProviderGenerationWorker._cache_key("openai", "image-model", _job("k", {"prompt": "cat", "size": "1024x1024"}, deterministic=True))
 
     assert first == same_request
     assert first != different_model
     assert first != different_prompt
+    assert first != different_target
+    assert first != different_project
+    assert first != different_target_type
+    assert first != different_reference
+    assert first != different_constraints
+    assert first != different_seed
+    assert first != different_determinism
 
 
 def test_provider_cache_stores_success_and_counts_hits() -> None:
