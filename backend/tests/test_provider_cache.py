@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
 from app.domain.jobs import GenerationJob, JobInput, JobType, JobStatus
 from app.infrastructure.provider_cache import SQLiteProviderCache
@@ -64,6 +65,37 @@ def test_provider_cache_stores_success_and_counts_hits() -> None:
         assert entry.output_bytes == b"real-image"
         assert entry.output_mime_type == "image/png"
         assert cache.stats() == {"entries": 1, "hits": 1}
+    finally:
+        repositories.close()
+
+
+def test_provider_cache_lock_can_be_renewed_only_by_owner_before_expiry() -> None:
+    repositories = SQLiteRepositories(":memory:")
+    try:
+        cache = SQLiteProviderCache(repositories.store)
+        with patch("app.infrastructure.provider_cache.time.time", return_value=1000.0):
+            cached, token = cache.get_or_lock("key-lock", lock_seconds=10)
+            assert cached is None
+            assert token
+            assert cache.renew_lock("key-lock", token, lock_seconds=30)
+            assert not cache.renew_lock("key-lock", "wrong-token", lock_seconds=30)
+        with patch("app.infrastructure.provider_cache.time.time", return_value=1031.0):
+            assert not cache.renew_lock("key-lock", token, lock_seconds=30)
+    finally:
+        repositories.close()
+
+
+def test_provider_cache_lock_renewal_does_not_resurrect_expired_lock() -> None:
+    repositories = SQLiteRepositories(":memory:")
+    try:
+        cache = SQLiteProviderCache(repositories.store)
+        with patch("app.infrastructure.provider_cache.time.time", return_value=2000.0):
+            _, token = cache.get_or_lock("key-expired-lock", lock_seconds=5)
+            assert token
+        with patch("app.infrastructure.provider_cache.time.time", return_value=2006.0):
+            assert not cache.renew_lock("key-expired-lock", token, lock_seconds=30)
+            _, replacement = cache.get_or_lock("key-expired-lock", lock_seconds=30)
+            assert replacement and replacement != token
     finally:
         repositories.close()
 
