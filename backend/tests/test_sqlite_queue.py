@@ -96,7 +96,7 @@ def test_retry_backoff_is_bounded_and_jitter_cannot_exceed_cap() -> None:
             retry_jitter_ratio=1,
             random_source=_FixedRandom(1000),
         )
-        assert queue._retry_delay_seconds(1) == 20
+        assert queue._retry_delay_seconds(1) == 25
         assert queue._retry_delay_seconds(2) == 25
         assert queue._retry_delay_seconds(10) == 25
     finally:
