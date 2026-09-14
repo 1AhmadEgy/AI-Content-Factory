@@ -47,11 +47,14 @@ class OpenAIModelAdapter(ModelAdapter):
         except OpenAIProviderError as exc:
             return ProviderResponse(False, error_code="OPENAI_REQUEST_FAILED", error_message=str(exc))
 
-    def _request(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def _request(self, endpoint: str, payload: dict[str, Any], *, idempotency_key: str | None = None) -> dict[str, Any]:
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
         req = urllib.request.Request(
             f"{self.base_url}/{endpoint.lstrip('/')}",
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+            headers=headers,
             method="POST",
         )
         try:
@@ -75,7 +78,7 @@ class OpenAIModelAdapter(ModelAdapter):
         if not prompt:
             return ProviderResponse(False, error_code="PROMPT_REQUIRED", error_message="prompt is required")
         payload: dict[str, Any] = {"model": request.model, "input": prompt}
-        data = self._request("responses", payload)
+        data = self._request("responses", payload, idempotency_key=request.idempotency_key)
         output_text = data.get("output_text")
         if not output_text:
             parts: list[str] = []
@@ -98,7 +101,7 @@ class OpenAIModelAdapter(ModelAdapter):
         for key in ("size", "quality", "background", "output_format"):
             if key in request.parameters:
                 payload[key] = request.parameters[key]
-        data = self._request("images/generations", payload)
+        data = self._request("images/generations", payload, idempotency_key=request.idempotency_key)
         item = (data.get("data") or [{}])[0]
         if item.get("b64_json"):
             raw = base64.b64decode(item["b64_json"])
@@ -121,10 +124,13 @@ class OpenAIModelAdapter(ModelAdapter):
             return ProviderResponse(False, error_code="TEXT_REQUIRED", error_message="text or narration is required")
         fmt = str(request.parameters.get("response_format", "mp3"))
         payload = {"model": request.model, "voice": str(request.parameters.get("voice", "alloy")), "input": text, "response_format": fmt}
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        if request.idempotency_key:
+            headers["Idempotency-Key"] = request.idempotency_key
         req = urllib.request.Request(
             f"{self.base_url}/audio/speech",
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+            headers=headers,
             method="POST",
         )
         try:
