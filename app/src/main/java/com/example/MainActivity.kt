@@ -49,44 +49,19 @@ fun MainScreen() {
     }
 
     Scaffold(
-        // The designer page owns its own premium hero/top bar; avoid stacking the generic app header above it.
         topBar = { if (currentRoute != "designer") BrandingHeader() },
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         bottomBar = {
             NavigationBar(containerColor = DarkBlue) {
-                NavigationBarItem(
-                    icon = { Icon(Icons.Filled.VideoLibrary, contentDescription = "Projects") },
-                    label = { Text("Projects") },
-                    selected = currentRoute?.startsWith("projects") == true,
-                    onClick = { navController.navigate("projects") { launchSingleTop = true } },
-                    colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan),
-                )
-                NavigationBarItem(
-                    icon = { Icon(Icons.Filled.List, contentDescription = "Characters") },
-                    label = { Text("Characters") },
-                    selected = currentRoute == "characters" || currentRoute?.startsWith("character/") == true || currentRoute == "scene-builder",
-                    onClick = { navController.navigate("characters") { launchSingleTop = true } },
-                    colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan),
-                )
-                NavigationBarItem(
-                    icon = { Icon(Icons.Filled.List, contentDescription = "Control") },
-                    label = { Text("Control") },
-                    selected = currentRoute == "control",
-                    onClick = { navController.navigate("control") { launchSingleTop = true } },
-                    colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan),
-                )
-                NavigationBarItem(
-                    icon = { Icon(Icons.Filled.Info, contentDescription = "Designer") },
-                    label = { Text("Designer") },
-                    selected = currentRoute == "designer",
-                    onClick = { navController.navigate("designer") { launchSingleTop = true } },
-                    colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan),
-                )
+                NavigationBarItem(icon = { Icon(Icons.Filled.VideoLibrary, "Projects") }, label = { Text("Projects") }, selected = currentRoute?.startsWith("projects") == true, onClick = { navController.navigate("projects") { launchSingleTop = true } }, colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan))
+                NavigationBarItem(icon = { Icon(Icons.Filled.List, "Characters") }, label = { Text("Characters") }, selected = currentRoute == "characters" || currentRoute?.startsWith("character/") == true || currentRoute == "scene-builder", onClick = { navController.navigate("characters") { launchSingleTop = true } }, colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan))
+                NavigationBarItem(icon = { Icon(Icons.Filled.List, "Control") }, label = { Text("Control") }, selected = currentRoute == "control", onClick = { navController.navigate("control") { launchSingleTop = true } }, colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan))
+                NavigationBarItem(icon = { Icon(Icons.Filled.Info, "Designer") }, label = { Text("Designer") }, selected = currentRoute == "designer", onClick = { navController.navigate("designer") { launchSingleTop = true } }, colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan))
             }
-        },
+        }
     ) { padding ->
         NavHost(navController = navController, startDestination = "projects", modifier = Modifier.padding(padding)) {
-            composable("projects") { DashboardScreen(viewModel, onProjectClick = { id -> navController.navigate("project/$id") }) }
+            composable("projects") { NeonDashboardScreen(viewModel, onProjectClick = { id -> navController.navigate("project/$id") }) }
             composable("project/{projectId}", arguments = listOf(navArgument("projectId") { type = NavType.StringType })) { backStackEntry ->
                 val projectId = backStackEntry.arguments?.getString("projectId") ?: return@composable
                 ProjectDetailScreen(projectId, viewModel, onBack = { navController.popBackStack() }, onSeriesClick = { id -> navController.navigate("series/$id") }, onSeriesControlClick = { navController.navigate("series-control/$projectId") })
