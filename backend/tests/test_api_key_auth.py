@@ -3,7 +3,9 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 
-PROTECTED_PATH = "/api/v1/worker/status"
+# FastAPI's generated OpenAPI endpoint is guaranteed to exist and is protected
+# by the same middleware as application endpoints.
+PROTECTED_PATH = "/api/v1/openapi.json"
 
 
 def test_missing_api_key_is_rejected(monkeypatch):
@@ -33,7 +35,7 @@ def test_valid_api_key_is_accepted(monkeypatch):
         headers={"Authorization": "Bearer test-aicf-key"},
     )
     assert response.status_code == 200
-    assert "data" in response.json()
+    assert "paths" in response.json()
 
 
 def test_health_remains_public(monkeypatch):
