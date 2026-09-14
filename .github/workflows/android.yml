@@ -11,6 +11,11 @@ jobs:
   android:
     name: Android APK/AAB build, tests and lint
     runs-on: ubuntu-24.04
+    env:
+      KEYSTORE_PATH: ${{ runner.temp }}/ci-upload-key.jks
+      STORE_PASSWORD: ci-password
+      KEY_PASSWORD: ci-password
+      KEY_ALIAS: upload
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -33,6 +38,20 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Prepare ephemeral CI signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          keytool -genkeypair -v \
+            -keystore "$KEYSTORE_PATH" \
+            -storepass "$STORE_PASSWORD" \
+            -keypass "$KEY_PASSWORD" \
+            -alias "$KEY_ALIAS" \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 1 \
+            -dname "CN=AI Content Factory CI,O=CI,C=US"
+
       - name: Validate Gradle project
         run: gradle --no-daemon tasks --stacktrace
 
@@ -46,23 +65,7 @@ jobs:
         run: gradle --no-daemon :app:assembleDebug --stacktrace
 
       - name: Build release APK and AAB with ephemeral CI signing key
-        shell: bash
-        run: |
-          set -euo pipefail
-          keytool -genkeypair -v \
-            -keystore "$RUNNER_TEMP/ci-upload-key.jks" \
-            -storepass ci-password \
-            -keypass ci-password \
-            -alias upload \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 1 \
-            -dname "CN=AI Content Factory CI,O=CI,C=US"
-          gradle --no-daemon :app:assembleRelease :app:bundleRelease --stacktrace
-        env:
-          KEYSTORE_PATH: ${{ runner.temp }}/ci-upload-key.jks
-          STORE_PASSWORD: ci-password
-          KEY_PASSWORD: ci-password
+        run: gradle --no-daemon :app:assembleRelease :app:bundleRelease --stacktrace
 
       - name: Validate Android artifacts
         shell: bash
