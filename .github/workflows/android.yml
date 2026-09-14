@@ -1,6 +1,9 @@
 name: Android Build and Verify
 
 on:
+  push:
+    branches:
+      - "codex/autonomous-production-hardening-2026-09-13"
   pull_request:
   workflow_dispatch:
 
