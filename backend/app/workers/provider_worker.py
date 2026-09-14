@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 import time
 import uuid
 
@@ -56,6 +57,27 @@ class ProviderGenerationWorker(Worker):
             self._breakers[key] = SQLiteCircuitBreaker(self._cache.store, key, fail_threshold=int(os.getenv("AICF_CIRCUIT_FAIL_THRESHOLD", "5")), open_duration=float(os.getenv("AICF_CIRCUIT_OPEN_DURATION_SECONDS", "60")), half_open_max_calls=int(os.getenv("AICF_CIRCUIT_HALF_OPEN_MAX_CALLS", "2")), success_threshold=int(os.getenv("AICF_CIRCUIT_SUCCESS_THRESHOLD", "2")))
         return self._breakers[key]
 
+    def _start_cache_lock_renewal(self, cache_key: str, token: str, lock_seconds: int, context: WorkerContext) -> None:
+        """Keep the stampede lock alive only while this execution still owns its job lease."""
+        if self._cache is None:
+            return
+        lease_active = context.metadata.get("lease_active")
+        interval = max(0.25, lock_seconds / 3.0)
+
+        def renew() -> None:
+            while True:
+                time.sleep(interval)
+                if callable(lease_active):
+                    try:
+                        if not lease_active():
+                            return
+                    except Exception:
+                        return
+                if not self._cache or not self._cache.renew_lock(cache_key, token, lock_seconds):
+                    return
+
+        threading.Thread(target=renew, name=f"provider-cache-lock-{cache_key[:8]}", daemon=True).start()
+
     def execute(self, job: GenerationJob, context: WorkerContext) -> JobExecutionResult:
         if not self._initialized:
             return JobExecutionResult(False, error_code="WORKER_NOT_INITIALIZED", error_message="Worker is not initialized")
@@ -73,11 +95,14 @@ class ProviderGenerationWorker(Worker):
         cache_key = self._cache_key(model.provider, model.id, job)
         cached = self._cache.get(cache_key) if self._cache else None
         lock_token: str | None = None
+        lock_seconds = int(os.getenv("AICF_PROVIDER_CACHE_LOCK_SECONDS", "30"))
         if cached is None and self._cache is not None:
-            cached, lock_token = self._cache.get_or_lock(cache_key, lock_seconds=int(os.getenv("AICF_PROVIDER_CACHE_LOCK_SECONDS", "30")))
+            cached, lock_token = self._cache.get_or_lock(cache_key, lock_seconds=lock_seconds)
             if cached is None and lock_token is None:
                 time.sleep(float(os.getenv("AICF_PROVIDER_CACHE_WAIT_SECONDS", "2")))
                 cached = self._cache.get(cache_key)
+            elif cached is None and lock_token is not None:
+                self._start_cache_lock_renewal(cache_key, lock_token, lock_seconds, context)
         if cached is not None:
             response = ProviderResponse(success=True, output_text=cached.output_text, output_bytes=cached.output_bytes, output_mime_type=cached.output_mime_type, output_filename=cached.output_filename, output_metadata={**cached.output_metadata, "cacheHit": True}, metrics={**cached.metrics, "cache_hit": 1.0}, provider_run_id=f"cache:{cache_key[:16]}")
             asset_ids = self._materialize_response(job, model.provider, model.id, response, response.provider_run_id or "cache")
