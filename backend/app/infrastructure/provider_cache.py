@@ -68,6 +68,8 @@ class SQLiteProviderCache:
 
     def get_or_lock(self, cache_key: str, lock_seconds: int = 30) -> tuple[ProviderCacheEntry | None, str | None]:
         """Return (entry, token); token is owned by this worker when a miss is locked."""
+        if lock_seconds <= 0:
+            raise ValueError("lock_seconds must be positive")
         cached = self.get(cache_key)
         if cached is not None:
             return cached, None
@@ -88,6 +90,19 @@ class SQLiteProviderCache:
             except Exception:
                 conn.rollback()
                 raise
+
+    def renew_lock(self, cache_key: str, token: str | None, lock_seconds: int = 30) -> bool:
+        """Extend an owned cache lock, but never resurrect an expired or stolen lock."""
+        if not token or lock_seconds <= 0:
+            return False
+        now = time.time()
+        expires_at = now + lock_seconds
+        with self.store._lock, self.store.connection:
+            cursor = self.store.connection.execute(
+                "UPDATE provider_cache_locks SET expires_at=? WHERE cache_key=? AND token=? AND expires_at>?",
+                (expires_at, cache_key, token, now),
+            )
+            return cursor.rowcount == 1
 
     def release_lock(self, cache_key: str, token: str | None) -> None:
         if not token:

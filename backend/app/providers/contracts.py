@@ -18,6 +18,7 @@ class ProviderRequest:
     model: str
     parameters: dict[str, Any] = field(default_factory=dict)
     seed: int | None = None
+    idempotency_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

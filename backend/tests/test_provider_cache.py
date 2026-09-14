@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
 from app.domain.jobs import GenerationJob, JobInput, JobType, JobStatus
 from app.infrastructure.provider_cache import SQLiteProviderCache
@@ -8,28 +9,42 @@ from app.infrastructure.sqlite import SQLiteRepositories
 from app.workers.provider_worker import ProviderGenerationWorker
 
 
-def _job(job_id: str, parameters: dict) -> GenerationJob:
+def _job(job_id: str, parameters: dict, *, project_id: str = "project-1", target_id: str | None = "shot-1", target_type: str = "shot", references: list[str] | None = None, constraints: dict | None = None, seed: int | None = None, deterministic: bool = False) -> GenerationJob:
     return GenerationJob(
         id=job_id,
-        project_id="project-1",
+        project_id=project_id,
         type=JobType.IMAGE,
-        target_type="shot",
-        target_id="shot-1",
+        target_type=target_type,
+        target_id=target_id,
         status=JobStatus.QUEUED,
         priority=10,
-        input=JobInput(parameters=parameters),
+        input=JobInput(parameters=parameters, reference_asset_ids=references or [], constraints=constraints or {}, seed=seed, deterministic=deterministic),
     )
 
 
-def test_provider_cache_key_changes_when_provider_model_or_parameters_change() -> None:
+def test_provider_cache_key_changes_when_provider_model_or_request_identity_changes() -> None:
     first = ProviderGenerationWorker._cache_key("openai", "image-model", _job("a", {"prompt": "cat", "size": "1024x1024"}))
     same_request = ProviderGenerationWorker._cache_key("openai", "image-model", _job("b", {"size": "1024x1024", "prompt": "cat"}))
     different_model = ProviderGenerationWorker._cache_key("openai", "other-model", _job("c", {"prompt": "cat", "size": "1024x1024"}))
     different_prompt = ProviderGenerationWorker._cache_key("openai", "image-model", _job("d", {"prompt": "dog", "size": "1024x1024"}))
+    different_target = ProviderGenerationWorker._cache_key("openai", "image-model", _job("e", {"prompt": "cat", "size": "1024x1024"}, target_id="shot-2"))
+    different_project = ProviderGenerationWorker._cache_key("openai", "image-model", _job("f", {"prompt": "cat", "size": "1024x1024"}, project_id="project-2"))
+    different_target_type = ProviderGenerationWorker._cache_key("openai", "image-model", _job("g", {"prompt": "cat", "size": "1024x1024"}, target_type="scene"))
+    different_reference = ProviderGenerationWorker._cache_key("openai", "image-model", _job("h", {"prompt": "cat", "size": "1024x1024"}, references=["asset-2"]))
+    different_constraints = ProviderGenerationWorker._cache_key("openai", "image-model", _job("i", {"prompt": "cat", "size": "1024x1024"}, constraints={"style": "cinematic"}))
+    different_seed = ProviderGenerationWorker._cache_key("openai", "image-model", _job("j", {"prompt": "cat", "size": "1024x1024"}, seed=42))
+    different_determinism = ProviderGenerationWorker._cache_key("openai", "image-model", _job("k", {"prompt": "cat", "size": "1024x1024"}, deterministic=True))
 
     assert first == same_request
     assert first != different_model
     assert first != different_prompt
+    assert first != different_target
+    assert first != different_project
+    assert first != different_target_type
+    assert first != different_reference
+    assert first != different_constraints
+    assert first != different_seed
+    assert first != different_determinism
 
 
 def test_provider_cache_stores_success_and_counts_hits() -> None:
@@ -50,6 +65,37 @@ def test_provider_cache_stores_success_and_counts_hits() -> None:
         assert entry.output_bytes == b"real-image"
         assert entry.output_mime_type == "image/png"
         assert cache.stats() == {"entries": 1, "hits": 1}
+    finally:
+        repositories.close()
+
+
+def test_provider_cache_lock_can_be_renewed_only_by_owner_before_expiry() -> None:
+    repositories = SQLiteRepositories(":memory:")
+    try:
+        cache = SQLiteProviderCache(repositories.store)
+        with patch("app.infrastructure.provider_cache.time.time", return_value=1000.0):
+            cached, token = cache.get_or_lock("key-lock", lock_seconds=10)
+            assert cached is None
+            assert token
+            assert cache.renew_lock("key-lock", token, lock_seconds=30)
+            assert not cache.renew_lock("key-lock", "wrong-token", lock_seconds=30)
+        with patch("app.infrastructure.provider_cache.time.time", return_value=1031.0):
+            assert not cache.renew_lock("key-lock", token, lock_seconds=30)
+    finally:
+        repositories.close()
+
+
+def test_provider_cache_lock_renewal_does_not_resurrect_expired_lock() -> None:
+    repositories = SQLiteRepositories(":memory:")
+    try:
+        cache = SQLiteProviderCache(repositories.store)
+        with patch("app.infrastructure.provider_cache.time.time", return_value=2000.0):
+            _, token = cache.get_or_lock("key-expired-lock", lock_seconds=5)
+            assert token
+        with patch("app.infrastructure.provider_cache.time.time", return_value=2006.0):
+            assert not cache.renew_lock("key-expired-lock", token, lock_seconds=30)
+            _, replacement = cache.get_or_lock("key-expired-lock", lock_seconds=30)
+            assert replacement and replacement != token
     finally:
         repositories.close()
 

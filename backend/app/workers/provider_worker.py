@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 import time
 import uuid
 
@@ -48,27 +49,60 @@ class ProviderGenerationWorker(Worker):
     def health_check(self) -> bool:
         return self._initialized
 
+    @staticmethod
+    def _lease_is_active(context: WorkerContext) -> bool:
+        """Treat a missing lease callback as active for standalone/unit-test execution."""
+        metadata = getattr(context, "metadata", None) or {}
+        lease_active = metadata.get("lease_active")
+        if not callable(lease_active):
+            return True
+        try:
+            return bool(lease_active())
+        except Exception:
+            return False
+
+    def _lease_lost_result(self, cache_key: str, lock_token: str | None, run_id: str | None = None) -> JobExecutionResult:
+        if self._cache and lock_token:
+            self._cache.release_lock(cache_key, lock_token)
+        if self.provider_runs and run_id:
+            self.provider_runs.complete(run_id, status="ABANDONED", error_code="JOB_LEASE_LOST", response_metadata={"cacheKey": cache_key, "idempotencyKey": cache_key})
+        return JobExecutionResult(False, provider_run_id=run_id, error_code="JOB_LEASE_LOST", error_message="Job lease was lost during provider execution", retryable=True)
+
     def _breaker(self, provider: str, model: str) -> SQLiteCircuitBreaker | None:
         if self._cache is None:
             return None
         key = f"{provider}:{model}"
         if key not in self._breakers:
-            self._breakers[key] = SQLiteCircuitBreaker(
-                self._cache.store,
-                key,
-                fail_threshold=int(os.getenv("AICF_CIRCUIT_FAIL_THRESHOLD", "5")),
-                open_duration=float(os.getenv("AICF_CIRCUIT_OPEN_DURATION_SECONDS", "60")),
-                half_open_max_calls=int(os.getenv("AICF_CIRCUIT_HALF_OPEN_MAX_CALLS", "2")),
-                success_threshold=int(os.getenv("AICF_CIRCUIT_SUCCESS_THRESHOLD", "2")),
-            )
+            self._breakers[key] = SQLiteCircuitBreaker(self._cache.store, key, fail_threshold=int(os.getenv("AICF_CIRCUIT_FAIL_THRESHOLD", "5")), open_duration=float(os.getenv("AICF_CIRCUIT_OPEN_DURATION_SECONDS", "60")), half_open_max_calls=int(os.getenv("AICF_CIRCUIT_HALF_OPEN_MAX_CALLS", "2")), success_threshold=int(os.getenv("AICF_CIRCUIT_SUCCESS_THRESHOLD", "2")))
         return self._breakers[key]
+
+    def _start_cache_lock_renewal(self, cache_key: str, token: str, lock_seconds: int, context: WorkerContext) -> None:
+        """Keep the stampede lock alive only while this execution still owns its job lease."""
+        if self._cache is None:
+            return
+        metadata = getattr(context, "metadata", None) or {}
+        lease_active = metadata.get("lease_active")
+        interval = max(0.25, lock_seconds / 3.0)
+
+        def renew() -> None:
+            while True:
+                time.sleep(interval)
+                if callable(lease_active):
+                    try:
+                        if not lease_active():
+                            return
+                    except Exception:
+                        return
+                if not self._cache or not self._cache.renew_lock(cache_key, token, lock_seconds):
+                    return
+
+        threading.Thread(target=renew, name=f"provider-cache-lock-{cache_key[:8]}", daemon=True).start()
 
     def execute(self, job: GenerationJob, context: WorkerContext) -> JobExecutionResult:
         if not self._initialized:
             return JobExecutionResult(False, error_code="WORKER_NOT_INITIALIZED", error_message="Worker is not initialized")
         if context.cancellation_requested:
             return JobExecutionResult(False, error_code="CANCELLED", error_message="Cancellation requested")
-
         capability = self._required_capability(job.type)
         model = self.providers.get(job.model) if job.model else None
         if model is None or capability not in model.adapter.capability().capabilities:
@@ -78,31 +112,23 @@ class ProviderGenerationWorker(Worker):
         if not model.enabled or not model.adapter.health_check():
             return JobExecutionResult(False, error_code="MODEL_UNHEALTHY", error_message=model.id, retryable=True)
 
-        # Important ordering: Cache -> Lock -> Circuit -> Provider.
-        # Cache hits never call the provider and therefore must never be blocked by an open circuit.
         cache_key = self._cache_key(model.provider, model.id, job)
         cached = self._cache.get(cache_key) if self._cache else None
         lock_token: str | None = None
+        lock_seconds = int(os.getenv("AICF_PROVIDER_CACHE_LOCK_SECONDS", "30"))
         if cached is None and self._cache is not None:
-            cached, lock_token = self._cache.get_or_lock(
-                cache_key,
-                lock_seconds=int(os.getenv("AICF_PROVIDER_CACHE_LOCK_SECONDS", "30")),
-            )
+            cached, lock_token = self._cache.get_or_lock(cache_key, lock_seconds=lock_seconds)
             if cached is None and lock_token is None:
                 time.sleep(float(os.getenv("AICF_PROVIDER_CACHE_WAIT_SECONDS", "2")))
                 cached = self._cache.get(cache_key)
-
+            elif cached is None and lock_token is not None:
+                self._start_cache_lock_renewal(cache_key, lock_token, lock_seconds, context)
+        if not self._lease_is_active(context):
+            return self._lease_lost_result(cache_key, lock_token)
         if cached is not None:
-            response = ProviderResponse(
-                success=True,
-                output_text=cached.output_text,
-                output_bytes=cached.output_bytes,
-                output_mime_type=cached.output_mime_type,
-                output_filename=cached.output_filename,
-                output_metadata={**cached.output_metadata, "cacheHit": True},
-                metrics={**cached.metrics, "cache_hit": 1.0},
-                provider_run_id=f"cache:{cache_key[:16]}",
-            )
+            response = ProviderResponse(success=True, output_text=cached.output_text, output_bytes=cached.output_bytes, output_mime_type=cached.output_mime_type, output_filename=cached.output_filename, output_metadata={**cached.output_metadata, "cacheHit": True}, metrics={**cached.metrics, "cache_hit": 1.0}, provider_run_id=f"cache:{cache_key[:16]}")
+            if not self._lease_is_active(context):
+                return self._lease_lost_result(cache_key, lock_token)
             asset_ids = self._materialize_response(job, model.provider, model.id, response, response.provider_run_id or "cache")
             if lock_token and self._cache:
                 self._cache.release_lock(cache_key, lock_token)
@@ -115,14 +141,16 @@ class ProviderGenerationWorker(Worker):
             if self._cache:
                 self._cache.release_lock(cache_key, lock_token)
             return JobExecutionResult(False, error_code="PROVIDER_CIRCUIT_OPEN", error_message=f"Circuit open for {model.provider}:{model.id}", retryable=True)
-
         run_id = str(uuid.uuid4())
         if self.provider_runs:
-            self.provider_runs.create(ProviderRun(id=run_id, job_id=job.id, provider=model.provider, model=model.id,
-                request_metadata={"jobType": job.type.value, "targetType": job.target_type, "targetId": job.target_id, "capability": capability}, status="RUNNING"))
+            self.provider_runs.create(ProviderRun(id=run_id, job_id=job.id, provider=model.provider, model=model.id, request_metadata={"cacheKey": cache_key, "idempotencyKey": cache_key, "jobType": job.type.value, "targetType": job.target_type, "targetId": job.target_id, "capability": capability}, status="RUNNING"))
+        if not self._lease_is_active(context):
+            return self._lease_lost_result(cache_key, lock_token, run_id)
         try:
-            response = model.adapter.execute(ProviderRequest(model=model.id, parameters=dict(job.input.parameters), seed=job.input.seed))
+            response = model.adapter.execute(ProviderRequest(model=model.id, parameters=dict(job.input.parameters), seed=job.input.seed, idempotency_key=cache_key))
         except Exception as exc:
+            if not self._lease_is_active(context):
+                return self._lease_lost_result(cache_key, lock_token, run_id)
             kind = classify_exception(exc)
             if breaker is not None and kind is ErrorKind.TRANSIENT:
                 breaker.record_failure()
@@ -131,7 +159,8 @@ class ProviderGenerationWorker(Worker):
             if self.provider_runs:
                 self.provider_runs.complete(run_id, status="FAILED", error_code="PROVIDER_EXCEPTION", response_metadata={"exceptionType": type(exc).__name__})
             return JobExecutionResult(False, provider_run_id=run_id, error_code="PROVIDER_EXCEPTION", error_message=str(exc), retryable=kind is ErrorKind.TRANSIENT)
-
+        if not self._lease_is_active(context):
+            return self._lease_lost_result(cache_key, lock_token, run_id)
         provider_run_id = response.provider_run_id or run_id
         if not response.success:
             kind = classify_provider_response(response.error_code, response.error_message)
@@ -143,6 +172,8 @@ class ProviderGenerationWorker(Worker):
                 self.provider_runs.complete(run_id, status="FAILED", error_code=response.error_code or "PROVIDER_FAILED", response_metadata=dict(response.metrics))
             return JobExecutionResult(False, provider_run_id=provider_run_id, error_code=response.error_code or "PROVIDER_FAILED", error_message=response.error_message or "Provider execution failed", retryable=kind is ErrorKind.TRANSIENT)
 
+        if not self._lease_is_active(context):
+            return self._lease_lost_result(cache_key, lock_token, run_id)
         asset_ids = self._materialize_response(job, model.provider, model.id, response, provider_run_id)
         if not asset_ids:
             if self._cache:
@@ -150,16 +181,15 @@ class ProviderGenerationWorker(Worker):
             if self.provider_runs:
                 self.provider_runs.complete(run_id, status="FAILED", error_code="PROVIDER_OUTPUT_INVALID", response_metadata={})
             return JobExecutionResult(False, provider_run_id=provider_run_id, error_code="PROVIDER_OUTPUT_INVALID", error_message="Provider returned no usable output", retryable=False)
-
+        if not self._lease_is_active(context):
+            return self._lease_lost_result(cache_key, lock_token, run_id)
         if breaker is not None:
             breaker.record_success()
         if self._cache:
-            self._cache.put(cache_key, model.provider, model.id, output_text=response.output_text, output_bytes=response.output_bytes,
-                output_mime_type=response.output_mime_type, output_filename=response.output_filename,
-                output_metadata=dict(response.output_metadata), metrics=dict(response.metrics))
+            self._cache.put(cache_key, model.provider, model.id, output_text=response.output_text, output_bytes=response.output_bytes, output_mime_type=response.output_mime_type, output_filename=response.output_filename, output_metadata=dict(response.output_metadata), metrics=dict(response.metrics))
             self._cache.release_lock(cache_key, lock_token)
         if self.provider_runs:
-            self.provider_runs.complete(run_id, status="COMPLETED", response_metadata={"assetIds": asset_ids, **dict(response.metrics)})
+            self.provider_runs.complete(run_id, status="COMPLETED", response_metadata={"assetIds": asset_ids, "cacheKey": cache_key, "idempotencyKey": cache_key, **dict(response.metrics)})
         return JobExecutionResult(True, asset_ids=asset_ids, metrics=dict(response.metrics), provider_run_id=provider_run_id)
 
     def _materialize_response(self, job: GenerationJob, provider: str, model: str, response: ProviderResponse, provider_run_id: str) -> list[str]:
@@ -175,6 +205,11 @@ class ProviderGenerationWorker(Worker):
         payload = self._serialize_output(job, response.output_text, response.metrics)
         digest, path, size = self._store(payload)
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"provider-asset:{job.id}:{digest}"))
+        existing = self.assets.get(asset_id)
+        if existing is not None:
+            if self._validate_existing_assets(job, [asset_id]) is not None:
+                return []
+            return [asset_id]
         self.assets.create(Asset(id=asset_id, project_id=job.project_id, type=self._asset_type(job), path=path, mime_type="application/json; charset=utf-8", size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, metadata={"provider": provider, "model": model, "providerRunId": provider_run_id}, license_status=LicenseStatus.VERIFIED)))
         return [asset_id]
 
@@ -201,6 +236,11 @@ class ProviderGenerationWorker(Worker):
         data = response.output_bytes or b""
         digest, path, size = self._store(data)
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"provider-media:{job.id}:{digest}"))
+        existing = self.assets.get(asset_id)
+        if existing is not None:
+            if self._validate_existing_assets(job, [asset_id]) is not None:
+                raise ValueError(f"Existing provider asset is invalid: {asset_id}")
+            return asset_id
         metadata = {"provider": provider, "model": model, "providerRunId": provider_run_id, **dict(response.output_metadata)}
         self.assets.create(Asset(id=asset_id, project_id=job.project_id, type=self._asset_type(job), path=path, mime_type=response.output_mime_type or media_mime(job.type.value, job.input.parameters), size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, metadata=metadata, license_status=LicenseStatus.VERIFIED)))
         return asset_id
@@ -212,7 +252,7 @@ class ProviderGenerationWorker(Worker):
 
     @staticmethod
     def _cache_key(provider: str, model: str, job: GenerationJob) -> str:
-        payload = {"provider": provider, "model": model, "jobType": job.type.value, "targetType": job.target_type, "parameters": job.input.parameters, "seed": job.input.seed}
+        payload = {"provider": provider, "model": model, "projectId": job.project_id, "jobType": job.type.value, "targetType": job.target_type, "targetId": job.target_id, "parameters": job.input.parameters, "referenceAssetIds": sorted(job.input.reference_asset_ids), "constraints": job.input.constraints, "seed": job.input.seed, "deterministic": job.input.deterministic}
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
