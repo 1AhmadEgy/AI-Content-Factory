@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from contextlib import asynccontextmanager
+from secrets import compare_digest
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
@@ -40,8 +41,6 @@ from .scheduling.loop import SchedulerLoop
 from .scheduling.persistent import PersistentScheduler, SQLiteScheduleRepository
 
 DATABASE_PATH = os.getenv("AICF_DATABASE_PATH", "./data/factory.db")
-# Fail during startup when credentials are enabled but provider model IDs are absent.
-# This prevents a production deployment from silently guessing model names.
 validate_openai_configuration()
 repositories = SQLiteRepositories(DATABASE_PATH)
 job_repository = SQLiteJobRepository(repositories.store)
@@ -61,9 +60,23 @@ def _scheduler_autostart_enabled() -> bool:
     return os.getenv("AICF_SCHEDULER_AUTOSTART", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _api_token() -> str | None:
-    token = os.getenv("AICF_API_TOKEN", "").strip()
-    return token or None
+def _api_key() -> str:
+    return os.getenv("AICF_API_KEY", "").strip()
+
+
+def _auth_test_mode() -> bool:
+    return os.getenv("AICF_TEST_MODE", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+PUBLIC_PATHS = {"/api/v1/health", "/api/v1/ready", "/api/v1/readiness"}
+
+
+def _authentication_error(request_id: str, message: str = "Authentication required") -> JSONResponse:
+    return JSONResponse(
+        status_code=401,
+        content={"error": {"code": "UNAUTHORIZED", "message": message, "details": {}, "requestId": request_id}},
+        headers={"X-Request-Id": request_id, "WWW-Authenticate": "Bearer"},
+    )
 
 
 schedule_repository = SQLiteScheduleRepository(repositories.store)
@@ -101,11 +114,25 @@ app = FastAPI(title="AI Content Factory API", version="0.9.0", docs_url="/api/v1
 
 
 @app.middleware("http")
-async def request_id_middleware(request: Request, call_next):
+async def request_id_and_auth_middleware(request: Request, call_next):
     request_id = request.headers.get("X-Request-Id") or f"req_{uuid4().hex}"
     request.state.request_id = request_id
-    if _api_token() and request.url.path not in {"/api/v1/health", "/api/v1/ready", "/api/v1/readiness"} and request.headers.get("Authorization", "") != f"Bearer {_api_token()}":
-        return JSONResponse(status_code=401, content={"error": {"code": "UNAUTHORIZED", "message": "Authentication required", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
+
+    if request.url.path not in PUBLIC_PATHS and not _auth_test_mode():
+        expected = _api_key()
+        if not expected:
+            return JSONResponse(
+                status_code=503,
+                content={"error": {"code": "AUTH_NOT_CONFIGURED", "message": "Backend API key is not configured", "details": {}, "requestId": request_id}},
+                headers={"X-Request-Id": request_id},
+            )
+        authorization = request.headers.get("Authorization", "")
+        if not authorization.startswith("Bearer "):
+            return _authentication_error(request_id)
+        supplied = authorization[7:].strip()
+        if not supplied or not compare_digest(supplied, expected):
+            return _authentication_error(request_id, "Invalid API key")
+
     response = await call_next(request)
     response.headers["X-Request-Id"] = request_id
     return response
@@ -125,12 +152,12 @@ async def unhandled_exception(request: Request, exc: Exception):
 
 
 @app.get("/api/v1/health", tags=["system"])
-def _health_early(request: Request):
+def health(request: Request):
     return {"status": "ok", "data": {"status": "OK", "service": "ai-content-factory-backend", "version": app.version}, "requestId": request.state.request_id}
 
 
 @app.get("/api/v1/ready", tags=["system"])
-def _readiness_early(request: Request):
+def readiness(request: Request):
     try:
         repositories.store.connection.execute("SELECT 1").fetchone()
         return {"status": "ready", "data": {"status": "READY", "service": "ai-content-factory-backend", "version": app.version}, "requestId": request.state.request_id}
@@ -140,8 +167,8 @@ def _readiness_early(request: Request):
 
 
 @app.get("/api/v1/readiness", include_in_schema=False)
-def _readiness_alias_early(request: Request):
-    return _readiness_early(request)
+def readiness_alias(request: Request):
+    return readiness(request)
 
 
 app.include_router(build_project_router(project_repository))
@@ -168,21 +195,6 @@ app.include_router(build_context_router(project_repository, context_store))
 app.include_router(build_series_bible_router(orchestrator_runtime))
 
 
-@app.get("/api/v1/health", tags=["system"])
-def health(request: Request):
-    return {"status": "ok", "data": {"status": "OK", "service": "ai-content-factory-backend", "version": app.version}, "requestId": request.state.request_id}
-
-
-@app.get("/api/v1/ready", tags=["system"])
-def readiness(request: Request):
-    try:
-        repositories.store.connection.execute("SELECT 1").fetchone()
-        return {"status": "ready", "data": {"status": "READY", "service": "ai-content-factory-backend", "version": app.version}, "requestId": request.state.request_id}
-    except Exception:
-        request_id = getattr(request.state, "request_id", "unknown")
-        return JSONResponse(status_code=503, content={"error": {"code": "RESOURCE_UNAVAILABLE", "message": "Required dependencies are not ready", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
-
-
 @app.get("/api/v1/worker/status", tags=["system"])
 def worker_status(request: Request):
     return {"data": {"workerId": worker_loop.worker_id, "running": worker_loop.running, "autostart": _worker_autostart_enabled(), "iterations": worker_loop.iterations, "lastError": worker_loop.last_error}, "requestId": request.state.request_id}
@@ -191,8 +203,3 @@ def worker_status(request: Request):
 @app.get("/api/v1/scheduler/status", tags=["scheduling"])
 def scheduler_status(request: Request):
     return {"data": {"running": scheduler_loop.running, "autostart": _scheduler_autostart_enabled(), "ticks": scheduler_loop.ticks, "lastError": scheduler_loop.last_error}, "requestId": request.state.request_id}
-
-
-@app.get("/api/v1/readiness", include_in_schema=False)
-def readiness_alias(request: Request):
-    return readiness(request)
