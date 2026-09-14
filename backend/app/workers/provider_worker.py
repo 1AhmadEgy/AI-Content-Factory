@@ -49,6 +49,24 @@ class ProviderGenerationWorker(Worker):
     def health_check(self) -> bool:
         return self._initialized
 
+    @staticmethod
+    def _lease_is_active(context: WorkerContext) -> bool:
+        """Treat a missing lease callback as active for standalone/unit-test execution."""
+        lease_active = context.metadata.get("lease_active")
+        if not callable(lease_active):
+            return True
+        try:
+            return bool(lease_active())
+        except Exception:
+            return False
+
+    def _lease_lost_result(self, cache_key: str, lock_token: str | None, run_id: str | None = None) -> JobExecutionResult:
+        if self._cache and lock_token:
+            self._cache.release_lock(cache_key, lock_token)
+        if self.provider_runs and run_id:
+            self.provider_runs.complete(run_id, status="ABANDONED", error_code="JOB_LEASE_LOST", response_metadata={"cacheKey": cache_key, "idempotencyKey": cache_key})
+        return JobExecutionResult(False, provider_run_id=run_id, error_code="JOB_LEASE_LOST", error_message="Job lease was lost during provider execution", retryable=True)
+
     def _breaker(self, provider: str, model: str) -> SQLiteCircuitBreaker | None:
         if self._cache is None:
             return None
@@ -103,8 +121,12 @@ class ProviderGenerationWorker(Worker):
                 cached = self._cache.get(cache_key)
             elif cached is None and lock_token is not None:
                 self._start_cache_lock_renewal(cache_key, lock_token, lock_seconds, context)
+        if not self._lease_is_active(context):
+            return self._lease_lost_result(cache_key, lock_token)
         if cached is not None:
             response = ProviderResponse(success=True, output_text=cached.output_text, output_bytes=cached.output_bytes, output_mime_type=cached.output_mime_type, output_filename=cached.output_filename, output_metadata={**cached.output_metadata, "cacheHit": True}, metrics={**cached.metrics, "cache_hit": 1.0}, provider_run_id=f"cache:{cache_key[:16]}")
+            if not self._lease_is_active(context):
+                return self._lease_lost_result(cache_key, lock_token)
             asset_ids = self._materialize_response(job, model.provider, model.id, response, response.provider_run_id or "cache")
             if lock_token and self._cache:
                 self._cache.release_lock(cache_key, lock_token)
@@ -120,9 +142,13 @@ class ProviderGenerationWorker(Worker):
         run_id = str(uuid.uuid4())
         if self.provider_runs:
             self.provider_runs.create(ProviderRun(id=run_id, job_id=job.id, provider=model.provider, model=model.id, request_metadata={"cacheKey": cache_key, "idempotencyKey": cache_key, "jobType": job.type.value, "targetType": job.target_type, "targetId": job.target_id, "capability": capability}, status="RUNNING"))
+        if not self._lease_is_active(context):
+            return self._lease_lost_result(cache_key, lock_token, run_id)
         try:
             response = model.adapter.execute(ProviderRequest(model=model.id, parameters=dict(job.input.parameters), seed=job.input.seed, idempotency_key=cache_key))
         except Exception as exc:
+            if not self._lease_is_active(context):
+                return self._lease_lost_result(cache_key, lock_token, run_id)
             kind = classify_exception(exc)
             if breaker is not None and kind is ErrorKind.TRANSIENT:
                 breaker.record_failure()
@@ -131,6 +157,8 @@ class ProviderGenerationWorker(Worker):
             if self.provider_runs:
                 self.provider_runs.complete(run_id, status="FAILED", error_code="PROVIDER_EXCEPTION", response_metadata={"exceptionType": type(exc).__name__})
             return JobExecutionResult(False, provider_run_id=run_id, error_code="PROVIDER_EXCEPTION", error_message=str(exc), retryable=kind is ErrorKind.TRANSIENT)
+        if not self._lease_is_active(context):
+            return self._lease_lost_result(cache_key, lock_token, run_id)
         provider_run_id = response.provider_run_id or run_id
         if not response.success:
             kind = classify_provider_response(response.error_code, response.error_message)
@@ -142,6 +170,8 @@ class ProviderGenerationWorker(Worker):
                 self.provider_runs.complete(run_id, status="FAILED", error_code=response.error_code or "PROVIDER_FAILED", response_metadata=dict(response.metrics))
             return JobExecutionResult(False, provider_run_id=provider_run_id, error_code=response.error_code or "PROVIDER_FAILED", error_message=response.error_message or "Provider execution failed", retryable=kind is ErrorKind.TRANSIENT)
 
+        if not self._lease_is_active(context):
+            return self._lease_lost_result(cache_key, lock_token, run_id)
         asset_ids = self._materialize_response(job, model.provider, model.id, response, provider_run_id)
         if not asset_ids:
             if self._cache:
@@ -149,6 +179,8 @@ class ProviderGenerationWorker(Worker):
             if self.provider_runs:
                 self.provider_runs.complete(run_id, status="FAILED", error_code="PROVIDER_OUTPUT_INVALID", response_metadata={})
             return JobExecutionResult(False, provider_run_id=provider_run_id, error_code="PROVIDER_OUTPUT_INVALID", error_message="Provider returned no usable output", retryable=False)
+        if not self._lease_is_active(context):
+            return self._lease_lost_result(cache_key, lock_token, run_id)
         if breaker is not None:
             breaker.record_success()
         if self._cache:
