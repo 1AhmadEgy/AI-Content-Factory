@@ -74,7 +74,10 @@ class JobExecutor:
                 WorkerContext(
                     worker_id=worker_id,
                     lease_id=lease.lease_id,
-                    metadata={"attempt": job.attempt},
+                    metadata={
+                        "attempt": job.attempt,
+                        "lease_active": lambda: self.queue.is_lease_active(lease),
+                    },
                     progress_callback=lambda progress, stage: self._set_progress(job, stage, progress, lease=lease),
                 ),
             )
