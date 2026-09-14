@@ -10,14 +10,30 @@ This document tracks production-hardening coverage for AI Content Factory. The d
 - [x] Canonical brand asset generation and validation
 - [x] Android workflow runs on the development branch push and pull requests
 - [x] Android project Gradle validation workflow configured
+- [x] Android CI uses a pinned Gradle version without requiring a committed wrapper
 - [x] Ephemeral CI signing key generation (never a production/Play key)
 - [x] Debug APK, release APK and release AAB artifact validation steps configured
 - [x] Release APK signature verification step configured
+- [x] PostgreSQL migration numbering is deterministic and unique on the development branch
+- [x] Unsafe uploaded-snapshot extraction workflow removed
+- [x] Committed project snapshot archive removed from `uploads/`
 - [ ] Android CI execution verified green on the current development head
 - [ ] Android APK/AAB artifacts downloaded and independently inspected
 - [ ] Full provider integration verification with real credentials
 - [ ] Full end-to-end production pipeline verification
 - [ ] Production signing / Play App Signing configuration (requires owner-controlled secrets and account decisions)
+
+## Queue and scheduling coverage
+
+- [x] Persistent SQLite jobs
+- [x] Atomic job leasing and duplicate-claim prevention
+- [x] Lease heartbeat and expired-lease recovery
+- [x] Idempotent externally-created jobs
+- [x] Completion execution fencing
+- [ ] Bounded exponential retry backoff with jitter and persisted availability time
+- [ ] Full dependency/resource-aware scheduler semantics
+- [ ] Project fairness / anti-starvation scheduling
+- [ ] Resource reservation lifecycle
 
 ## Non-fake production requirements
 
