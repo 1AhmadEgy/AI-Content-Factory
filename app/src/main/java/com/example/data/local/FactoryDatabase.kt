@@ -1,14 +1,26 @@
 package com.example.data.local
 
-import com.example.core.model.*
-
 import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
+import com.example.core.model.*
 
-@Database(entities = [Project::class, Series::class, Episode::class, Scene::class, Character::class, Location::class, Shot::class, GenerationJob::class], version = 1, exportSchema = false)
+@Database(
+    entities = [
+        Project::class,
+        Series::class,
+        Episode::class,
+        Scene::class,
+        Character::class,
+        Location::class,
+        Shot::class,
+        GenerationJob::class,
+    ],
+    version = 1,
+    exportSchema = false,
+)
 @TypeConverters(Converters::class)
 abstract class FactoryDatabase : RoomDatabase() {
     abstract fun factoryDao(): FactoryDao
@@ -19,13 +31,18 @@ abstract class FactoryDatabase : RoomDatabase() {
 
         fun getDatabase(context: Context): FactoryDatabase {
             return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
+                INSTANCE ?: Room.databaseBuilder(
                     context.applicationContext,
                     FactoryDatabase::class.java,
-                    "factory_database"
-                ).build()
-                INSTANCE = instance
-                instance
+                    "factory_database",
+                )
+                    // Prevent an app-start crash when a future schema version is installed
+                    // without a migration. This intentionally prioritizes a usable app over
+                    // preserving incompatible local data; proper migrations should be added
+                    // before production schema changes.
+                    .fallbackToDestructiveMigration()
+                    .build()
+                    .also { INSTANCE = it }
             }
         }
     }
