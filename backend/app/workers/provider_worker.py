@@ -52,7 +52,8 @@ class ProviderGenerationWorker(Worker):
     @staticmethod
     def _lease_is_active(context: WorkerContext) -> bool:
         """Treat a missing lease callback as active for standalone/unit-test execution."""
-        lease_active = context.metadata.get("lease_active")
+        metadata = getattr(context, "metadata", None) or {}
+        lease_active = metadata.get("lease_active")
         if not callable(lease_active):
             return True
         try:
@@ -79,7 +80,8 @@ class ProviderGenerationWorker(Worker):
         """Keep the stampede lock alive only while this execution still owns its job lease."""
         if self._cache is None:
             return
-        lease_active = context.metadata.get("lease_active")
+        metadata = getattr(context, "metadata", None) or {}
+        lease_active = metadata.get("lease_active")
         interval = max(0.25, lock_seconds / 3.0)
 
         def renew() -> None:
