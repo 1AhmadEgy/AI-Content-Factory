@@ -48,6 +48,7 @@ import com.example.data.remote.CountryLibrary
 import com.example.data.remote.LanguageInfo
 import com.example.data.remote.NetworkClient
 import com.example.data.remote.SeriesContext
+import com.example.data.remote.SeriesContextPatchRequest
 import com.example.data.remote.SeriesTemplate
 import kotlinx.coroutines.launch
 
@@ -106,12 +107,25 @@ fun SeriesControlScreen(projectId: String, onBack: () -> Unit) {
         }
     }
 
-    fun toggleTargetLanguage(languageId: String) { targetLanguages = if (languageId in targetLanguages) targetLanguages - languageId else targetLanguages + languageId }
+    fun toggleTargetLanguage(languageId: String) {
+        targetLanguages = if (languageId in targetLanguages) targetLanguages - languageId else targetLanguages + languageId
+    }
 
     fun applyTemplate(templateId: String) {
         scope.launch {
             try {
-                context = NetworkClient.apiService.applySeriesTemplate(projectId, ApplySeriesTemplateRequest(templateId, title.ifBlank { null }, selectedCountry, sourceLanguage, targetLanguages, context?.dialect)).data
+                val response = NetworkClient.apiService.applySeriesTemplate(
+                    projectId,
+                    ApplySeriesTemplateRequest(
+                        templateId = templateId,
+                        title = title.ifBlank { null },
+                        countryId = selectedCountry,
+                        sourceLanguage = sourceLanguage,
+                        targetLanguages = targetLanguages,
+                        dialect = context?.dialect,
+                    ),
+                )
+                context = response.data
                 selectedTemplate = templateId
                 message = "تم تطبيق القالب مع الحفاظ على البيانات الموجودة"
             } catch (t: Throwable) { message = t.message ?: "فشل تطبيق القالب" }
@@ -122,19 +136,43 @@ fun SeriesControlScreen(projectId: String, onBack: () -> Unit) {
         val current = context ?: return
         scope.launch {
             try {
-                val facts = current.facts.toMutableList(); if (factText.isNotBlank()) facts += mapOf("text" to factText.trim(), "source" to "android")
-                val gags = current.runningGags.toMutableList(); if (gagText.isNotBlank()) gags += mapOf("text" to gagText.trim(), "source" to "android")
-                val threads = current.openThreads.toMutableList(); if (threadText.isNotBlank()) threads += mapOf("text" to threadText.trim(), "source" to "android", "status" to "open")
-                context = NetworkClient.apiService.patchSeriesContext(projectId, com.example.data.remote.SeriesContextPatchRequest(mapOf(
-                    "title" to title.ifBlank { current.title }, "countryId" to selectedCountry,
+                val facts = current.facts.toMutableList().apply {
+                    if (factText.isNotBlank()) add(mapOf("text" to factText.trim(), "source" to "android"))
+                }
+                val gags = current.runningGags.toMutableList().apply {
+                    if (gagText.isNotBlank()) add(mapOf("text" to gagText.trim(), "source" to "android"))
+                }
+                val threads = current.openThreads.toMutableList().apply {
+                    if (threadText.isNotBlank()) add(mapOf("text" to threadText.trim(), "source" to "android", "status" to "open"))
+                }
+                val patch = mapOf<String, Any?>(
+                    "title" to title.ifBlank { current.title },
+                    "countryId" to selectedCountry,
                     "libraryId" to (countries.firstOrNull { it.id == selectedCountry }?.libraryId ?: current.libraryId),
-                    "sourceLanguage" to sourceLanguage, "targetLanguages" to targetLanguages.distinct(), "dialect" to current.dialect,
-                    "translationPolicy" to current.translationPolicy, "glossary" to current.glossary, "translationVersions" to current.translationVersions,
-                    "characters" to current.characters, "locations" to current.locations, "relationships" to current.relationships,
-                    "facts" to facts, "runningGags" to gags, "openThreads" to threads, "importantProps" to current.importantProps,
-                    "timeline" to current.timeline, "rules" to current.rules
-                )).data
-                factText = ""; gagText = ""; threadText = ""
+                    "sourceLanguage" to sourceLanguage,
+                    "targetLanguages" to targetLanguages.distinct(),
+                    "dialect" to current.dialect,
+                    "translationPolicy" to current.translationPolicy,
+                    "glossary" to current.glossary,
+                    "translationVersions" to current.translationVersions,
+                    "characters" to current.characters,
+                    "locations" to current.locations,
+                    "relationships" to current.relationships,
+                    "facts" to facts,
+                    "runningGags" to gags,
+                    "openThreads" to threads,
+                    "importantProps" to current.importantProps,
+                    "timeline" to current.timeline,
+                    "rules" to current.rules,
+                )
+                val response = NetworkClient.apiService.patchSeriesContext(
+                    projectId,
+                    SeriesContextPatchRequest(context = patch),
+                )
+                context = response.data
+                factText = ""
+                gagText = ""
+                threadText = ""
                 message = "تم حفظ الإعدادات والذاكرة دون حذف السجل السابق"
             } catch (t: Throwable) { message = t.message ?: "فشل حفظ الاستمرارية" }
         }
@@ -142,13 +180,19 @@ fun SeriesControlScreen(projectId: String, onBack: () -> Unit) {
 
     val neonCard = CardDefaults.cardColors(containerColor = SurfaceBlue)
     Scaffold(
-        topBar = { TopAppBar(title = { Text("SERIES CONTROL", color = TextLight, style = MaterialTheme.typography.titleLarge) }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "رجوع", tint = PrimaryCyan) } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkBlue)) },
-        containerColor = DarkBlue
+        topBar = {
+            TopAppBar(
+                title = { Text("SERIES CONTROL", color = TextLight, style = MaterialTheme.typography.titleLarge) },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "رجوع", tint = PrimaryCyan) } },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkBlue),
+            )
+        },
+        containerColor = DarkBlue,
     ) { padding ->
         LazyColumn(
             Modifier.fillMaxSize().padding(padding).background(DarkBlue),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             item {
                 Card(colors = CardDefaults.cardColors(containerColor = SurfaceBlue), shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth()) {
@@ -162,7 +206,6 @@ fun SeriesControlScreen(projectId: String, onBack: () -> Unit) {
                     }
                 }
             }
-
             item {
                 Card(colors = neonCard, shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -176,7 +219,6 @@ fun SeriesControlScreen(projectId: String, onBack: () -> Unit) {
                     }
                 }
             }
-
             item {
                 Card(colors = neonCard, shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -190,9 +232,7 @@ fun SeriesControlScreen(projectId: String, onBack: () -> Unit) {
                     }
                 }
             }
-
             item { OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("اسم المسلسل") }, modifier = Modifier.fillMaxWidth()) }
-
             item {
                 Card(colors = neonCard, shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -206,12 +246,10 @@ fun SeriesControlScreen(projectId: String, onBack: () -> Unit) {
                     }
                 }
             }
-
             item { OutlinedTextField(value = factText, onValueChange = { factText = it }, label = { Text("إضافة حقيقة ثابتة") }, modifier = Modifier.fillMaxWidth()) }
             item { OutlinedTextField(value = gagText, onValueChange = { gagText = it }, label = { Text("إضافة نكتة/لازمة متكررة") }, modifier = Modifier.fillMaxWidth()) }
             item { OutlinedTextField(value = threadText, onValueChange = { threadText = it }, label = { Text("إضافة خيط قصة مفتوح") }, modifier = Modifier.fillMaxWidth()) }
             item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button(onClick = { saveContext() }, Modifier.weight(1f)) { Text("حفظ") }; OutlinedButton(onClick = { refresh() }, Modifier.weight(1f)) { Text("تحديث") } } }
-
             item { Text("HISTORY  •  ${snapshots.size}", color = PrimaryCyan, style = MaterialTheme.typography.titleLarge) }
             items(snapshots.take(50)) { snapshot ->
                 Card(colors = neonCard, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
