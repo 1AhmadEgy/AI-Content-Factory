@@ -68,9 +68,9 @@ fun CharacterDetailScreen(characterId: String, onBack: () -> Unit, onScene: () -
                 character == null -> item { Box(Modifier.fillMaxWidth().height(180.dp), Alignment.Center) { CircularProgressIndicator(color = PrimaryCyan) } }
                 else -> {
                     item { NeonSectionCard { Text("DESCRIPTION", color = PrimaryCyan, style = MaterialTheme.typography.labelMedium); Text(character!!.description, color = TextLight) } }
-                    if (character!!.appearance.isNotEmpty()) item { NeonSectionCard { Text("APPEARANCE", color = PrimaryCyan); Text(character!!.appearance, color = TextLight) } }
+                    if (character!!.appearance.isNotEmpty()) item { NeonSectionCard { Text("APPEARANCE", color = PrimaryCyan); Text(character!!.appearance.toString(), color = TextLight) } }
                     if (character!!.voice.isNotEmpty()) item { NeonSectionCard { Text("VOICE", color = PrimaryCyan); Text(character!!.voice.toString(), color = TextLight) } }
-                    if (character!!.visualStyle.isNotEmpty()) item { NeonSectionCard { Text("VISUAL STYLE", color = PrimaryCyan); Text(character!!.visualStyle, color = TextLight) } }
+                    if (character!!.visualStyle.isNotEmpty()) item { NeonSectionCard { Text("VISUAL STYLE", color = PrimaryCyan); Text(character!!.visualStyle.toString(), color = TextLight) } }
                     item { Button(onClick = onScene, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = PrimaryCyan, contentColor = DarkBlue)) { Text("Use Character in Scene") } }
                 }
             }
