@@ -1,9 +1,12 @@
 package com.example.feature
 
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.core.model.*
 import com.example.data.repository.*
+import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,8 +35,18 @@ class FactoryViewModel : ViewModel() {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
-                _errorMessage.value = error.message?.takeIf { it.isNotBlank() } ?: "Unexpected error"
+                _errorMessage.value = userFriendlyMessage(error)
             }
+        }
+    }
+
+    private fun userFriendlyMessage(error: Throwable): String {
+        val cause = generateSequence(error) { it.cause }.toList()
+        return when {
+            cause.any { it is IOException } ->
+                "تعذر الاتصال بالخادم. تأكد من اتصال الإنترنت أو تشغيل Backend."
+            else ->
+                "حدث خطأ أثناء تنفيذ العملية. حاول مرة أخرى."
         }
     }
 
