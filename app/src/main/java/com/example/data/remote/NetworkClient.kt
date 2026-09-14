@@ -1,5 +1,6 @@
 package com.example.data.remote
 
+import com.example.AppContainer
 import com.example.BuildConfig
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
@@ -30,8 +31,8 @@ object NetworkClient {
         val builder = chain.request().newBuilder()
             .header("Accept", "application/json")
             .header("X-Request-Id", "android-${UUID.randomUUID()}")
-        val token = BuildConfig.AICF_API_TOKEN.trim()
-        if (token.isNotBlank() && token != NOT_CONFIGURED) {
+        val token = AppContainer.apiKeyStore().getApiKey()
+        if (!token.isNullOrBlank()) {
             builder.header("Authorization", "Bearer $token")
         }
         chain.proceed(builder.build())
