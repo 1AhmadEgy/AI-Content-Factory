@@ -48,6 +48,7 @@ fun MainScreen() {
     }
 
     Scaffold(
+        topBar = { BrandingHeader() },
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         bottomBar = {
             NavigationBar(containerColor = DarkBlue) {
