@@ -7,8 +7,10 @@ import com.example.data.remote.BackendJob
 import com.example.data.remote.CreateJobRequest
 import com.example.data.remote.JobInputRequest
 import com.example.data.remote.NetworkClient
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -18,7 +20,7 @@ import java.util.Locale
 import java.util.TimeZone
 
 class Repository(private val dao: FactoryDao) {
-    private val scope = CoroutineScope(Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val api = NetworkClient.apiService
     private val isoParser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSX", Locale.US).apply {
         timeZone = TimeZone.getTimeZone("UTC")
@@ -31,7 +33,15 @@ class Repository(private val dao: FactoryDao) {
     val jobs: StateFlow<List<GenerationJob>> = dao.getAllJobs().stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
-        scope.launch { syncJobs() }
+        scope.launch {
+            try {
+                syncJobs()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                Log.e("Repository", "Initial job sync failed; continuing offline", e)
+            }
+        }
     }
 
     suspend fun addProject(name: String, description: String) {
