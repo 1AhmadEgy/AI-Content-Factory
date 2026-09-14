@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 
-PROTECTED_PATH = "/api/v1/worker/registry"
+PROTECTED_PATH = "/api/v1/worker/status"
 
 
 def test_missing_api_key_is_rejected(monkeypatch):
