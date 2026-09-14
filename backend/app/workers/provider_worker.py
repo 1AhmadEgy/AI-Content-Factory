@@ -53,14 +53,7 @@ class ProviderGenerationWorker(Worker):
             return None
         key = f"{provider}:{model}"
         if key not in self._breakers:
-            self._breakers[key] = SQLiteCircuitBreaker(
-                self._cache.store,
-                key,
-                fail_threshold=int(os.getenv("AICF_CIRCUIT_FAIL_THRESHOLD", "5")),
-                open_duration=float(os.getenv("AICF_CIRCUIT_OPEN_DURATION_SECONDS", "60")),
-                half_open_max_calls=int(os.getenv("AICF_CIRCUIT_HALF_OPEN_MAX_CALLS", "2")),
-                success_threshold=int(os.getenv("AICF_CIRCUIT_SUCCESS_THRESHOLD", "2")),
-            )
+            self._breakers[key] = SQLiteCircuitBreaker(self._cache.store, key, fail_threshold=int(os.getenv("AICF_CIRCUIT_FAIL_THRESHOLD", "5")), open_duration=float(os.getenv("AICF_CIRCUIT_OPEN_DURATION_SECONDS", "60")), half_open_max_calls=int(os.getenv("AICF_CIRCUIT_HALF_OPEN_MAX_CALLS", "2")), success_threshold=int(os.getenv("AICF_CIRCUIT_SUCCESS_THRESHOLD", "2")))
         return self._breakers[key]
 
     def execute(self, job: GenerationJob, context: WorkerContext) -> JobExecutionResult:
@@ -68,7 +61,6 @@ class ProviderGenerationWorker(Worker):
             return JobExecutionResult(False, error_code="WORKER_NOT_INITIALIZED", error_message="Worker is not initialized")
         if context.cancellation_requested:
             return JobExecutionResult(False, error_code="CANCELLED", error_message="Cancellation requested")
-
         capability = self._required_capability(job.type)
         model = self.providers.get(job.model) if job.model else None
         if model is None or capability not in model.adapter.capability().capabilities:
@@ -78,31 +70,16 @@ class ProviderGenerationWorker(Worker):
         if not model.enabled or not model.adapter.health_check():
             return JobExecutionResult(False, error_code="MODEL_UNHEALTHY", error_message=model.id, retryable=True)
 
-        # Important ordering: Cache -> Lock -> Circuit -> Provider.
-        # Cache hits never call the provider and therefore must never be blocked by an open circuit.
         cache_key = self._cache_key(model.provider, model.id, job)
         cached = self._cache.get(cache_key) if self._cache else None
         lock_token: str | None = None
         if cached is None and self._cache is not None:
-            cached, lock_token = self._cache.get_or_lock(
-                cache_key,
-                lock_seconds=int(os.getenv("AICF_PROVIDER_CACHE_LOCK_SECONDS", "30")),
-            )
+            cached, lock_token = self._cache.get_or_lock(cache_key, lock_seconds=int(os.getenv("AICF_PROVIDER_CACHE_LOCK_SECONDS", "30")))
             if cached is None and lock_token is None:
                 time.sleep(float(os.getenv("AICF_PROVIDER_CACHE_WAIT_SECONDS", "2")))
                 cached = self._cache.get(cache_key)
-
         if cached is not None:
-            response = ProviderResponse(
-                success=True,
-                output_text=cached.output_text,
-                output_bytes=cached.output_bytes,
-                output_mime_type=cached.output_mime_type,
-                output_filename=cached.output_filename,
-                output_metadata={**cached.output_metadata, "cacheHit": True},
-                metrics={**cached.metrics, "cache_hit": 1.0},
-                provider_run_id=f"cache:{cache_key[:16]}",
-            )
+            response = ProviderResponse(success=True, output_text=cached.output_text, output_bytes=cached.output_bytes, output_mime_type=cached.output_mime_type, output_filename=cached.output_filename, output_metadata={**cached.output_metadata, "cacheHit": True}, metrics={**cached.metrics, "cache_hit": 1.0}, provider_run_id=f"cache:{cache_key[:16]}")
             asset_ids = self._materialize_response(job, model.provider, model.id, response, response.provider_run_id or "cache")
             if lock_token and self._cache:
                 self._cache.release_lock(cache_key, lock_token)
@@ -115,11 +92,9 @@ class ProviderGenerationWorker(Worker):
             if self._cache:
                 self._cache.release_lock(cache_key, lock_token)
             return JobExecutionResult(False, error_code="PROVIDER_CIRCUIT_OPEN", error_message=f"Circuit open for {model.provider}:{model.id}", retryable=True)
-
         run_id = str(uuid.uuid4())
         if self.provider_runs:
-            self.provider_runs.create(ProviderRun(id=run_id, job_id=job.id, provider=model.provider, model=model.id,
-                request_metadata={"jobType": job.type.value, "targetType": job.target_type, "targetId": job.target_id, "capability": capability}, status="RUNNING"))
+            self.provider_runs.create(ProviderRun(id=run_id, job_id=job.id, provider=model.provider, model=model.id, request_metadata={"cacheKey": cache_key, "jobType": job.type.value, "targetType": job.target_type, "targetId": job.target_id, "capability": capability}, status="RUNNING"))
         try:
             response = model.adapter.execute(ProviderRequest(model=model.id, parameters=dict(job.input.parameters), seed=job.input.seed))
         except Exception as exc:
@@ -131,7 +106,6 @@ class ProviderGenerationWorker(Worker):
             if self.provider_runs:
                 self.provider_runs.complete(run_id, status="FAILED", error_code="PROVIDER_EXCEPTION", response_metadata={"exceptionType": type(exc).__name__})
             return JobExecutionResult(False, provider_run_id=run_id, error_code="PROVIDER_EXCEPTION", error_message=str(exc), retryable=kind is ErrorKind.TRANSIENT)
-
         provider_run_id = response.provider_run_id or run_id
         if not response.success:
             kind = classify_provider_response(response.error_code, response.error_message)
@@ -150,16 +124,13 @@ class ProviderGenerationWorker(Worker):
             if self.provider_runs:
                 self.provider_runs.complete(run_id, status="FAILED", error_code="PROVIDER_OUTPUT_INVALID", response_metadata={})
             return JobExecutionResult(False, provider_run_id=provider_run_id, error_code="PROVIDER_OUTPUT_INVALID", error_message="Provider returned no usable output", retryable=False)
-
         if breaker is not None:
             breaker.record_success()
         if self._cache:
-            self._cache.put(cache_key, model.provider, model.id, output_text=response.output_text, output_bytes=response.output_bytes,
-                output_mime_type=response.output_mime_type, output_filename=response.output_filename,
-                output_metadata=dict(response.output_metadata), metrics=dict(response.metrics))
+            self._cache.put(cache_key, model.provider, model.id, output_text=response.output_text, output_bytes=response.output_bytes, output_mime_type=response.output_mime_type, output_filename=response.output_filename, output_metadata=dict(response.output_metadata), metrics=dict(response.metrics))
             self._cache.release_lock(cache_key, lock_token)
         if self.provider_runs:
-            self.provider_runs.complete(run_id, status="COMPLETED", response_metadata={"assetIds": asset_ids, **dict(response.metrics)})
+            self.provider_runs.complete(run_id, status="COMPLETED", response_metadata={"assetIds": asset_ids, "cacheKey": cache_key, **dict(response.metrics)})
         return JobExecutionResult(True, asset_ids=asset_ids, metrics=dict(response.metrics), provider_run_id=provider_run_id)
 
     def _materialize_response(self, job: GenerationJob, provider: str, model: str, response: ProviderResponse, provider_run_id: str) -> list[str]:
@@ -175,7 +146,12 @@ class ProviderGenerationWorker(Worker):
         payload = self._serialize_output(job, response.output_text, response.metrics)
         digest, path, size = self._store(payload)
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"provider-asset:{job.id}:{digest}"))
-        self.assets.create(Asset(id=asset_id, project_id=job.project_id, type=self._asset_type(job), path=path, mime_type="application/json; charset=utf-8", size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, metadata={"provider": provider, "model": model, "providerRunId": provider_run_id}, license_status=LicenseStatus.VERIFIED)))
+        existing = self.assets.get(asset_id)
+        if existing is not None:
+            if self._validate_existing_assets(job, [asset_id]) is not None:
+                return []
+            return [asset_id]
+        self.assets.create(Asset(id=asset_id, project_id=job.project_id, type=self._asset_type(job), path=path, mime_type="application/json; charset=utf-8", size_bytes=size, status=AssetStatus.READY, provenance=build_provenance(job, metadata={"provider": provider, "model": model, "providerRunId": provider_run_id}, license_status=LicenseStatus.VERIFIED)))
         return [asset_id]
 
     def _validate_existing_assets(self, job: GenerationJob, asset_ids: list[str]) -> tuple[str, str, bool] | None:
@@ -201,8 +177,13 @@ class ProviderGenerationWorker(Worker):
         data = response.output_bytes or b""
         digest, path, size = self._store(data)
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"provider-media:{job.id}:{digest}"))
+        existing = self.assets.get(asset_id)
+        if existing is not None:
+            if self._validate_existing_assets(job, [asset_id]) is not None:
+                raise ValueError(f"Existing provider asset is invalid: {asset_id}")
+            return asset_id
         metadata = {"provider": provider, "model": model, "providerRunId": provider_run_id, **dict(response.output_metadata)}
-        self.assets.create(Asset(id=asset_id, project_id=job.project_id, type=self._asset_type(job), path=path, mime_type=response.output_mime_type or media_mime(job.type.value, job.input.parameters), size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, metadata=metadata, license_status=LicenseStatus.VERIFIED)))
+        self.assets.create(Asset(id=asset_id, project_id=job.project_id, type=self._asset_type(job), path=path, mime_type=response.output_mime_type or media_mime(job.type.value, job.input.parameters), size_bytes=size, status=AssetStatus.READY, provenance=build_provenance(job, metadata=metadata, license_status=LicenseStatus.VERIFIED)))
         return asset_id
 
     def _store(self, payload: bytes) -> tuple[str, str, int]:
@@ -212,25 +193,7 @@ class ProviderGenerationWorker(Worker):
 
     @staticmethod
     def _cache_key(provider: str, model: str, job: GenerationJob) -> str:
-        """Build a cache identity from every job field that can change provider output.
-
-        Job id is intentionally excluded so equivalent requests can share a cache
-        entry, while project/target identity is included to prevent one target's
-        generated media from being reused for another target.
-        """
-        payload = {
-            "provider": provider,
-            "model": model,
-            "projectId": job.project_id,
-            "jobType": job.type.value,
-            "targetType": job.target_type,
-            "targetId": job.target_id,
-            "parameters": job.input.parameters,
-            "referenceAssetIds": sorted(job.input.reference_asset_ids),
-            "constraints": job.input.constraints,
-            "seed": job.input.seed,
-            "deterministic": job.input.deterministic,
-        }
+        payload = {"provider": provider, "model": model, "projectId": job.project_id, "jobType": job.type.value, "targetType": job.target_type, "targetId": job.target_id, "parameters": job.input.parameters, "referenceAssetIds": sorted(job.input.reference_asset_ids), "constraints": job.input.constraints, "seed": job.input.seed, "deterministic": job.input.deterministic}
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
