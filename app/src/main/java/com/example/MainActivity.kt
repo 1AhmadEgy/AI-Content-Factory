@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -30,12 +31,13 @@ fun MainScreen() {
     val navController = rememberNavController(); val viewModel: FactoryViewModel = viewModel(); val entry by navController.currentBackStackEntryAsState(); val route = entry?.destination?.route
     val snackbarHostState = remember { SnackbarHostState() }; val errorMessage by viewModel.errorMessage.collectAsState()
     LaunchedEffect(errorMessage) { errorMessage?.let { snackbarHostState.showSnackbar(it); viewModel.clearError() } }
-    Scaffold(topBar = { if (route != "designer") BrandingHeader() }, snackbarHost = { SnackbarHost(snackbarHostState) }, bottomBar = {
+    Scaffold(topBar = { if (route != "designer" && route != "settings") BrandingHeader() }, snackbarHost = { SnackbarHost(snackbarHostState) }, bottomBar = {
         NavigationBar(containerColor = DarkBlue) {
             NavigationBarItem(icon = { Icon(Icons.Filled.VideoLibrary, "Projects") }, label = { Text("Projects") }, selected = route?.startsWith("projects") == true, onClick = { navController.navigate("projects") { launchSingleTop = true } }, colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan))
             NavigationBarItem(icon = { Icon(Icons.Filled.List, "Characters") }, label = { Text("Characters") }, selected = route == "characters" || route?.startsWith("character/") == true || route == "scene-builder", onClick = { navController.navigate("characters") { launchSingleTop = true } }, colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan))
             NavigationBarItem(icon = { Icon(Icons.Filled.List, "Control") }, label = { Text("Control") }, selected = route == "control", onClick = { navController.navigate("control") { launchSingleTop = true } }, colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan))
             NavigationBarItem(icon = { Icon(Icons.Filled.Info, "Designer") }, label = { Text("Designer") }, selected = route == "designer", onClick = { navController.navigate("designer") { launchSingleTop = true } }, colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan))
+            NavigationBarItem(icon = { Icon(Icons.Filled.Settings, "Settings") }, label = { Text("Settings") }, selected = route == "settings", onClick = { navController.navigate("settings") { launchSingleTop = true } }, colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan))
         }
     }) { padding ->
         NavHost(navController, startDestination = "projects", modifier = Modifier.padding(padding)) {
@@ -49,6 +51,7 @@ fun MainScreen() {
             composable("scene-builder") { SceneBuilderScreen { navController.popBackStack() } }
             composable("control") { NeonControlCenterScreen() }
             composable("designer") { DesignerProfileScreen { navController.popBackStack() } }
+            composable("settings") { SettingsScreen { navController.popBackStack() } }
         }
     }
 }
