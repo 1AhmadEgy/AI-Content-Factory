@@ -46,10 +46,14 @@ class PublishWorker(Worker):
             return JobExecutionResult(False, error_code="PUBLISH_ASSET_NOT_READY", error_message="Source asset is not ready")
         if asset.provenance.license_status is not LicenseStatus.VERIFIED:
             return JobExecutionResult(False, error_code="PUBLISH_LICENSE_NOT_VERIFIED", error_message=asset.id)
-        if not self.storage.verify(asset):
-            return JobExecutionResult(False, error_code="PUBLISH_ASSET_INTEGRITY_FAILED", error_message=asset.id, retryable=True)
         if not Path(asset.path).is_file():
             return JobExecutionResult(False, error_code="PUBLISH_ASSET_MISSING", error_message=asset.path, retryable=True)
+        try:
+            verified = self.storage.verify(asset)
+        except (OSError, IOError, ValueError):
+            verified = False
+        if not verified:
+            return JobExecutionResult(False, error_code="PUBLISH_ASSET_INTEGRITY_FAILED", error_message=asset.id, retryable=True)
 
         raw_platforms = job.input.parameters.get("platforms", [])
         if not isinstance(raw_platforms, (list, tuple)):
@@ -76,7 +80,13 @@ class PublishWorker(Worker):
                 failures.append(platform)
                 packages.append({"platform": platform, "adapter": None, "status": "FAILED", "error": "PUBLISH_ADAPTER_NOT_FOUND", "externalId": None, "payload": {}})
                 continue
-            request = PublishRequest(asset_path=asset.path, title=title, description=description, scheduled_at=str(scheduled_at) if scheduled_at else None, metadata={"tags": ",".join(tags), "language": str(job.input.parameters.get("language", "en"))})
+            request = PublishRequest(
+                asset_path=asset.path,
+                title=title,
+                description=description,
+                scheduled_at=str(scheduled_at) if scheduled_at else None,
+                metadata={"tags": ",".join(tags), "language": str(job.input.parameters.get("language", "en"))},
+            )
             errors = adapter.validate(request)
             if errors:
                 failures.append(platform)
@@ -94,11 +104,41 @@ class PublishWorker(Worker):
             context.report_progress((index + 1) / len(platforms), f"publish:{platform}:complete")
 
         package_status = "FAILED" if len(failures) == len(platforms) else ("PARTIAL" if failures else "PUBLISHED")
-        package = {"jobId": job.id, "projectId": job.project_id, "assetIds": list(job.input.reference_asset_ids), "sourceAssetId": asset.id, "platforms": packages, "title": title, "description": description, "tags": tags, "scheduledAt": scheduled_at, "status": package_status}
+        package = {
+            "jobId": job.id,
+            "projectId": job.project_id,
+            "assetIds": list(job.input.reference_asset_ids),
+            "sourceAssetId": asset.id,
+            "platforms": packages,
+            "title": title,
+            "description": description,
+            "tags": tags,
+            "scheduledAt": scheduled_at,
+            "status": package_status,
+        }
         payload = (json.dumps(package, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
         digest, path, size = self.storage.put_bytes(payload)
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"publish:{job.id}:{digest}"))
-        self.assets.create(Asset(asset_id, job.project_id, AssetType.DOCUMENT, path, "application/json; charset=utf-8", size, digest, AssetStatus.READY, build_provenance(job, source_asset_ids=[asset.id], metadata={"publicationPackage": True, "adapterCount": len(platforms), "status": package_status, "failureCount": len(failures)}, license_status=LicenseStatus.VERIFIED)))
+        self.assets.create(
+            Asset(
+                asset_id,
+                job.project_id,
+                AssetType.DOCUMENT,
+                path,
+                "application/json; charset=utf-8",
+                size,
+                digest,
+                AssetStatus.READY,
+                build_provenance(
+                    job,
+                    source_asset_ids=[asset.id],
+                    metadata={"publicationPackage": True, "adapterCount": len(platforms), "status": package_status, "failureCount": len(failures)},
+                    license_status=LicenseStatus.VERIFIED,
+                    provider="internal",
+                    model="publish-worker",
+                ),
+            )
+        )
         context.report_progress(1.0, "publish:complete")
         if failures:
             return JobExecutionResult(False, [asset_id], {"platformCount": len(platforms), "failedPlatforms": failures, "status": package_status}, f"publish-{job.id}", error_code="PUBLISH_FAILED", error_message=",".join(failures), retryable=False)

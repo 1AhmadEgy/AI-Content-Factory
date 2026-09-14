@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from app.domain.job_events import JobEvent
 from app.domain.jobs import GenerationJob, JobOutput, JobStatus, JobType
 from app.orchestrator.job_executor import JobExecutor
@@ -53,11 +55,12 @@ def test_executor_persists_success_and_emits_events():
     worker = FakeWorker(JobExecutionResult(True, ["asset-1"], {"score": 1.0}, "run-1"))
     registry = WorkerRegistry(); registry.register(worker, {"IMAGE"}, worker_id="worker-1")
     events: list[JobEvent] = []
-    result = JobExecutor(jobs, queue, registry, events.append).execute_claimed(job, make_lease())
+    gate = SimpleNamespace(check=lambda _job: SimpleNamespace(allowed=True, qc_results=()))
+    result = JobExecutor(jobs, queue, registry, events.append, completion_gate=gate).execute_claimed(job, make_lease())
     assert result.status is JobStatus.COMPLETED
     assert jobs.job.output == JobOutput(["asset-1"], {"score": 1.0}, "run-1")
     assert queue.acknowledged == [JobStatus.COMPLETED]
-    assert [event.event_type for event in events] == ["JOB_STARTED", "JOB_PROGRESS", "JOB_COMPLETED"]
+    assert [event.event_type for event in events] == ["JOB_STARTED", "JOB_PROGRESS", "JOB_PROGRESS", "JOB_COMPLETED"]
 
 
 def test_executor_retries_retryable_failure_until_limit():

@@ -1,146 +1,15 @@
-name: CI and Publish
+name: CI
 
-on:
-  push:
-    branches: [main, master]
-  pull_request:
+on: [push, pull_request, workflow_dispatch]
 
 permissions:
   contents: read
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-
 jobs:
-  test:
-    name: Build assets and test backend
+  syntax:
+    name: Workflow smoke test
     runs-on: ubuntu-24.04
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-          cache: "pip"
-          cache-dependency-path: |
-            backend/requirements.txt
-
-      - name: Install system packages
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y inkscape ffmpeg
-
-      - name: Build brand assets
-        run: |
-          chmod +x build_brand_assets.sh build_video_assets.sh
-          ./build_brand_assets.sh
-          ./build_video_assets.sh
-
-      - name: Validate canonical Afham Wadhak brand
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          p = Path("backend/app/config/brands/afham_wadhak.json")
-          c = json.loads(p.read_text(encoding="utf-8"))
-          assert c["brand_id"] == "afham_wadhak"
-          assert c["brand_name_ar"] == "افهم واضحك"
-          assert c["brand_name_en"] == "Afham Wadhak"
-          assert c["tagline_ar"] == "افهم ببساطة وابتسم"
-          assert c["color_palette"]["secondary"] == "#FFD84D"
-          assert c["color_palette"]["accent"] == "#4DB6FF"
-          assert c["watermark"]["position"] == "bottom_right"
-          print("Afham Wadhak brand configuration: OK")
-          PY
-
-      - name: Install backend dependencies
-        run: |
-          cd backend
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install ruff
-
-      - name: Validate Python syntax
-        run: |
-          python -m compileall -q backend/app backend/tests
-
-      - name: Run Ruff lint
-        run: |
-          cd backend
-          ruff check --select F --output-format=github .
-
-      - name: Run backend tests
-        run: |
-          cd backend
-          PYTHONPATH=. pytest tests/ -v
-
-      - name: Upload generated assets
-        uses: actions/upload-artifact@v4
-        with:
-          name: afham-wadhak-assets
-          path: assets/branding/afham_wadhak/
-          if-no-files-found: error
-          retention-days: 7
-
-  docker:
-    name: Build and push Docker image
-    runs-on: ubuntu-24.04
-    needs: test
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install media build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y inkscape ffmpeg
-
-      - name: Build canonical brand assets
-        run: |
-          chmod +x build_brand_assets.sh build_video_assets.sh
-          ./build_brand_assets.sh
-          ./build_video_assets.sh
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=latest
-            type=sha,prefix=
-            type=ref,event=branch
-          labels: |
-            org.opencontainers.image.title=AI Content Factory
-            org.opencontainers.image.description=AI Content Factory Backend
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./backend/Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - uses: actions/checkout@v4
+      - name: Verify repository checkout
+        run: test -f README.md

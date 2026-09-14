@@ -4,7 +4,7 @@ import json
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .sqlite import SQLiteStore
@@ -53,7 +53,7 @@ class SQLiteProviderCache:
         with self.store._lock, self.store.connection:
             row = self.store.connection.execute(
                 "SELECT * FROM provider_cache WHERE cache_key=? AND (expires_at IS NULL OR expires_at>?)",
-                (cache_key, datetime.utcnow().isoformat()),
+                (cache_key, datetime.now(UTC).isoformat()),
             ).fetchone()
             if row is None:
                 return None
@@ -102,24 +102,24 @@ class SQLiteProviderCache:
             return False
         if output_bytes is None and not (output_text and output_text.strip()):
             return False
-        expires_at = (datetime.utcnow() + timedelta(seconds=self.ttl_seconds)).isoformat()
+        expires_at = (datetime.now(UTC) + timedelta(seconds=self.ttl_seconds)).isoformat()
         with self.store._lock, self.store.connection:
             self.store.connection.execute(
                 "INSERT INTO provider_cache(cache_key,provider,model,output_text,output_bytes,output_mime_type,output_filename,output_metadata_json,metrics_json,created_at,expires_at,hits) VALUES(?,?,?,?,?,?,?,?,?,?,?,0) ON CONFLICT(cache_key) DO NOTHING",
                 (cache_key, provider, model, output_text, output_bytes, output_mime_type, output_filename,
                  json.dumps(output_metadata, ensure_ascii=False, sort_keys=True), json.dumps(metrics, ensure_ascii=False, sort_keys=True),
-                 datetime.utcnow().isoformat(), expires_at),
+                 datetime.now(UTC).isoformat(), expires_at),
             )
             return True
 
     def purge_expired(self, now: datetime | None = None) -> int:
-        cutoff = (now or datetime.utcnow()).isoformat()
+        cutoff = (now or datetime.now(UTC)).isoformat()
         with self.store._lock, self.store.connection:
             result = self.store.connection.execute("DELETE FROM provider_cache WHERE expires_at IS NOT NULL AND expires_at<=?", (cutoff,))
             return result.rowcount
 
     def purge_expired_with_stats(self, now: datetime | None = None) -> dict[str, float | int]:
-        cutoff = (now or datetime.utcnow()).isoformat()
+        cutoff = (now or datetime.now(UTC)).isoformat()
         with self.store._lock, self.store.connection:
             row = self.store.connection.execute(
                 "SELECT COUNT(*) AS total, COALESCE(SUM(hits),0) AS total_hits, COALESCE(AVG(hits),0) AS avg_hits FROM provider_cache WHERE expires_at IS NOT NULL AND expires_at<=?",

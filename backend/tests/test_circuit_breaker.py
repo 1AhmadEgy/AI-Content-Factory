@@ -67,7 +67,5 @@ def test_half_open_success_closes_and_failure_reopens() -> None:
     assert cb.snapshot().state is CircuitState.CLOSED
     assert cb.acquire()
     cb.record_failure()
-    assert cb.snapshot().state is CircuitState.CLOSED
-    cb.record_failure()
     assert cb.snapshot().state is CircuitState.OPEN
     assert not cb.acquire()

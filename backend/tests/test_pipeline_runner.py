@@ -6,7 +6,7 @@ from app.domain.timeline import Timeline
 from app.orchestrator.pipeline_runner import PipelineRunner
 
 
-def test_golden_mock_pipeline_qc_best_take_render(tmp_path: Path):
+def test_pipeline_runner_fails_closed_when_timeline_has_no_video(tmp_path: Path):
     output = tmp_path / "final.mp4"
     result = PipelineRunner().run(
         assets=[
@@ -31,6 +31,7 @@ def test_golden_mock_pipeline_qc_best_take_render(tmp_path: Path):
         output_path=str(output),
     )
     assert result.best_asset_id == "asset-good"
-    assert result.rendered_path == str(output)
-    assert output.exists()
-    assert result.qc_passed is True
+    assert result.rendered_path is None
+    assert result.qc_passed is False
+    assert "TIMELINE_HAS_NO_VIDEO" in result.errors
+    assert not output.exists()

@@ -23,7 +23,13 @@ def test_expired_worker_cannot_overwrite_reclaimed_attempt() -> None:
         repositories.projects.create(Project(id="project-1", name="Demo"))
         original = _job("job-1")
         repositories.jobs.create(original)
-        queue = SQLiteJobQueue(repositories.store, repositories.jobs, lease_seconds=300)
+        queue = SQLiteJobQueue(
+            repositories.store,
+            repositories.jobs,
+            lease_seconds=300,
+            retry_initial_delay_seconds=0,
+            retry_jitter_ratio=0,
+        )
 
         claimed_a = queue.claim_next("worker-a")
         assert claimed_a is not None
