@@ -51,10 +51,6 @@ class JobExecutor:
         if configured_interval <= 0:
             raise ValueError("heartbeat_interval_seconds must be positive")
         self.heartbeat_interval_seconds = configured_interval
-
-        # Provider/FFmpeg workers can report progress many times per second. Persisting
-        # every callback causes a SQLite write plus lease lookup for each update. Keep
-        # progress responsive in memory, but coalesce durable writes to a small interval.
         configured_progress_interval = float(os.getenv("AICF_PROGRESS_PERSIST_SECONDS", "0.5"))
         if configured_progress_interval <= 0:
             raise ValueError("AICF_PROGRESS_PERSIST_SECONDS must be positive")
@@ -70,7 +66,6 @@ class JobExecutor:
         if job.status is not JobStatus.RUNNING:
             raise ValueError(f"Job must be RUNNING before execution: {job.status}")
         self._event(job, "JOB_STARTED", {"workerId": worker_id, "attempt": job.attempt})
-        self._set_progress(job, "worker_execution", 0.05, lease=lease, force=True)
         heartbeat = LeaseHeartbeat(self.queue, lease, interval_seconds=self.heartbeat_interval_seconds)
         heartbeat.start()
         try:

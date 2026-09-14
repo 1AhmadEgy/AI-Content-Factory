@@ -46,10 +46,10 @@ class PublishWorker(Worker):
             return JobExecutionResult(False, error_code="PUBLISH_ASSET_NOT_READY", error_message="Source asset is not ready")
         if asset.provenance.license_status is not LicenseStatus.VERIFIED:
             return JobExecutionResult(False, error_code="PUBLISH_LICENSE_NOT_VERIFIED", error_message=asset.id)
-        if not self.storage.verify(asset):
-            return JobExecutionResult(False, error_code="PUBLISH_ASSET_INTEGRITY_FAILED", error_message=asset.id, retryable=True)
         if not Path(asset.path).is_file():
             return JobExecutionResult(False, error_code="PUBLISH_ASSET_MISSING", error_message=asset.path, retryable=True)
+        if not self.storage.verify(asset):
+            return JobExecutionResult(False, error_code="PUBLISH_ASSET_INTEGRITY_FAILED", error_message=asset.id, retryable=True)
 
         raw_platforms = job.input.parameters.get("platforms", [])
         if not isinstance(raw_platforms, (list, tuple)):
@@ -98,7 +98,8 @@ class PublishWorker(Worker):
         payload = (json.dumps(package, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
         digest, path, size = self.storage.put_bytes(payload)
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"publish:{job.id}:{digest}"))
-        self.assets.create(Asset(asset_id, job.project_id, AssetType.DOCUMENT, path, "application/json; charset=utf-8", size, digest, AssetStatus.READY, build_provenance(job, source_asset_ids=[asset.id], metadata={"publicationPackage": True, "adapterCount": len(platforms), "status": package_status, "failureCount": len(failures)}, license_status=LicenseStatus.VERIFIED)))
+        provenance = build_provenance(job, source_asset_ids=[asset.id], metadata={"provider": "aicf-publisher", "model": "publication-package", "publicationPackage": True, "adapterCount": len(platforms), "status": package_status, "failureCount": len(failures)}, license_status=LicenseStatus.VERIFIED)
+        self.assets.create(Asset(asset_id, job.project_id, AssetType.DOCUMENT, path, "application/json; charset=utf-8", size, digest, AssetStatus.READY, provenance))
         context.report_progress(1.0, "publish:complete")
         if failures:
             return JobExecutionResult(False, [asset_id], {"platformCount": len(platforms), "failedPlatforms": failures, "status": package_status}, f"publish-{job.id}", error_code="PUBLISH_FAILED", error_message=",".join(failures), retryable=False)

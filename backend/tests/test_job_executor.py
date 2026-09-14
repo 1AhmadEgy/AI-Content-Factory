@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from app.domain.job_events import JobEvent
 from app.domain.jobs import GenerationJob, JobOutput, JobStatus, JobType
 from app.orchestrator.job_executor import JobExecutor
@@ -37,6 +39,11 @@ class FakeWorker(Worker):
     def shutdown(self): self.initialized = False
 
 
+class AllowCompletion:
+    def check(self, job):
+        return SimpleNamespace(allowed=True, code=None, message=None, qc_results=())
+
+
 def make_job(max_attempts=3):
     job = GenerationJob(id="job-1", project_id="project-1", type=JobType.IMAGE, target_type="shot", max_attempts=max_attempts)
     job.status = JobStatus.RUNNING
@@ -53,7 +60,7 @@ def test_executor_persists_success_and_emits_events():
     worker = FakeWorker(JobExecutionResult(True, ["asset-1"], {"score": 1.0}, "run-1"))
     registry = WorkerRegistry(); registry.register(worker, {"IMAGE"}, worker_id="worker-1")
     events: list[JobEvent] = []
-    result = JobExecutor(jobs, queue, registry, events.append).execute_claimed(job, make_lease())
+    result = JobExecutor(jobs, queue, registry, events.append, completion_gate=AllowCompletion()).execute_claimed(job, make_lease())
     assert result.status is JobStatus.COMPLETED
     assert jobs.job.output == JobOutput(["asset-1"], {"score": 1.0}, "run-1")
     assert queue.acknowledged == [JobStatus.COMPLETED]

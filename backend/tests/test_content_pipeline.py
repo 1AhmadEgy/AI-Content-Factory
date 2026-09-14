@@ -17,16 +17,20 @@ def _job(job_type: JobType, parameters: dict, parent: str | None = None) -> Gene
     )
 
 
+def _service():
+    class Service:
+        def create_with_idempotency(self, **kwargs):
+            from types import SimpleNamespace
+            from uuid import uuid4
+            job = GenerationJob(id=str(uuid4()), project_id=kwargs["project_id"], type=kwargs["job_type"], target_type=kwargs["target_type"], target_id=kwargs["target_id"], parent_job_id=kwargs["parent_job_id"], input=kwargs["input"], priority=kwargs["priority"], provider=kwargs["provider"], model=kwargs["model"], status=JobStatus.QUEUED)
+            return SimpleNamespace(job=job, existing_resource_id=None, conflict=False)
+    return Service()
+
+
 def test_story_completion_creates_only_scene_jobs() -> None:
     queued = []
-    pipeline = ContentPipelineOrchestrator(lambda: None, queued.append)
+    pipeline = ContentPipelineOrchestrator(_service(), queued.append)
     story = _job(JobType.STORY, {"plan": {"scenes": [{"number": 1, "shots": [{"number": 1}]}, {"number": 2, "shots": [{"number": 1}]}]}})
-
-    class Service:
-        def create(self, **kwargs):
-            from uuid import uuid4
-            return GenerationJob(id=str(uuid4()), project_id=kwargs["project_id"], type=kwargs["job_type"], target_type=kwargs["target_type"], target_id=kwargs["target_id"], parent_job_id=kwargs["parent_job_id"], input=kwargs["input"], priority=kwargs["priority"], provider=kwargs["provider"], model=kwargs["model"], status=JobStatus.QUEUED)
-    pipeline.job_service = Service()
 
     created = pipeline.on_completed(story)
     assert [j.type for j in created] == [JobType.SCENE, JobType.SCENE]
@@ -35,13 +39,7 @@ def test_story_completion_creates_only_scene_jobs() -> None:
 
 def test_scene_completion_creates_shot_jobs() -> None:
     queued = []
-
-    class Service:
-        def create(self, **kwargs):
-            from uuid import uuid4
-            return GenerationJob(id=str(uuid4()), project_id=kwargs["project_id"], type=kwargs["job_type"], target_type=kwargs["target_type"], target_id=kwargs["target_id"], parent_job_id=kwargs["parent_job_id"], input=kwargs["input"], priority=kwargs["priority"], provider=kwargs["provider"], model=kwargs["model"], status=JobStatus.QUEUED)
-
-    pipeline = ContentPipelineOrchestrator(Service(), queued.append)
+    pipeline = ContentPipelineOrchestrator(_service(), queued.append)
     scene = _job(JobType.SCENE, {"scene": {"number": 1, "shots": [{"number": 1}, {"number": 2}]}})
     scene.target_id = "scene-1"
 
@@ -52,14 +50,8 @@ def test_scene_completion_creates_shot_jobs() -> None:
 
 def test_shot_completion_creates_only_supported_generation_jobs() -> None:
     queued = []
-
-    class Service:
-        def create(self, **kwargs):
-            from uuid import uuid4
-            return GenerationJob(id=str(uuid4()), project_id=kwargs["project_id"], type=kwargs["job_type"], target_type=kwargs["target_type"], target_id=kwargs["target_id"], parent_job_id=kwargs["parent_job_id"], input=kwargs["input"], priority=kwargs["priority"], provider=kwargs["provider"], model=kwargs["model"], status=JobStatus.QUEUED)
-
-    pipeline = ContentPipelineOrchestrator(Service(), queued.append)
-    shot = _job(JobType.SHOT, {"shot": {"number": 1, "prompt": "cinematic city"}, "shotNumber": 1})
+    pipeline = ContentPipelineOrchestrator(_service(), queued.append)
+    shot = _job(JobType.SHOT, {"shot": {"number": 1, "prompt": "cinematic city"}, "shotNumber": 1, "takeCount": 1})
 
     created = pipeline.on_completed(shot)
     assert [j.type for j in created] == [JobType.IMAGE]

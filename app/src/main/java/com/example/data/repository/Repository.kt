@@ -74,8 +74,9 @@ class Repository(private val dao: FactoryDao) {
                     type = "IMAGE",
                     targetType = "scene",
                     targetId = sceneId,
-                    provider = "openai",
-                    model = "gpt-image-2",
+                    // Provider/model are intentionally left unset here. The backend's
+                    // production registry resolves them from its server-side configuration.
+                    // This prevents the Android client from silently forcing an unsupported model.
                     input = JobInputRequest(
                         parameters = mapOf(
                             "prompt" to "${scene.description}. Location: ${scene.location}. Emotion: ${scene.emotion}. Create a production-ready cinematic frame with consistent character and environment identity.",

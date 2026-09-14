@@ -6,22 +6,12 @@ from app.domain.timeline import Timeline
 from app.orchestrator.pipeline_runner import PipelineRunner
 
 
-def test_golden_mock_pipeline_qc_best_take_render(tmp_path: Path):
+def test_pipeline_runner_does_not_fabricate_video_for_empty_timeline(tmp_path: Path):
     output = tmp_path / "final.mp4"
     result = PipelineRunner().run(
         assets=[
-            AssetCheckInput(
-                asset_id="asset-good",
-                readable=True,
-                size_bytes=100,
-                license_status="VERIFIED",
-            ),
-            AssetCheckInput(
-                asset_id="asset-blocked",
-                readable=True,
-                size_bytes=100,
-                license_status="BLOCKED",
-            ),
+            AssetCheckInput(asset_id="asset-good", readable=True, size_bytes=100, license_status="VERIFIED"),
+            AssetCheckInput(asset_id="asset-blocked", readable=True, size_bytes=100, license_status="BLOCKED"),
         ],
         candidates=[
             TakeCandidate("asset-good", 1.0, 0.9, 0.95, 1.0),
@@ -31,6 +21,6 @@ def test_golden_mock_pipeline_qc_best_take_render(tmp_path: Path):
         output_path=str(output),
     )
     assert result.best_asset_id == "asset-good"
-    assert result.rendered_path == str(output)
-    assert output.exists()
-    assert result.qc_passed is True
+    assert result.rendered_path is None
+    assert "TIMELINE_HAS_NO_VIDEO" in result.errors
+    assert not output.exists()

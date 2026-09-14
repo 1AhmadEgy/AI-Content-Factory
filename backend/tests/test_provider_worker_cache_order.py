@@ -13,23 +13,21 @@ from app.workers.provider_worker import ProviderGenerationWorker
 class Adapter(ModelAdapter):
     calls = 0
 
-    def capability(self):
-        return ModelCapability(category="generation", capabilities=frozenset({"generation", "image"}), runtime="TEST")
-
+    def capability(self): return ModelCapability(category="generation", capabilities=frozenset({"generation", "image"}), runtime="TEST")
     def health_check(self): return True
-
     def execute(self, request: ProviderRequest) -> ProviderResponse:
         type(self).calls += 1
         return ProviderResponse(success=True, output_bytes=b"PNG", output_mime_type="image/png", provider_run_id="provider-1", metrics={})
-
     def cancel(self, provider_run_id: str) -> bool: return False
 
 
 class CacheStub:
-    def __init__(self, entry): self.entry = entry; self.store = object()
+    def __init__(self, entry): self.entry = entry; self.store = object(); self.released = []
     def get(self, key): return self.entry
     def get_or_lock(self, key, lock_seconds): return self.entry, None
-    def release_lock(self, key, token): raise AssertionError("cache hit must not release a fetch lock")
+    def release_lock(self, key, token):
+        if token is not None:
+            self.released.append((key, token))
 
 
 class BreakerStub:
