@@ -12,15 +12,18 @@ import retrofit2.converter.moshi.MoshiConverterFactory
 
 object NetworkClient {
     private const val NOT_CONFIGURED = "__NOT_CONFIGURED__"
+    private const val DEFAULT_EMULATOR_BASE_URL = "http://10.0.2.2:8000/"
 
     private val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
 
     private fun normalizedBaseUrl(): String {
         val configured = BuildConfig.AICF_API_BASE_URL.trim()
-        check(configured.isNotBlank() && configured != NOT_CONFIGURED) {
-            "AICF_API_BASE_URL is not configured. Configure the backend URL for this build."
+        val baseUrl = if (configured.isBlank() || configured == NOT_CONFIGURED) {
+            DEFAULT_EMULATOR_BASE_URL
+        } else {
+            configured
         }
-        return if (configured.endsWith('/')) configured else "$configured/"
+        return if (baseUrl.endsWith('/')) baseUrl else "$baseUrl/"
     }
 
     private val requestInterceptor = Interceptor { chain ->
@@ -36,10 +39,10 @@ object NetworkClient {
 
     private val client = OkHttpClient.Builder()
         .addInterceptor(requestInterceptor)
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
-        .callTimeout(45, TimeUnit.SECONDS)
+        .callTimeout(60, TimeUnit.SECONDS)
         .build()
 
     val apiService: FactoryApiService by lazy {
