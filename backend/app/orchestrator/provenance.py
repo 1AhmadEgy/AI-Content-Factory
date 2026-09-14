@@ -17,20 +17,23 @@ def build_provenance(
     if not provider:
         raise ValueError("PROVENANCE_PROVIDER_REQUIRED")
     model = getattr(job, "model", None) or str(metadata_payload.get("model", "")).strip() or None
+    parameters = getattr(job.input, "parameters", {}) or {}
+    reference_asset_ids = list(getattr(job.input, "reference_asset_ids", []) or [])
+    seed = getattr(job.input, "seed", None)
     return AssetProvenance(
         provider=provider,
         model=model,
-        prompt=str(job.input.parameters.get("prompt", "")) or None,
-        negative_prompt=str(job.input.parameters.get("negativePrompt", "")) or None,
-        seed=job.input.seed,
-        source_asset_ids=list(source_asset_ids or job.input.reference_asset_ids),
+        prompt=str(parameters.get("prompt", "")) or None,
+        negative_prompt=str(parameters.get("negativePrompt", "")) or None,
+        seed=seed,
+        source_asset_ids=list(source_asset_ids or reference_asset_ids),
         job_id=job.id,
         license_status=license_status,
         metadata={
-            "jobType": job.type.value,
-            "targetType": job.target_type,
-            "targetId": job.target_id,
-            "parentJobId": job.parent_job_id,
+            "jobType": getattr(getattr(job, "type", None), "value", None),
+            "targetType": getattr(job, "target_type", None),
+            "targetId": getattr(job, "target_id", None),
+            "parentJobId": getattr(job, "parent_job_id", None),
             **metadata_payload,
         },
     )

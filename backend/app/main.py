@@ -40,8 +40,6 @@ from .scheduling.loop import SchedulerLoop
 from .scheduling.persistent import PersistentScheduler, SQLiteScheduleRepository
 
 DATABASE_PATH = os.getenv("AICF_DATABASE_PATH", "./data/factory.db")
-# Fail during startup when credentials are enabled but provider model IDs are absent.
-# This prevents a production deployment from silently guessing model names.
 validate_openai_configuration()
 repositories = SQLiteRepositories(DATABASE_PATH)
 job_repository = SQLiteJobRepository(repositories.store)
@@ -124,6 +122,28 @@ async def unhandled_exception(request: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"error": {"code": "INTERNAL_ERROR", "message": "Internal server error", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
 
 
+# Keep liveness/readiness routes before application routers so a generic dynamic
+# route cannot shadow operational endpoints.
+@app.get("/api/v1/health", tags=["system"])
+def health(request: Request):
+    return {"status": "ok", "data": {"status": "OK", "service": "ai-content-factory-backend", "version": app.version}, "requestId": request.state.request_id}
+
+
+@app.get("/api/v1/ready", tags=["system"])
+def readiness(request: Request):
+    try:
+        repositories.store.connection.execute("SELECT 1").fetchone()
+        return {"status": "ready", "data": {"status": "READY", "service": "ai-content-factory-backend", "version": app.version}, "requestId": request.state.request_id}
+    except Exception:
+        request_id = getattr(request.state, "request_id", "unknown")
+        return JSONResponse(status_code=503, content={"error": {"code": "RESOURCE_UNAVAILABLE", "message": "Required dependencies are not ready", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
+
+
+@app.get("/api/v1/readiness", include_in_schema=False)
+def readiness_alias(request: Request):
+    return readiness(request)
+
+
 app.include_router(build_project_router(project_repository))
 app.include_router(build_job_router(job_repository, runtime=orchestrator_runtime, events=orchestrator_runtime.events))
 app.include_router(build_batch_router(project_repository, job_repository, orchestrator_runtime))
@@ -148,21 +168,6 @@ app.include_router(build_context_router(project_repository, context_store))
 app.include_router(build_series_bible_router(orchestrator_runtime))
 
 
-@app.get("/api/v1/health", tags=["system"])
-def health(request: Request):
-    return {"status": "ok", "data": {"status": "OK", "service": "ai-content-factory-backend", "version": app.version}, "requestId": request.state.request_id}
-
-
-@app.get("/api/v1/ready", tags=["system"])
-def readiness(request: Request):
-    try:
-        repositories.store.connection.execute("SELECT 1").fetchone()
-        return {"status": "ready", "data": {"status": "READY", "service": "ai-content-factory-backend", "version": app.version}, "requestId": request.state.request_id}
-    except Exception:
-        request_id = getattr(request.state, "request_id", "unknown")
-        return JSONResponse(status_code=503, content={"error": {"code": "RESOURCE_UNAVAILABLE", "message": "Required dependencies are not ready", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
-
-
 @app.get("/api/v1/worker/status", tags=["system"])
 def worker_status(request: Request):
     return {"data": {"workerId": worker_loop.worker_id, "running": worker_loop.running, "autostart": _worker_autostart_enabled(), "iterations": worker_loop.iterations, "lastError": worker_loop.last_error}, "requestId": request.state.request_id}
@@ -171,8 +176,3 @@ def worker_status(request: Request):
 @app.get("/api/v1/scheduler/status", tags=["scheduling"])
 def scheduler_status(request: Request):
     return {"data": {"running": scheduler_loop.running, "autostart": _scheduler_autostart_enabled(), "ticks": scheduler_loop.ticks, "lastError": scheduler_loop.last_error}, "requestId": request.state.request_id}
-
-
-@app.get("/api/v1/readiness", include_in_schema=False)
-def readiness_alias(request: Request):
-    return readiness(request)
