@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.*
@@ -73,6 +74,13 @@ fun MainScreen() {
                     onClick = { navController.navigate("control") { launchSingleTop = true } },
                     colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan),
                 )
+                NavigationBarItem(
+                    icon = { Icon(Icons.Filled.Info, contentDescription = "Designer") },
+                    label = { Text("Designer") },
+                    selected = currentRoute == "designer",
+                    onClick = { navController.navigate("designer") { launchSingleTop = true } },
+                    colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan),
+                )
             }
         },
     ) { padding ->
@@ -101,6 +109,7 @@ fun MainScreen() {
             }
             composable("scene-builder") { SceneBuilderScreen(onBack = { navController.popBackStack() }) }
             composable("control") { ControlCenterScreen() }
+            composable("designer") { DesignerProfileScreen(onBack = { navController.popBackStack() }) }
         }
     }
 }
