@@ -94,9 +94,9 @@ class ProviderGenerationWorker(Worker):
             return JobExecutionResult(False, error_code="PROVIDER_CIRCUIT_OPEN", error_message=f"Circuit open for {model.provider}:{model.id}", retryable=True)
         run_id = str(uuid.uuid4())
         if self.provider_runs:
-            self.provider_runs.create(ProviderRun(id=run_id, job_id=job.id, provider=model.provider, model=model.id, request_metadata={"cacheKey": cache_key, "jobType": job.type.value, "targetType": job.target_type, "targetId": job.target_id, "capability": capability}, status="RUNNING"))
+            self.provider_runs.create(ProviderRun(id=run_id, job_id=job.id, provider=model.provider, model=model.id, request_metadata={"cacheKey": cache_key, "idempotencyKey": cache_key, "jobType": job.type.value, "targetType": job.target_type, "targetId": job.target_id, "capability": capability}, status="RUNNING"))
         try:
-            response = model.adapter.execute(ProviderRequest(model=model.id, parameters=dict(job.input.parameters), seed=job.input.seed))
+            response = model.adapter.execute(ProviderRequest(model=model.id, parameters=dict(job.input.parameters), seed=job.input.seed, idempotency_key=cache_key))
         except Exception as exc:
             kind = classify_exception(exc)
             if breaker is not None and kind is ErrorKind.TRANSIENT:
@@ -130,7 +130,7 @@ class ProviderGenerationWorker(Worker):
             self._cache.put(cache_key, model.provider, model.id, output_text=response.output_text, output_bytes=response.output_bytes, output_mime_type=response.output_mime_type, output_filename=response.output_filename, output_metadata=dict(response.output_metadata), metrics=dict(response.metrics))
             self._cache.release_lock(cache_key, lock_token)
         if self.provider_runs:
-            self.provider_runs.complete(run_id, status="COMPLETED", response_metadata={"assetIds": asset_ids, "cacheKey": cache_key, **dict(response.metrics)})
+            self.provider_runs.complete(run_id, status="COMPLETED", response_metadata={"assetIds": asset_ids, "cacheKey": cache_key, "idempotencyKey": cache_key, **dict(response.metrics)})
         return JobExecutionResult(True, asset_ids=asset_ids, metrics=dict(response.metrics), provider_run_id=provider_run_id)
 
     def _materialize_response(self, job: GenerationJob, provider: str, model: str, response: ProviderResponse, provider_run_id: str) -> list[str]:
