@@ -151,7 +151,7 @@ class ProviderGenerationWorker(Worker):
             if self._validate_existing_assets(job, [asset_id]) is not None:
                 return []
             return [asset_id]
-        self.assets.create(Asset(id=asset_id, project_id=job.project_id, type=self._asset_type(job), path=path, mime_type="application/json; charset=utf-8", size_bytes=size, status=AssetStatus.READY, provenance=build_provenance(job, metadata={"provider": provider, "model": model, "providerRunId": provider_run_id}, license_status=LicenseStatus.VERIFIED)))
+        self.assets.create(Asset(id=asset_id, project_id=job.project_id, type=self._asset_type(job), path=path, mime_type="application/json; charset=utf-8", size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, metadata={"provider": provider, "model": model, "providerRunId": provider_run_id}, license_status=LicenseStatus.VERIFIED)))
         return [asset_id]
 
     def _validate_existing_assets(self, job: GenerationJob, asset_ids: list[str]) -> tuple[str, str, bool] | None:
@@ -183,7 +183,7 @@ class ProviderGenerationWorker(Worker):
                 raise ValueError(f"Existing provider asset is invalid: {asset_id}")
             return asset_id
         metadata = {"provider": provider, "model": model, "providerRunId": provider_run_id, **dict(response.output_metadata)}
-        self.assets.create(Asset(id=asset_id, project_id=job.project_id, type=self._asset_type(job), path=path, mime_type=response.output_mime_type or media_mime(job.type.value, job.input.parameters), size_bytes=size, status=AssetStatus.READY, provenance=build_provenance(job, metadata=metadata, license_status=LicenseStatus.VERIFIED)))
+        self.assets.create(Asset(id=asset_id, project_id=job.project_id, type=self._asset_type(job), path=path, mime_type=response.output_mime_type or media_mime(job.type.value, job.input.parameters), size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, metadata=metadata, license_status=LicenseStatus.VERIFIED)))
         return asset_id
 
     def _store(self, payload: bytes) -> tuple[str, str, int]:
