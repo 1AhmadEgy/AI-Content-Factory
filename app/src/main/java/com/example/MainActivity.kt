@@ -49,7 +49,8 @@ fun MainScreen() {
     }
 
     Scaffold(
-        topBar = { BrandingHeader() },
+        // The designer page owns its own premium hero/top bar; avoid stacking the generic app header above it.
+        topBar = { if (currentRoute != "designer") BrandingHeader() },
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         bottomBar = {
             NavigationBar(containerColor = DarkBlue) {
