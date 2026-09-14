@@ -84,9 +84,6 @@ class Repository(private val dao: FactoryDao) {
                     type = "IMAGE",
                     targetType = "scene",
                     targetId = sceneId,
-                    // Provider/model are intentionally left unset here. The backend's
-                    // production registry resolves them from its server-side configuration.
-                    // This prevents the Android client from silently forcing an unsupported model.
                     input = JobInputRequest(
                         parameters = mapOf(
                             "prompt" to "${scene.description}. Location: ${scene.location}. Emotion: ${scene.emotion}. Create a production-ready cinematic frame with consistent character and environment identity.",
@@ -151,7 +148,17 @@ object Graph {
     lateinit var repository: Repository
 
     fun provide(context: android.content.Context) {
-        val database = com.example.data.local.FactoryDatabase.getDatabase(context)
+        val appContext = context.applicationContext
+        val database = try {
+            com.example.data.local.FactoryDatabase.getDatabase(appContext)
+        } catch (firstFailure: Throwable) {
+            // A corrupted/incompatible local database should not permanently brick the app.
+            // Room's normal migration fallback handles schema changes; this retry is a final
+            // recovery path for an unreadable database. It may discard local cached data.
+            Log.e("Graph", "Database initialization failed; recreating local database", firstFailure)
+            appContext.deleteDatabase("factory_database")
+            com.example.data.local.FactoryDatabase.getDatabase(appContext)
+        }
         repository = Repository(database.factoryDao())
     }
 }
