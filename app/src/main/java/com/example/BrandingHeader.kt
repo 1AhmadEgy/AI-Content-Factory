@@ -7,6 +7,7 @@ import android.util.Base64
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -34,13 +36,22 @@ internal const val DESIGNER_LOGO_BASE64 = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAsIC
 
 @Composable
 private fun designerLogoBitmap() = remember {
-    val bytes = Base64.decode(DESIGNER_LOGO_BASE64, Base64.DEFAULT)
-    BitmapFactory.decodeByteArray(bytes, 0, bytes.size).asImageBitmap()
+    runCatching {
+        val bytes = Base64.decode(DESIGNER_LOGO_BASE64, Base64.DEFAULT)
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+    }.getOrNull()
 }
 
 @Composable
 fun DesignerLogo(modifier: Modifier = Modifier, contentDescription: String = "شعار المصمم - أحمد رجب") {
-    Image(bitmap = designerLogoBitmap(), contentDescription = contentDescription, modifier = modifier, contentScale = ContentScale.Fit)
+    val bitmap = designerLogoBitmap()
+    if (bitmap != null) {
+        Image(bitmap = bitmap, contentDescription = contentDescription, modifier = modifier, contentScale = ContentScale.Fit)
+    } else {
+        Surface(modifier = modifier, shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+            Box(contentAlignment = Alignment.Center) { Text("AI", style = MaterialTheme.typography.labelLarge) }
+        }
+    }
 }
 
 @Composable
