@@ -17,63 +17,25 @@ import com.example.data.remote.NetworkClient
 
 @Composable
 fun CharacterListScreen(onCharacterClick: (String) -> Unit, onSceneClick: () -> Unit, projectId: String? = null) {
-    val vm: CharacterViewModel = viewModel(factory = CharacterViewModelFactory())
-    val state by vm.state.collectAsState()
-    Scaffold(containerColor = DarkBlue) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding)) {
-            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("CHARACTERS", color = PrimaryCyan, style = MaterialTheme.typography.labelMedium)
-                    Text("Character Studio", color = TextLight, style = MaterialTheme.typography.headlineSmall)
-                    Text("Manage your cast and keep every character consistent.", color = TextMuted)
-                }
-                IconButton(onClick = { vm.load(projectId) }) { Icon(Icons.Default.Refresh, "تحديث", tint = PrimaryCyan) }
-            }
-            when (val current = state) {
-                CharacterListState.Loading -> NeonLoading()
-                is CharacterListState.Error -> Box(Modifier.fillMaxSize(), Alignment.Center) { Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) { Text(current.message, color = MaterialTheme.colorScheme.error); Button(onClick = { vm.load(projectId) }) { Text("إعادة المحاولة") } } }
-                is CharacterListState.Ready -> Column(Modifier.fillMaxSize()) {
-                    LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        items(current.items, key = { it.id }) { character ->
-                            NeonSectionCard {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Column(Modifier.weight(1f)) {
-                                        Text(character.name, color = TextLight, style = MaterialTheme.typography.titleLarge)
-                                        if (character.description.isNotBlank()) Text(character.description, color = TextMuted, style = MaterialTheme.typography.bodyMedium)
-                                    }
-                                    character.voice["voice"]?.toString()?.let { NeonStatusChip("🎤 $it") }
-                                }
-                                OutlinedButton(onClick = { onCharacterClick(character.id) }) { Text("Open Character") }
-                            }
-                        }
-                    }
-                    Button(onClick = onSceneClick, modifier = Modifier.fillMaxWidth().padding(16.dp), colors = ButtonDefaults.buttonColors(containerColor = PrimaryCyan, contentColor = DarkBlue)) { Text("🎬 بناء مشهد", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) }
-                }
-            }
+    val vm: CharacterViewModel = viewModel(factory = CharacterViewModelFactory()); val state by vm.state.collectAsState()
+    Scaffold(containerColor = DarkBlue) { padding -> Column(Modifier.fillMaxSize().padding(padding)) {
+        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("الشخصيات", color = PrimaryCyan, style = MaterialTheme.typography.labelMedium); Text("استوديو الشخصيات", color = TextLight, style = MaterialTheme.typography.headlineSmall); Text("إدارة طاقم الشخصيات والحفاظ على اتساق كل شخصية.", color = TextMuted) }; IconButton(onClick = { vm.load(projectId) }) { Icon(Icons.Default.Refresh, "تحديث", tint = PrimaryCyan) } }
+        when (val current = state) {
+            CharacterListState.Loading -> NeonLoading()
+            is CharacterListState.Error -> Box(Modifier.fillMaxSize(), Alignment.Center) { Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) { Text(current.message, color = MaterialTheme.colorScheme.error); Button(onClick = { vm.load(projectId) }) { Text("إعادة المحاولة") } } }
+            is CharacterListState.Ready -> Column(Modifier.fillMaxSize()) { LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { items(current.items, key = { it.id }) { character -> NeonSectionCard { Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(character.name, color = TextLight, style = MaterialTheme.typography.titleLarge); if (character.description.isNotBlank()) Text(character.description, color = TextMuted, style = MaterialTheme.typography.bodyMedium) }; character.voice["voice"]?.toString()?.let { NeonStatusChip("🎤 $it") } }; OutlinedButton(onClick = { onCharacterClick(character.id) }) { Text("فتح الشخصية") } } } }; Button(onClick = onSceneClick, modifier = Modifier.fillMaxWidth().padding(16.dp), colors = ButtonDefaults.buttonColors(containerColor = PrimaryCyan, contentColor = DarkBlue)) { Text("🎬 بناء مشهد", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) } }
         }
-    }
+    } }
 }
 
 @Composable
 fun CharacterDetailScreen(characterId: String, onBack: () -> Unit, onScene: () -> Unit) {
-    var character by remember { mutableStateOf<CharacterUi?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
+    var character by remember { mutableStateOf<CharacterUi?>(null) }; var error by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(characterId) { runCatching { NetworkClient.apiService.getCharacter(characterId).data }.onSuccess { character = it.toUi() }.onFailure { error = it.message ?: "تعذر تحميل الشخصية" } }
-    Scaffold(containerColor = DarkBlue) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            item { TextButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null, tint = PrimaryCyan); Spacer(Modifier.width(6.dp)); Text("Back", color = PrimaryCyan) } }
-            item { NeonHero(character?.name ?: "Character Profile", "Identity, appearance, voice and visual continuity") }
-            when {
-                error != null -> item { Text(error!!, color = MaterialTheme.colorScheme.error) }
-                character == null -> item { Box(Modifier.fillMaxWidth().height(180.dp), Alignment.Center) { CircularProgressIndicator(color = PrimaryCyan) } }
-                else -> {
-                    item { NeonSectionCard { Text("DESCRIPTION", color = PrimaryCyan, style = MaterialTheme.typography.labelMedium); Text(character!!.description, color = TextLight) } }
-                    if (character!!.appearance.isNotEmpty()) item { NeonSectionCard { Text("APPEARANCE", color = PrimaryCyan); Text(character!!.appearance.toString(), color = TextLight) } }
-                    if (character!!.voice.isNotEmpty()) item { NeonSectionCard { Text("VOICE", color = PrimaryCyan); Text(character!!.voice.toString(), color = TextLight) } }
-                    if (character!!.visualStyle.isNotEmpty()) item { NeonSectionCard { Text("VISUAL STYLE", color = PrimaryCyan); Text(character!!.visualStyle.toString(), color = TextLight) } }
-                    item { Button(onClick = onScene, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = PrimaryCyan, contentColor = DarkBlue)) { Text("Use Character in Scene") } }
-                }
-            }
+    Scaffold(containerColor = DarkBlue) { padding -> LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        item { TextButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null, tint = PrimaryCyan); Spacer(Modifier.width(6.dp)); Text("رجوع", color = PrimaryCyan) } }
+        item { NeonHero(character?.name ?: "ملف الشخصية", "الهوية والمظهر والصوت والاستمرارية البصرية") }
+        when { error != null -> item { Text(error!!, color = MaterialTheme.colorScheme.error) }; character == null -> item { Box(Modifier.fillMaxWidth().height(180.dp), Alignment.Center) { CircularProgressIndicator(color = PrimaryCyan) } }; else -> { item { NeonSectionCard { Text("الوصف", color = PrimaryCyan, style = MaterialTheme.typography.labelMedium); Text(character!!.description, color = TextLight) } }; if (character!!.appearance.isNotEmpty()) item { NeonSectionCard { Text("المظهر", color = PrimaryCyan); Text(character!!.appearance.toString(), color = TextLight) } }; if (character!!.voice.isNotEmpty()) item { NeonSectionCard { Text("الصوت", color = PrimaryCyan); Text(character!!.voice.toString(), color = TextLight) } }; if (character!!.visualStyle.isNotEmpty()) item { NeonSectionCard { Text("الأسلوب البصري", color = PrimaryCyan); Text(character!!.visualStyle.toString(), color = TextLight) } }; item { Button(onClick = onScene, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = PrimaryCyan, contentColor = DarkBlue)) { Text("استخدام الشخصية في مشهد") } } }
         }
-    }
+    } }
 }
