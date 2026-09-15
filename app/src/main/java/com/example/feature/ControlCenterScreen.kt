@@ -1,33 +1,28 @@
 package com.example.feature
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.example.data.remote.BackendJob
-import com.example.data.remote.NetworkClient
-import com.example.data.remote.ProviderRunModel
-import com.example.data.remote.WorkerData
+import com.example.data.remote.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+private fun arabicStatus(status: String): String = when (status.uppercase()) {
+    "PENDING" -> "قيد الانتظار"
+    "QUEUED" -> "في قائمة الانتظار"
+    "RUNNING" -> "قيد التنفيذ"
+    "RETRYING" -> "إعادة المحاولة"
+    "DONE", "COMPLETED", "SUCCESS", "SUCCEEDED" -> "مكتمل"
+    "FAILED" -> "فشل"
+    "CANCELLED", "CANCELED" -> "ملغى"
+    "ACTIVE" -> "نشط"
+    "PAUSED" -> "متوقف مؤقتًا"
+    "STOPPED" -> "متوقف"
+    else -> status
+}
 
 @Composable
 fun ControlCenterScreen() {
@@ -46,91 +41,49 @@ fun ControlCenterScreen() {
             jobs = api.listJobs(limit = 100).data
             worker = api.workerStatus().data
             backendOk = health.status.equals("ok", ignoreCase = true) || health.data.status.equals("OK", ignoreCase = true)
-            selectedJobId?.let { id ->
-                selectedRuns = runCatching { api.getProviderRuns(id, limit = 20).data }.getOrDefault(emptyList())
-            }
+            selectedJobId?.let { id -> selectedRuns = runCatching { api.getProviderRuns(id, limit = 20).data }.getOrDefault(emptyList()) }
             error = null
         } catch (t: Throwable) {
             backendOk = false
-            error = t.message ?: "Backend unavailable"
+            error = t.message ?: "تعذر الاتصال بالخادم"
         }
     }
 
-    LaunchedEffect(Unit) {
-        while (true) {
-            refresh()
-            delay(5000)
-        }
-    }
+    LaunchedEffect(Unit) { while (true) { refresh(); delay(5000) } }
 
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Control Center", style = MaterialTheme.typography.headlineMedium)
-        Text(if (backendOk) "Backend: ONLINE" else "Backend: OFFLINE", color = if (backendOk) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
-        worker?.let { Text("Worker: ${it.workerId} · ${if (it.running) "RUNNING" else "STOPPED"} · iterations ${it.iterations}") }
-        worker?.lastError?.let { Text("Worker error: $it", color = MaterialTheme.colorScheme.error) }
+    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("مركز التحكم", style = MaterialTheme.typography.headlineMedium)
+        Text(if (backendOk) "الخادم: متصل" else "الخادم: غير متصل", color = if (backendOk) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
+        worker?.let { Text("العامل: ${it.workerId} · ${if (it.running) "يعمل" else "متوقف"} · عدد الدورات ${it.iterations}") }
+        worker?.lastError?.let { Text("خطأ العامل: $it", color = MaterialTheme.colorScheme.error) }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        Text("Jobs (${jobs.size})", style = MaterialTheme.typography.titleLarge)
+        Text("المهام (${jobs.size})", style = MaterialTheme.typography.titleLarge)
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(jobs, key = { it.id }) { job ->
-                ControlCenterJobCard(
-                    job = job,
-                    selected = selectedJobId == job.id,
-                    runs = if (selectedJobId == job.id) selectedRuns else emptyList(),
-                    onSelect = {
-                        selectedJobId = if (selectedJobId == job.id) null else job.id
+                Card(Modifier.fillMaxWidth(), onClick = {
+                    selectedJobId = if (selectedJobId == job.id) null else job.id
+                    if (selectedJobId == job.id) scope.launch { selectedRuns = runCatching { NetworkClient.apiService.getProviderRuns(job.id, 20).data }.getOrDefault(emptyList()) } else selectedRuns = emptyList()
+                }) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(job.type, style = MaterialTheme.typography.titleMedium)
+                        Text("${arabicStatus(job.status)} · ${job.projectId}")
+                        LinearProgressIndicator(progress = { job.progress.coerceIn(0.0, 1.0).toFloat() }, Modifier.fillMaxWidth())
+                        Text("التقدم ${(job.progress * 100).toInt()}% · المحاولة ${job.attempt}/${job.maxAttempts}")
+                        job.errorCode?.let { Text("رمز الخطأ: $it", color = MaterialTheme.colorScheme.error) }
+                        job.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            if (job.status in setOf("PENDING", "QUEUED", "RUNNING", "RETRYING")) Button(onClick = { scope.launch { runCatching { NetworkClient.apiService.cancelJob(job.id); refresh() }.onFailure { error = it.message ?: "فشل الإلغاء" } } }) { Text("إلغاء") }
+                            if (job.status == "FAILED") Button(onClick = { scope.launch { runCatching { NetworkClient.apiService.retryJob(job.id); refresh() }.onFailure { error = it.message ?: "فشلت إعادة المحاولة" } } }) { Text("إعادة المحاولة") }
+                        }
                         if (selectedJobId == job.id) {
-                            scope.launch {
-                                selectedRuns = runCatching { NetworkClient.apiService.getProviderRuns(job.id, 20).data }.getOrDefault(emptyList())
+                            Text("تشغيلات المزود (${selectedRuns.size})", style = MaterialTheme.typography.labelLarge)
+                            selectedRuns.take(5).forEach { run ->
+                                val duration = run.durationMs?.let { " · ${it} مللي ثانية" } ?: ""
+                                Text("${run.provider}${run.model?.let { "/$it" } ?: ""} · ${arabicStatus(run.status)}$duration")
+                                run.errorCode?.let { Text("رمز الخطأ: $it", color = MaterialTheme.colorScheme.error) }
                             }
-                        } else selectedRuns = emptyList()
-                    },
-                    onCancel = {
-                        scope.launch {
-                            try { NetworkClient.apiService.cancelJob(job.id); refresh() }
-                            catch (t: Throwable) { error = t.message ?: "Cancel failed" }
                         }
-                    },
-                    onRetry = {
-                        scope.launch {
-                            try { NetworkClient.apiService.retryJob(job.id); refresh() }
-                            catch (t: Throwable) { error = t.message ?: "Retry failed" }
-                        }
-                    },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ControlCenterJobCard(
-    job: BackendJob,
-    selected: Boolean,
-    runs: List<ProviderRunModel>,
-    onSelect: () -> Unit,
-    onCancel: () -> Unit,
-    onRetry: () -> Unit,
-) {
-    Card(modifier = Modifier.fillMaxWidth(), onClick = onSelect) {
-        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(job.type, style = MaterialTheme.typography.titleMedium)
-            Text("${job.status} · ${job.projectId}")
-            LinearProgressIndicator(progress = { job.progress.coerceIn(0.0, 1.0).toFloat() }, modifier = Modifier.fillMaxWidth())
-            Text("Progress ${(job.progress * 100).toInt()}% · Attempt ${job.attempt}/${job.maxAttempts}")
-            job.errorCode?.let { Text("Error: $it", color = MaterialTheme.colorScheme.error) }
-            job.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                if (job.status in setOf("PENDING", "QUEUED", "RUNNING", "RETRYING")) Button(onClick = onCancel) { Text("Cancel") }
-                if (job.status == "FAILED") Button(onClick = onRetry) { Text("Retry") }
-            }
-
-            if (selected) {
-                Text("Provider Runs (${runs.size})", style = MaterialTheme.typography.labelLarge)
-                runs.take(5).forEach { run ->
-                    val duration = run.durationMs?.let { " · ${it}ms" } ?: ""
-                    Text("${run.provider}${run.model?.let { "/$it" } ?: ""} · ${run.status}$duration")
-                    run.errorCode?.let { Text("Error: $it", color = MaterialTheme.colorScheme.error) }
+                    }
                 }
             }
         }
