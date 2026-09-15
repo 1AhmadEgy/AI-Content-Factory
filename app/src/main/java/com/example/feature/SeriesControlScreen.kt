@@ -1,43 +1,18 @@
 package com.example.feature
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.Alignment
 import com.example.core.theme.DarkBlue
 import com.example.core.theme.PrimaryCyan
 import com.example.core.theme.SurfaceBlue
@@ -55,212 +30,27 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SeriesControlScreen(projectId: String, onBack: () -> Unit) {
-    val scope = rememberCoroutineScope()
-    var templates by remember { mutableStateOf<List<SeriesTemplate>>(emptyList()) }
-    var countries by remember { mutableStateOf<List<CountryLibrary>>(emptyList()) }
-    var languages by remember { mutableStateOf<List<LanguageInfo>>(emptyList()) }
-    var context by remember { mutableStateOf<SeriesContext?>(null) }
-    var selectedTemplate by remember { mutableStateOf<String?>(null) }
-    var selectedCountry by remember { mutableStateOf("egypt") }
-    var sourceLanguage by remember { mutableStateOf("ar") }
-    var targetLanguages by remember { mutableStateOf<List<String>>(emptyList()) }
-    var title by remember { mutableStateOf("") }
-    var factText by remember { mutableStateOf("") }
-    var gagText by remember { mutableStateOf("") }
-    var threadText by remember { mutableStateOf("") }
-    var snapshots by remember { mutableStateOf<List<Map<String, Any?>>>(emptyList()) }
-    var message by remember { mutableStateOf<String?>(null) }
-
-    fun refresh() {
-        scope.launch {
-            try {
-                val api = NetworkClient.apiService
-                templates = api.listSeriesTemplates().data
-                countries = api.listCountryLibraries().data
-                context = runCatching { api.getSeriesContext(projectId).data }.getOrNull()
-                snapshots = runCatching { api.listSeriesSnapshots(projectId).data }.getOrDefault(emptyList())
-                val current = context
-                title = current?.title.orEmpty()
-                selectedTemplate = current?.templateId
-                selectedCountry = current?.countryId ?: "egypt"
-                sourceLanguage = current?.sourceLanguage ?: "ar"
-                targetLanguages = current?.targetLanguages ?: emptyList()
-                languages = runCatching { api.getCountryLanguages(selectedCountry).data }.getOrDefault(emptyList())
-                message = null
-            } catch (t: Throwable) { message = t.message ?: "تعذر تحميل بيانات المسلسل" }
-        }
-    }
-
+    val scope = rememberCoroutineScope(); var templates by remember { mutableStateOf<List<SeriesTemplate>>(emptyList()) }; var countries by remember { mutableStateOf<List<CountryLibrary>>(emptyList()) }; var languages by remember { mutableStateOf<List<LanguageInfo>>(emptyList()) }; var context by remember { mutableStateOf<SeriesContext?>(null) }; var selectedTemplate by remember { mutableStateOf<String?>(null) }; var selectedCountry by remember { mutableStateOf("egypt") }; var sourceLanguage by remember { mutableStateOf("ar") }; var targetLanguages by remember { mutableStateOf<List<String>>(emptyList()) }; var title by remember { mutableStateOf("") }; var factText by remember { mutableStateOf("") }; var gagText by remember { mutableStateOf("") }; var threadText by remember { mutableStateOf("") }; var snapshots by remember { mutableStateOf<List<Map<String, Any?>>>(emptyList()) }; var message by remember { mutableStateOf<String?>(null)
+    fun refresh() { scope.launch { try { val api = NetworkClient.apiService; templates = api.listSeriesTemplates().data; countries = api.listCountryLibraries().data; context = runCatching { api.getSeriesContext(projectId).data }.getOrNull(); snapshots = runCatching { api.listSeriesSnapshots(projectId).data }.getOrDefault(emptyList()); val current = context; title = current?.title.orEmpty(); selectedTemplate = current?.templateId; selectedCountry = current?.countryId ?: "egypt"; sourceLanguage = current?.sourceLanguage ?: "ar"; targetLanguages = current?.targetLanguages ?: emptyList(); languages = runCatching { api.getCountryLanguages(selectedCountry).data }.getOrDefault(emptyList()); message = null } catch (t: Throwable) { message = t.message ?: "تعذر تحميل بيانات المسلسل" } } }
     LaunchedEffect(projectId) { refresh() }
-
-    fun selectCountry(countryId: String) {
-        scope.launch {
-            try {
-                selectedCountry = countryId
-                val api = NetworkClient.apiService
-                languages = api.getCountryLanguages(countryId).data
-                val country = countries.firstOrNull { it.id == countryId }
-                sourceLanguage = country?.defaultLanguage ?: languages.firstOrNull()?.id ?: sourceLanguage
-                targetLanguages = listOf(sourceLanguage)
-                message = "تم اختيار مكتبة ${country?.name ?: countryId}"
-            } catch (t: Throwable) { message = t.message ?: "تعذر تحميل لغات المكتبة" }
-        }
-    }
-
-    fun toggleTargetLanguage(languageId: String) {
-        targetLanguages = if (languageId in targetLanguages) targetLanguages - languageId else targetLanguages + languageId
-    }
-
-    fun applyTemplate(templateId: String) {
-        scope.launch {
-            try {
-                val response = NetworkClient.apiService.applySeriesTemplate(
-                    projectId,
-                    ApplySeriesTemplateRequest(
-                        templateId = templateId,
-                        title = title.ifBlank { null },
-                        countryId = selectedCountry,
-                        sourceLanguage = sourceLanguage,
-                        targetLanguages = targetLanguages,
-                        dialect = context?.dialect,
-                    ),
-                )
-                context = response.data
-                selectedTemplate = templateId
-                message = "تم تطبيق القالب مع الحفاظ على البيانات الموجودة"
-            } catch (t: Throwable) { message = t.message ?: "فشل تطبيق القالب" }
-        }
-    }
-
-    fun saveContext() {
-        val current = context ?: return
-        scope.launch {
-            try {
-                val facts = current.facts.toMutableList().apply {
-                    if (factText.isNotBlank()) add(mapOf("text" to factText.trim(), "source" to "android"))
-                }
-                val gags = current.runningGags.toMutableList().apply {
-                    if (gagText.isNotBlank()) add(mapOf("text" to gagText.trim(), "source" to "android"))
-                }
-                val threads = current.openThreads.toMutableList().apply {
-                    if (threadText.isNotBlank()) add(mapOf("text" to threadText.trim(), "source" to "android", "status" to "open"))
-                }
-                val patch = mapOf<String, Any?>(
-                    "title" to title.ifBlank { current.title },
-                    "countryId" to selectedCountry,
-                    "libraryId" to (countries.firstOrNull { it.id == selectedCountry }?.libraryId ?: current.libraryId),
-                    "sourceLanguage" to sourceLanguage,
-                    "targetLanguages" to targetLanguages.distinct(),
-                    "dialect" to current.dialect,
-                    "translationPolicy" to current.translationPolicy,
-                    "glossary" to current.glossary,
-                    "translationVersions" to current.translationVersions,
-                    "characters" to current.characters,
-                    "locations" to current.locations,
-                    "relationships" to current.relationships,
-                    "facts" to facts,
-                    "runningGags" to gags,
-                    "openThreads" to threads,
-                    "importantProps" to current.importantProps,
-                    "timeline" to current.timeline,
-                    "rules" to current.rules,
-                )
-                val response = NetworkClient.apiService.patchSeriesContext(
-                    projectId,
-                    SeriesContextPatchRequest(context = patch),
-                )
-                context = response.data
-                factText = ""
-                gagText = ""
-                threadText = ""
-                message = "تم حفظ الإعدادات والذاكرة دون حذف السجل السابق"
-            } catch (t: Throwable) { message = t.message ?: "فشل حفظ الاستمرارية" }
-        }
-    }
-
+    fun selectCountry(countryId: String) { scope.launch { try { selectedCountry = countryId; val api = NetworkClient.apiService; languages = api.getCountryLanguages(countryId).data; val country = countries.firstOrNull { it.id == countryId }; sourceLanguage = country?.defaultLanguage ?: languages.firstOrNull()?.id ?: sourceLanguage; targetLanguages = listOf(sourceLanguage); message = "تم اختيار مكتبة ${country?.name ?: countryId}" } catch (t: Throwable) { message = t.message ?: "تعذر تحميل لغات المكتبة" } } }
+    fun toggleTargetLanguage(languageId: String) { targetLanguages = if (languageId in targetLanguages) targetLanguages - languageId else targetLanguages + languageId }
+    fun applyTemplate(templateId: String) { scope.launch { try { val response = NetworkClient.apiService.applySeriesTemplate(projectId, ApplySeriesTemplateRequest(templateId = templateId, title = title.ifBlank { null }, countryId = selectedCountry, sourceLanguage = sourceLanguage, targetLanguages = targetLanguages, dialect = context?.dialect)); context = response.data; selectedTemplate = templateId; message = "تم تطبيق القالب مع الحفاظ على البيانات الموجودة" } catch (t: Throwable) { message = t.message ?: "فشل تطبيق القالب" } } }
+    fun saveContext() { val current = context ?: return; scope.launch { try { val facts = current.facts.toMutableList().apply { if (factText.isNotBlank()) add(mapOf("text" to factText.trim(), "source" to "android")) }; val gags = current.runningGags.toMutableList().apply { if (gagText.isNotBlank()) add(mapOf("text" to gagText.trim(), "source" to "android")) }; val threads = current.openThreads.toMutableList().apply { if (threadText.isNotBlank()) add(mapOf("text" to threadText.trim(), "source" to "android", "status" to "open")) }; val patch = mapOf<String, Any?>("title" to title.ifBlank { current.title }, "countryId" to selectedCountry, "libraryId" to (countries.firstOrNull { it.id == selectedCountry }?.libraryId ?: current.libraryId), "sourceLanguage" to sourceLanguage, "targetLanguages" to targetLanguages.distinct(), "dialect" to current.dialect, "translationPolicy" to current.translationPolicy, "glossary" to current.glossary, "translationVersions" to current.translationVersions, "characters" to current.characters, "locations" to current.locations, "relationships" to current.relationships, "facts" to facts, "runningGags" to gags, "openThreads" to threads, "importantProps" to current.importantProps, "timeline" to current.timeline, "rules" to current.rules); val response = NetworkClient.apiService.patchSeriesContext(projectId, SeriesContextPatchRequest(context = patch)); context = response.data; factText = ""; gagText = ""; threadText = ""; message = "تم حفظ الإعدادات والذاكرة دون حذف السجل السابق" } catch (t: Throwable) { message = t.message ?: "فشل حفظ الاستمرارية" } } }
     val neonCard = CardDefaults.cardColors(containerColor = SurfaceBlue)
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("SERIES CONTROL", color = TextLight, style = MaterialTheme.typography.titleLarge) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "رجوع", tint = PrimaryCyan) } },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkBlue),
-            )
-        },
-        containerColor = DarkBlue,
-    ) { padding ->
-        LazyColumn(
-            Modifier.fillMaxSize().padding(padding).background(DarkBlue),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            item {
-                Card(colors = CardDefaults.cardColors(containerColor = SurfaceBlue), shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                        Text("CONTINUITY COMMAND CENTER", color = PrimaryCyan, style = MaterialTheme.typography.labelLarge)
-                        Text("استمرارية المسلسل", color = TextLight, style = MaterialTheme.typography.headlineMedium)
-                        Text("تحكم في القوالب والبلدان واللغات وذاكرة السلسلة من مساحة عمل واحدة.", color = TextMuted)
-                        Text("PROJECT  •  $projectId", color = TextMuted, style = MaterialTheme.typography.labelSmall)
-                        context?.let { Text("NEXT EPISODE  •  ${it.nextEpisodeNumber}", color = PrimaryCyan, style = MaterialTheme.typography.labelMedium) }
-                        message?.let { Text(it, color = PrimaryCyan) }
-                    }
-                }
-            }
-            item {
-                Card(colors = neonCard, shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("LIBRARY & LANGUAGES", color = PrimaryCyan, style = MaterialTheme.typography.titleLarge)
-                        Text("اختر مكتبة مستقلة للمحتوى واللغة. البيانات لا تختلط بين الدول.", color = TextMuted)
-                        countries.forEach { country -> OutlinedButton(onClick = { selectCountry(country.id) }, modifier = Modifier.fillMaxWidth()) { Text(if (country.id == selectedCountry) "✓ ${country.name}" else country.name) } }
-                        Text("لغة المصدر: $sourceLanguage", color = TextMuted)
-                        languages.forEach { language -> OutlinedButton(onClick = { sourceLanguage = language.id }, modifier = Modifier.fillMaxWidth()) { Text(if (language.id == sourceLanguage) "✓ المصدر: ${language.nativeName ?: language.name}" else "المصدر: ${language.nativeName ?: language.name}") } }
-                        Text("لغات الإخراج: ${targetLanguages.joinToString().ifBlank { "نفس لغة المصدر" }}", color = TextMuted)
-                        languages.forEach { language -> OutlinedButton(onClick = { toggleTargetLanguage(language.id) }, modifier = Modifier.fillMaxWidth()) { Text(if (language.id in targetLanguages) "✓ إخراج: ${language.nativeName ?: language.name}" else "إضافة إخراج: ${language.nativeName ?: language.name}") } }
-                    }
-                }
-            }
-            item {
-                Card(colors = neonCard, shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("SERIES TEMPLATES", color = PrimaryCyan, style = MaterialTheme.typography.titleLarge)
-                        templates.forEach { template ->
-                            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(DarkBlue).padding(10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Column(Modifier.weight(1f)) { Text(template.name, color = TextLight); Text("${template.genre} · ${template.format}", color = TextMuted) }
-                                if (selectedTemplate == template.id) Text("ACTIVE", color = PrimaryCyan, modifier = Modifier.padding(top = 8.dp)) else OutlinedButton(onClick = { applyTemplate(template.id) }) { Text("APPLY") }
-                            }
-                        }
-                    }
-                }
-            }
+    Scaffold(topBar = { TopAppBar(title = { Text("التحكم بالمسلسل", color = TextLight, style = MaterialTheme.typography.titleLarge) }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "رجوع", tint = PrimaryCyan) } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkBlue)) }, containerColor = DarkBlue) { padding ->
+        LazyColumn(Modifier.fillMaxSize().padding(padding).background(DarkBlue), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            item { Card(colors = CardDefaults.cardColors(containerColor = SurfaceBlue), shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth()) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) { Text("مركز قيادة الاستمرارية", color = PrimaryCyan, style = MaterialTheme.typography.labelLarge); Text("استمرارية المسلسل", color = TextLight, style = MaterialTheme.typography.headlineMedium); Text("تحكم في القوالب والبلدان واللغات وذاكرة السلسلة من مساحة عمل واحدة.", color = TextMuted); Text("المشروع  •  $projectId", color = TextMuted, style = MaterialTheme.typography.labelSmall); context?.let { Text("الحلقة التالية  •  ${it.nextEpisodeNumber}", color = PrimaryCyan, style = MaterialTheme.typography.labelMedium) }; message?.let { Text(it, color = PrimaryCyan) } } } }
+            item { Card(colors = neonCard, shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { Text("المكتبة واللغات", color = PrimaryCyan, style = MaterialTheme.typography.titleLarge); Text("اختر مكتبة مستقلة للمحتوى واللغة. البيانات لا تختلط بين الدول.", color = TextMuted); countries.forEach { country -> OutlinedButton(onClick = { selectCountry(country.id) }, modifier = Modifier.fillMaxWidth()) { Text(if (country.id == selectedCountry) "✓ ${country.name}" else country.name) } }; Text("لغة المصدر: $sourceLanguage", color = TextMuted); languages.forEach { language -> OutlinedButton(onClick = { sourceLanguage = language.id }, modifier = Modifier.fillMaxWidth()) { Text(if (language.id == sourceLanguage) "✓ المصدر: ${language.nativeName ?: language.name}" else "المصدر: ${language.nativeName ?: language.name}") } }; Text("لغات الإخراج: ${targetLanguages.joinToString().ifBlank { "نفس لغة المصدر" }}", color = TextMuted); languages.forEach { language -> OutlinedButton(onClick = { toggleTargetLanguage(language.id) }, modifier = Modifier.fillMaxWidth()) { Text(if (language.id in targetLanguages) "✓ إخراج: ${language.nativeName ?: language.name}" else "إضافة إخراج: ${language.nativeName ?: language.name}") } } } } }
+            item { Card(colors = neonCard, shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { Text("قوالب المسلسل", color = PrimaryCyan, style = MaterialTheme.typography.titleLarge); templates.forEach { template -> Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(DarkBlue).padding(10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) { Column(Modifier.weight(1f)) { Text(template.name, color = TextLight); Text("${template.genre} · ${template.format}", color = TextMuted) }; if (selectedTemplate == template.id) Text("نشط", color = PrimaryCyan, modifier = Modifier.padding(top = 8.dp)) else OutlinedButton(onClick = { applyTemplate(template.id) }) { Text("تطبيق") } } } } } }
             item { OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("اسم المسلسل") }, modifier = Modifier.fillMaxWidth()) }
-            item {
-                Card(colors = neonCard, shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                        Text("CONTINUITY MEMORY", color = PrimaryCyan, style = MaterialTheme.typography.titleLarge)
-                        context?.let { c ->
-                            Text("Characters  ${c.characters.size}   •   Locations  ${c.locations.size}", color = TextLight)
-                            Text("Facts  ${c.facts.size}   •   Gags  ${c.runningGags.size}   •   Threads  ${c.openThreads.size}", color = TextMuted)
-                            Text("Country: ${c.countryId ?: "-"}   •   Source: ${c.sourceLanguage ?: "-"}", color = TextMuted)
-                            Text("Output: ${c.targetLanguages.joinToString().ifBlank { "-" }}", color = TextMuted)
-                        }
-                    }
-                }
-            }
+            item { Card(colors = neonCard, shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) { Text("ذاكرة الاستمرارية", color = PrimaryCyan, style = MaterialTheme.typography.titleLarge); context?.let { c -> Text("الشخصيات  ${c.characters.size}   •   المواقع  ${c.locations.size}", color = TextLight); Text("الحقائق  ${c.facts.size}   •   اللوازم  ${c.runningGags.size}   •   خيوط القصة  ${c.openThreads.size}", color = TextMuted); Text("الدولة: ${c.countryId ?: "-"}   •   المصدر: ${c.sourceLanguage ?: "-"}", color = TextMuted); Text("الإخراج: ${c.targetLanguages.joinToString().ifBlank { "-" }}", color = TextMuted) } } } }
             item { OutlinedTextField(value = factText, onValueChange = { factText = it }, label = { Text("إضافة حقيقة ثابتة") }, modifier = Modifier.fillMaxWidth()) }
             item { OutlinedTextField(value = gagText, onValueChange = { gagText = it }, label = { Text("إضافة نكتة/لازمة متكررة") }, modifier = Modifier.fillMaxWidth()) }
             item { OutlinedTextField(value = threadText, onValueChange = { threadText = it }, label = { Text("إضافة خيط قصة مفتوح") }, modifier = Modifier.fillMaxWidth()) }
             item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button(onClick = { saveContext() }, Modifier.weight(1f)) { Text("حفظ") }; OutlinedButton(onClick = { refresh() }, Modifier.weight(1f)) { Text("تحديث") } } }
-            item { Text("HISTORY  •  ${snapshots.size}", color = PrimaryCyan, style = MaterialTheme.typography.titleLarge) }
-            items(snapshots.take(50)) { snapshot ->
-                Card(colors = neonCard, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(14.dp)) {
-                        Text("الحلقة ${snapshot["episodeNumber"] ?: "?"}", color = TextLight)
-                        Spacer(Modifier.height(3.dp))
-                        Text("Episode ID: ${snapshot["episodeId"] ?: "?"}", color = TextMuted)
-                        Text("تم تثبيت نسخ الشخصيات والمواقع لهذه الحلقة", color = TextMuted)
-                    }
-                }
-            }
+            item { Text("السجل  •  ${snapshots.size}", color = PrimaryCyan, style = MaterialTheme.typography.titleLarge) }
+            items(snapshots.take(50)) { snapshot -> Card(colors = neonCard, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) { Column(Modifier.padding(14.dp)) { Text("الحلقة ${snapshot["episodeNumber"] ?: "?"}", color = TextLight); Spacer(Modifier.height(3.dp)); Text("معرّف الحلقة: ${snapshot["episodeId"] ?: "?"}", color = TextMuted); Text("تم تثبيت نسخ الشخصيات والمواقع لهذه الحلقة", color = TextMuted) } } }
         }
     }
 }
