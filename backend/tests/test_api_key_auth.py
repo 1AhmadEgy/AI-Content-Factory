@@ -3,9 +3,9 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 
-# Use a concrete application endpoint that is registered by a router so this
-# test verifies authentication independently of FastAPI's documentation routes.
-PROTECTED_PATH = "/api/v1/projects"
+# Use a concrete application endpoint that does not depend on project storage
+# implementation details so this test verifies authentication independently.
+PROTECTED_PATH = "/api/v1/worker/status"
 
 
 def test_missing_api_key_is_rejected(monkeypatch):
