@@ -43,65 +43,15 @@ fun SettingsScreen(onBack: () -> Unit) {
     var visible by remember { mutableStateOf(false) }
     var configured by remember { mutableStateOf(store.isConfigured()) }
     var message by remember { mutableStateOf<String?>(null) }
-
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("API & Backend") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, "Back") } }
-            )
-        }
-    ) { padding ->
-        Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(padding).padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Text("Backend API Key")
-            Text(if (configured) "API key is securely stored on this device." else "No API key is configured.")
-            OutlinedTextField(
-                value = apiKey,
-                onValueChange = { apiKey = it },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                label = { Text("API Key") },
-                placeholder = { Text("Paste your Backend API key") },
-                leadingIcon = { Icon(Icons.Filled.Key, "API Key") },
-                visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
-                trailingIcon = {
-                    IconButton(onClick = { visible = !visible }) {
-                        Icon(if (visible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, "Toggle visibility")
-                    }
-                }
-            )
-            Button(
-                onClick = {
-                    runCatching {
-                        store.saveApiKey(apiKey)
-                        apiKey = ""
-                        configured = true
-                        message = "API key saved securely."
-                    }.onFailure { message = "Could not save the API key." }
-                },
-                enabled = apiKey.isNotBlank(),
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = PrimaryCyan, contentColor = DarkBlue)
-            ) { Text("Save API Key") }
-            Button(
-                onClick = {
-                    store.clearApiKey()
-                    apiKey = ""
-                    configured = false
-                    message = "API key removed."
-                },
-                enabled = configured,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = DarkBlue, contentColor = PrimaryCyan)
-            ) {
-                Icon(Icons.Filled.Delete, null)
-                Text("  Delete API Key")
-            }
+    Scaffold(topBar = { TopAppBar(title = { Text("واجهة البرمجة والخادم") }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, "رجوع") } }) }) { padding ->
+        Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text("مفتاح واجهة الخادم")
+            Text(if (configured) "تم حفظ مفتاح الواجهة بأمان على هذا الجهاز." else "لم يتم إعداد مفتاح الواجهة بعد.")
+            OutlinedTextField(value = apiKey, onValueChange = { apiKey = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("مفتاح الواجهة") }, placeholder = { Text("ألصق مفتاح واجهة الخادم") }, leadingIcon = { Icon(Icons.Filled.Key, "مفتاح الواجهة") }, visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(), trailingIcon = { IconButton(onClick = { visible = !visible }) { Icon(if (visible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, "تبديل إظهار المفتاح") } })
+            Button(onClick = { runCatching { store.saveApiKey(apiKey); apiKey = ""; configured = true; message = "تم حفظ مفتاح الواجهة بأمان." }.onFailure { message = "تعذر حفظ مفتاح الواجهة." } }, enabled = apiKey.isNotBlank(), modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = PrimaryCyan, contentColor = DarkBlue)) { Text("حفظ مفتاح الواجهة") }
+            Button(onClick = { store.clearApiKey(); apiKey = ""; configured = false; message = "تم حذف مفتاح الواجهة." }, enabled = configured, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = DarkBlue, contentColor = PrimaryCyan)) { Icon(Icons.Filled.Delete, null); Text("  حذف مفتاح الواجهة") }
             message?.let { Text(it) }
-            Text("Security: the key is encrypted with Android Keystore and is never written to source code or displayed after saving.")
+            Text("الأمان: يتم تشفير المفتاح باستخدام Android Keystore، ولا يُكتب في الشيفرة المصدرية أو يُعرض بعد الحفظ.")
         }
     }
 }
