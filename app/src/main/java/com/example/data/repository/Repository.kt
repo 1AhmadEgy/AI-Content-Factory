@@ -21,7 +21,10 @@ import java.util.TimeZone
 
 class Repository(private val dao: FactoryDao) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val api = NetworkClient.apiService
+    // Do not construct Retrofit during Application startup. A malformed build-time API URL
+    // would otherwise throw from Repository construction and force-close the app before UI.
+    // Lazy initialization lets the existing coroutine error handling surface the failure safely.
+    private val api by lazy { NetworkClient.apiService }
     private val isoParser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSX", Locale.US).apply {
         timeZone = TimeZone.getTimeZone("UTC")
     }
