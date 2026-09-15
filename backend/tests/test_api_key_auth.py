@@ -3,9 +3,10 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 
-# Use a concrete application endpoint that does not depend on project storage
-# implementation details so this test verifies authentication independently.
-PROTECTED_PATH = "/api/v1/worker/status"
+# FastAPI always exposes its configured OpenAPI document, making it a stable
+# protected endpoint for testing authentication without relying on storage or
+# worker implementation details.
+PROTECTED_PATH = "/api/v1/openapi.json"
 
 
 def test_missing_api_key_is_rejected(monkeypatch):
@@ -35,7 +36,7 @@ def test_valid_api_key_is_accepted(monkeypatch):
         headers={"Authorization": "Bearer test-aicf-key"},
     )
     assert response.status_code == 200
-    assert "data" in response.json()
+    assert "openapi" in response.json()
 
 
 def test_health_remains_public(monkeypatch):
