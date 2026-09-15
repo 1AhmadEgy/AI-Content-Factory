@@ -1,7 +1,6 @@
 package com.example.core.theme
 
 import android.app.Activity
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
@@ -32,7 +31,10 @@ fun AppTheme(
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
-            val window = (view.context as Activity).window
+            // Compose may provide a ContextWrapper rather than the Activity itself.
+            // Never crash the entire UI just because the hosting context is not an Activity.
+            val activity = view.context as? Activity ?: return@SideEffect
+            val window = activity.window
             window.statusBarColor = colorScheme.background.toArgb()
             WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = false
         }
