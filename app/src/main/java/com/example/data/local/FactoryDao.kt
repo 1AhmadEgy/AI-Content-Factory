@@ -68,6 +68,12 @@ interface FactoryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertJob(job: GenerationJob)
 
+    // Room runs a List<> @Insert as a single transaction, unlike calling insertJob() in a loop
+    // (one transaction per call). Use this whenever inserting/updating more than one job at once,
+    // e.g. syncing a full job list from the backend.
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertJobs(jobs: List<GenerationJob>)
+
     @Update
     suspend fun updateJob(job: GenerationJob)
 }

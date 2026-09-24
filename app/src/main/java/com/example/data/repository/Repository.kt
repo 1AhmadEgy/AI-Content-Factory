@@ -135,7 +135,8 @@ class Repository(private val dao: FactoryDao) {
     )
 
     suspend fun syncJobs(projectId: String? = null) {
-        api.listJobs(projectId = projectId, limit = 200).data.forEach { dao.insertJob(it.toLocalJob()) }
+        // Batch into a single transaction instead of one insert (and one transaction) per job.
+        dao.insertJobs(api.listJobs(projectId = projectId, limit = 200).data.map { it.toLocalJob() })
     }
 
     suspend fun cancelJob(jobId: String): GenerationJob? = api.cancelJob(jobId).data.toLocalJob().also { dao.insertJob(it) }

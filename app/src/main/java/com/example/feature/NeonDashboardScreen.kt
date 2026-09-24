@@ -35,7 +35,7 @@ fun NeonDashboardScreen(viewModel: FactoryViewModel, onProjectClick: (String) ->
             item { NeonHero(projects.size) { showDialog = true } }
             item { QuickToolsSection() }
             item { Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) { Column(Modifier.weight(1f)) { Text("مشاريعك", color = TextLight, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold); Text("إدارة مساحة عمل الإنتاج الإبداعي", color = TextMuted, style = MaterialTheme.typography.bodySmall) }; Text("${projects.size} إجماليًا", color = PrimaryCyan, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold) } }
-            if (projects.isEmpty()) item { NeonEmptyState { showDialog = true } } else items(projects) { project -> NeonProjectCard(project) { onProjectClick(project.id) } }
+            if (projects.isEmpty()) item { NeonEmptyState { showDialog = true } } else items(projects, key = { it.id }) { project -> NeonProjectCard(project) { onProjectClick(project.id) } }
         }
         if (showDialog) AddProjectDialog(onDismiss = { showDialog = false }, onAdd = { name, desc -> viewModel.addProject(name, desc); showDialog = false })
     }

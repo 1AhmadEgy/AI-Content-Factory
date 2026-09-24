@@ -64,7 +64,7 @@ fun DashboardScreen(
             if (projects.isEmpty()) {
                 item { EmptyProjectsCard(onCreate = { showDialog = true }) }
             } else {
-                items(projects) { project -> ProjectCard(project, onClick = { onProjectClick(project.id) }) }
+                items(projects, key = { it.id }) { project -> ProjectCard(project, onClick = { onProjectClick(project.id) }) }
             }
         }
         if (showDialog) {
@@ -200,7 +200,7 @@ fun ProjectDetailScreen(
     ) { padding ->
         LazyColumn(modifier = Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item { Text("المسلسلات", style = MaterialTheme.typography.titleMedium, color = PrimaryCyan, modifier = Modifier.padding(bottom = 8.dp)) }
-            items(seriesList) { series ->
+            items(seriesList, key = { it.id }) { series ->
                 Card(modifier = Modifier.fillMaxWidth().clickable { onSeriesClick(series.id) }, colors = CardDefaults.cardColors(containerColor = SurfaceBlue)) {
                     Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.Movie, contentDescription = null, tint = SecondaryTeal)
@@ -224,7 +224,7 @@ fun SeriesDetailScreen(seriesId: String, viewModel: FactoryViewModel, onBack: ()
     var showDialog by remember { mutableStateOf(false) }
     Scaffold(topBar = { TopAppBar(title = { Text(series?.title ?: "المسلسل", color = TextLight) }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "رجوع", tint = TextLight) } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkBlue)) }, floatingActionButton = { FloatingActionButton(onClick = { showDialog = true }, containerColor = PrimaryCyan) { Icon(Icons.Filled.Add, "إضافة حلقة", tint = DarkBlue) } }, containerColor = DarkBlue) { padding ->
         LazyColumn(modifier = Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(episodes.sortedBy { it.number }) { ep ->
+            items(episodes.sortedBy { it.number }, key = { it.id }) { ep ->
                 Card(modifier = Modifier.fillMaxWidth().clickable { onEpisodeClick(ep.id) }, colors = CardDefaults.cardColors(containerColor = SurfaceBlue)) { Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) { Text(ep.number.toString(), style = MaterialTheme.typography.headlineSmall, color = PrimaryCyan); Spacer(modifier = Modifier.width(16.dp)); Column { Text(ep.title, style = MaterialTheme.typography.titleMedium, color = TextLight); Text("الحالة: ${ep.status}", style = MaterialTheme.typography.bodySmall, color = TextMuted) } } }
             }
         }
@@ -240,7 +240,7 @@ fun EpisodeDetailScreen(episodeId: String, viewModel: FactoryViewModel, onBack: 
     Scaffold(topBar = { TopAppBar(title = { Text(episode?.title ?: "الحلقة", color = TextLight) }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "رجوع", tint = TextLight) } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkBlue)) }, containerColor = DarkBlue) { padding ->
         LazyColumn(modifier = Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item { Text("المشاهد", style = MaterialTheme.typography.titleMedium, color = PrimaryCyan) }
-            items(scenes) { scene ->
+            items(scenes, key = { it.id }) { scene ->
                 val job = allJobs.find { it.targetId == scene.id }
                 Card(colors = CardDefaults.cardColors(containerColor = SurfaceBlue), modifier = Modifier.fillMaxWidth()) { Column(modifier = Modifier.padding(14.dp)) { Row(verticalAlignment = Alignment.CenterVertically) { Text("المشهد ${scene.number}", style = MaterialTheme.typography.titleMedium, color = TextLight); Spacer(Modifier.weight(1f)); Text(if (scene.status == "DONE") "مكتمل" else scene.status, color = if (scene.status == "DONE") SuccessGreen else WarningOrange) }; Spacer(Modifier.height(6.dp)); Text(scene.description, color = TextMuted); Text("الموقع: ${scene.location}", color = TextMuted); Text("المشاعر: ${scene.emotion}", color = TextMuted); job?.let { Text("المهمة: ${it.status} · ${it.progress}%", color = PrimaryCyan) }; Spacer(Modifier.height(8.dp)); Button(onClick = { viewModel.generateScene(scene.id) }) { Icon(Icons.Filled.PlayArrow, contentDescription = null); Spacer(Modifier.width(6.dp)); Text("إنشاء") } } }
             }

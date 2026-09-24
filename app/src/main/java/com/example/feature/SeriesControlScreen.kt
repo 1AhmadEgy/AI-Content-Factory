@@ -230,7 +230,10 @@ fun SeriesControlScreen(projectId: String, onBack: () -> Unit) {
             item { OutlinedTextField(value = threadText, onValueChange = { threadText = it }, label = { Text("إضافة خيط قصة مفتوح") }, modifier = Modifier.fillMaxWidth()) }
             item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button(onClick = { saveContext() }, Modifier.weight(1f)) { Text("حفظ") }; OutlinedButton(onClick = { refresh() }, Modifier.weight(1f)) { Text("تحديث") } } }
             item { Text("السجل • ${snapshots.size}", color = PrimaryCyan, style = MaterialTheme.typography.titleLarge) }
-            items(snapshots.take(50)) { snapshot ->
+            items(
+                snapshots.take(50),
+                key = { snapshot -> "${snapshot["episodeId"]}:${snapshot["episodeNumber"]}" },
+            ) { snapshot ->
                 Card(colors = neonCard, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp)) {
                         Text("الحلقة ${snapshot["episodeNumber"] ?: "?"}", color = TextLight)
