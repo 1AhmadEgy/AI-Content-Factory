@@ -1360,6 +1360,93 @@ diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-lates
 +            _request_id.reset(request_token)
 +        if job_token is not None:
 +            _job_id.reset(job_token)
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/backend/app/providers/contracts.py AI-Content-Factory-latest/backend/app/providers/contracts.py
+--- orig/AI-Content-Factory-latest/backend/app/providers/contracts.py	2026-09-15 21:33:22.000000000 +0000
++++ AI-Content-Factory-latest/backend/app/providers/contracts.py	2026-09-25 09:44:11.782840588 +0000
+@@ -18,6 +18,14 @@
+     model: str
+     parameters: dict[str, Any] = field(default_factory=dict)
+     seed: int | None = None
++    # Stable across every retry of the *same* logical job (unlike a per-attempt key), so a
++    # provider that honors it (OpenAI does, via the "Idempotency-Key" request header) returns
++    # the original result instead of billing/generating a second time if a worker crashes or
++    # times out after the request reached the provider but before the response was recorded.
++    # Optional and defaulted so existing adapters/tests that build ProviderRequest directly
++    # are unaffected; adapters that can't use it (no provider-side idempotency support) just
++    # ignore it.
++    idempotency_key: str | None = None
+ 
+ 
+ @dataclass(frozen=True, slots=True)
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/backend/app/providers/openai_adapter.py AI-Content-Factory-latest/backend/app/providers/openai_adapter.py
+--- orig/AI-Content-Factory-latest/backend/app/providers/openai_adapter.py	2026-09-15 21:33:22.000000000 +0000
++++ AI-Content-Factory-latest/backend/app/providers/openai_adapter.py	2026-09-25 09:44:39.227869390 +0000
+@@ -47,11 +47,18 @@
+         except OpenAIProviderError as exc:
+             return ProviderResponse(False, error_code="OPENAI_REQUEST_FAILED", error_message=str(exc))
+ 
+-    def _request(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
++    def _request(self, endpoint: str, payload: dict[str, Any], *, idempotency_key: str | None = None) -> dict[str, Any]:
++        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
++        if idempotency_key:
++            # If this exact job is retried after a previous attempt's request reached OpenAI but
++            # the response was lost (worker crash, network timeout, ...), OpenAI returns the
++            # original result instead of generating (and billing for) a second one. See
++            # ProviderRequest.idempotency_key for why this is keyed on job id, not per attempt.
++            headers["Idempotency-Key"] = idempotency_key
+         req = urllib.request.Request(
+             f"{self.base_url}/{endpoint.lstrip('/')}",
+             data=json.dumps(payload).encode("utf-8"),
+-            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
++            headers=headers,
+             method="POST",
+         )
+         try:
+@@ -75,7 +82,7 @@
+         if not prompt:
+             return ProviderResponse(False, error_code="PROMPT_REQUIRED", error_message="prompt is required")
+         payload: dict[str, Any] = {"model": request.model, "input": prompt}
+-        data = self._request("responses", payload)
++        data = self._request("responses", payload, idempotency_key=request.idempotency_key)
+         output_text = data.get("output_text")
+         if not output_text:
+             parts: list[str] = []
+@@ -98,7 +105,7 @@
+         for key in ("size", "quality", "background", "output_format"):
+             if key in request.parameters:
+                 payload[key] = request.parameters[key]
+-        data = self._request("images/generations", payload)
++        data = self._request("images/generations", payload, idempotency_key=request.idempotency_key)
+         item = (data.get("data") or [{}])[0]
+         if item.get("b64_json"):
+             raw = base64.b64decode(item["b64_json"])
+@@ -121,10 +128,13 @@
+             return ProviderResponse(False, error_code="TEXT_REQUIRED", error_message="text or narration is required")
+         fmt = str(request.parameters.get("response_format", "mp3"))
+         payload = {"model": request.model, "voice": str(request.parameters.get("voice", "alloy")), "input": text, "response_format": fmt}
++        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
++        if request.idempotency_key:
++            headers["Idempotency-Key"] = request.idempotency_key
+         req = urllib.request.Request(
+             f"{self.base_url}/audio/speech",
+             data=json.dumps(payload).encode("utf-8"),
+-            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
++            headers=headers,
+             method="POST",
+         )
+         try:
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/backend/app/workers/provider_worker.py AI-Content-Factory-latest/backend/app/workers/provider_worker.py
+--- orig/AI-Content-Factory-latest/backend/app/workers/provider_worker.py	2026-09-15 21:33:22.000000000 +0000
++++ AI-Content-Factory-latest/backend/app/workers/provider_worker.py	2026-09-25 09:44:18.426434805 +0000
+@@ -121,7 +121,7 @@
+             self.provider_runs.create(ProviderRun(id=run_id, job_id=job.id, provider=model.provider, model=model.id,
+                 request_metadata={"jobType": job.type.value, "targetType": job.target_type, "targetId": job.target_id, "capability": capability}, status="RUNNING"))
+         try:
+-            response = model.adapter.execute(ProviderRequest(model=model.id, parameters=dict(job.input.parameters), seed=job.input.seed))
++            response = model.adapter.execute(ProviderRequest(model=model.id, parameters=dict(job.input.parameters), seed=job.input.seed, idempotency_key=job.id))
+         except Exception as exc:
+             kind = classify_exception(exc)
+             if breaker is not None and kind is ErrorKind.TRANSIENT:
 diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/backend/migrations/002_multilingual_series.sql AI-Content-Factory-latest/backend/migrations/002_multilingual_series.sql
 --- orig/AI-Content-Factory-latest/backend/migrations/002_multilingual_series.sql	2026-09-15 21:33:22.000000000 +0000
 +++ AI-Content-Factory-latest/backend/migrations/002_multilingual_series.sql	1970-01-01 00:00:00.000000000 +0000
@@ -1643,6 +1730,47 @@ diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-lates
 +    assert by_name["database_writable"].ok
 +    assert by_name["asset_root_writable"].ok
 +    assert by_name["auth_configured"].ok
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/backend/tests/test_openai_adapter.py AI-Content-Factory-latest/backend/tests/test_openai_adapter.py
+--- orig/AI-Content-Factory-latest/backend/tests/test_openai_adapter.py	2026-09-15 21:33:22.000000000 +0000
++++ AI-Content-Factory-latest/backend/tests/test_openai_adapter.py	2026-09-25 09:44:58.260219499 +0000
+@@ -14,3 +14,37 @@
+ def test_openai_adapter_health_requires_credentials(monkeypatch):
+     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+     assert OpenAIModelAdapter("gpt-5.6-luna", "TEXT").health_check() is False
++
++
++def test_openai_adapter_sends_idempotency_key_header(monkeypatch):
++    """A retried job must reuse the OpenAI Idempotency-Key header, not a fresh one.
++
++    Otherwise a worker crash between "request sent" and "response recorded" causes the
++    retry to bill/generate a second time instead of OpenAI returning the original result.
++    """
++    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
++    captured: dict[str, object] = {}
++
++    class _FakeResponse:
++        def read(self):
++            return b'{"output_text": "hi"}'
++
++        def __enter__(self):
++            return self
++
++        def __exit__(self, *exc):
++            return False
++
++    def fake_urlopen(req, timeout=None):
++        captured["headers"] = dict(req.headers)
++        return _FakeResponse()
++
++    monkeypatch.setattr("app.providers.openai_adapter.urllib.request.urlopen", fake_urlopen)
++
++    adapter = OpenAIModelAdapter("gpt-5.6-luna", "TEXT")
++    response = adapter.execute(ProviderRequest("gpt-5.6-luna", {"prompt": "hello"}, idempotency_key="job-123"))
++
++    assert response.success is True
++    # urllib.request.Request lower-cases/title-cases header names on storage; check case-insensitively.
++    headers_lower = {k.lower(): v for k, v in captured["headers"].items()}
++    assert headers_lower.get("idempotency-key") == "job-123"
 diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/backend/tests/test_postgres_repositories.py AI-Content-Factory-latest/backend/tests/test_postgres_repositories.py
 --- orig/AI-Content-Factory-latest/backend/tests/test_postgres_repositories.py	1970-01-01 00:00:00.000000000 +0000
 +++ AI-Content-Factory-latest/backend/tests/test_postgres_repositories.py	2026-09-25 09:40:38.152559485 +0000
