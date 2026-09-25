@@ -166,6 +166,11 @@ CREATE POLICY project_members_admin_write ON project_members
   FOR ALL TO authenticated
   USING (
     EXISTS (
+      SELECT 1 FROM projects p
+      WHERE p.id = project_members.project_id
+        AND p.owner_user_id = (select auth.uid())
+    )
+    OR EXISTS (
       SELECT 1 FROM project_members pm
       WHERE pm.project_id = project_members.project_id
         AND pm.user_id = (select auth.uid())
@@ -174,6 +179,11 @@ CREATE POLICY project_members_admin_write ON project_members
   )
   WITH CHECK (
     EXISTS (
+      SELECT 1 FROM projects p
+      WHERE p.id = project_members.project_id
+        AND p.owner_user_id = (select auth.uid())
+    )
+    OR EXISTS (
       SELECT 1 FROM project_members pm
       WHERE pm.project_id = project_members.project_id
         AND pm.user_id = (select auth.uid())
@@ -327,12 +337,22 @@ CREATE POLICY job_dependencies_member_scope ON job_dependencies
       WHERE pm.project_id = job_dependencies.project_id
         AND pm.user_id = (select auth.uid())
     )
+    OR EXISTS (
+      SELECT 1 FROM projects p
+      WHERE p.id = job_dependencies.project_id
+        AND p.owner_user_id = (select auth.uid())
+    )
   )
   WITH CHECK (
     EXISTS (
       SELECT 1 FROM project_members pm
       WHERE pm.project_id = job_dependencies.project_id
         AND pm.user_id = (select auth.uid())
+    )
+    OR EXISTS (
+      SELECT 1 FROM projects p
+      WHERE p.id = job_dependencies.project_id
+        AND p.owner_user_id = (select auth.uid())
     )
   );
 
@@ -344,6 +364,11 @@ CREATE POLICY provider_runs_member_scope ON provider_runs
       WHERE pm.project_id = provider_runs.project_id
         AND pm.user_id = (select auth.uid())
     )
+    OR EXISTS (
+      SELECT 1 FROM projects p
+      WHERE p.id = provider_runs.project_id
+        AND p.owner_user_id = (select auth.uid())
+    )
   );
 
 CREATE POLICY idempotency_member_scope ON idempotency_keys
@@ -354,12 +379,22 @@ CREATE POLICY idempotency_member_scope ON idempotency_keys
       WHERE pm.project_id = idempotency_keys.project_id
         AND pm.user_id = (select auth.uid())
     )
+    OR EXISTS (
+      SELECT 1 FROM projects p
+      WHERE p.id = idempotency_keys.project_id
+        AND p.owner_user_id = (select auth.uid())
+    )
   )
   WITH CHECK (
     EXISTS (
       SELECT 1 FROM project_members pm
       WHERE pm.project_id = idempotency_keys.project_id
         AND pm.user_id = (select auth.uid())
+    )
+    OR EXISTS (
+      SELECT 1 FROM projects p
+      WHERE p.id = idempotency_keys.project_id
+        AND p.owner_user_id = (select auth.uid())
     )
   );
 
