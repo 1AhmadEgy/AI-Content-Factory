@@ -1,0 +1,1179 @@
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/.github/workflows/android-apk.yml AI-Content-Factory-latest/.github/workflows/android-apk.yml
+--- orig/AI-Content-Factory-latest/.github/workflows/android-apk.yml	2026-09-15 21:33:22.000000000 +0000
++++ AI-Content-Factory-latest/.github/workflows/android-apk.yml	2026-09-24 21:12:13.512939458 +0000
+@@ -16,6 +16,12 @@
+ env:
+   APK_NAME: AI-Content-Factory.apk
+   GRADLE_VERSION: "9.3.1"
++  # Must match app/build.gradle.kts: compileSdk { version = release(36) { minorApiLevel = 1 } }.
++  # minorApiLevel = 1 means the project compiles against SDK 36 extension level 1, which is a
++  # distinct installable package ("android-36-ext1") from the base "android-36" platform. If this
++  # ever drifts from build.gradle.kts again, the "Verify Android SDK install" step below fails
++  # the build immediately instead of surfacing a confusing Gradle "SDK location not found" error.
++  ANDROID_PLATFORM: "android-36-ext1"
+   ANDROID_BUILD_TOOLS: "36.0.0"
+ 
+ jobs:
+@@ -51,7 +57,21 @@
+         run: yes | sdkmanager --licenses || true
+ 
+       - name: Install Android SDK 36
+-        run: sdkmanager "platforms;android-36" "build-tools;${ANDROID_BUILD_TOOLS}"
++        run: sdkmanager "platforms;${ANDROID_PLATFORM}" "build-tools;${ANDROID_BUILD_TOOLS}"
++
++      - name: Verify Android SDK install
++        run: |
++          set -euo pipefail
++          PLATFORM_DIR="$ANDROID_HOME/platforms/${ANDROID_PLATFORM}"
++          BUILD_TOOLS_DIR="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}"
++          if [ ! -d "$PLATFORM_DIR" ]; then
++            echo "::error::Expected Android platform '$ANDROID_PLATFORM' (matching app/build.gradle.kts compileSdk) was not installed at $PLATFORM_DIR" >&2
++            exit 1
++          fi
++          if [ ! -d "$BUILD_TOOLS_DIR" ]; then
++            echo "::error::Expected Android build-tools '$ANDROID_BUILD_TOOLS' was not installed at $BUILD_TOOLS_DIR" >&2
++            exit 1
++          fi
+ 
+       - name: Verify Gradle toolchain
+         run: gradle --version
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/.github/workflows/unzip-fixes.yml AI-Content-Factory-latest/.github/workflows/unzip-fixes.yml
+--- orig/AI-Content-Factory-latest/.github/workflows/unzip-fixes.yml	2026-09-15 21:33:22.000000000 +0000
++++ AI-Content-Factory-latest/.github/workflows/unzip-fixes.yml	2026-09-24 21:12:49.002534725 +0000
+@@ -3,7 +3,10 @@
+ on:
+   push:
+     paths:
+-      - 'uploads/*.zip'
++      # Trigger on any upload, not just *.zip: the actual file dropped in uploads/ has been seen
++      # with non-.zip extensions (e.g. ".zip1"). Content is verified by file signature below
++      # instead of trusting the extension.
++      - 'uploads/**'
+   workflow_dispatch:
+ 
+ permissions:
+@@ -19,25 +22,37 @@
+         with:
+           fetch-depth: 0
+ 
+-      - name: Find uploaded ZIP
++      - name: Find uploaded archive
+         id: zip
+         shell: bash
+         run: |
+           set -euo pipefail
+           shopt -s nullglob
+-          zips=(uploads/*.zip)
+-          if [ ${#zips[@]} -eq 0 ]; then
+-            echo 'No ZIP found in uploads/.'
++          candidates=()
++          for f in uploads/*; do
++            [ -f "$f" ] || continue
++            case "$f" in
++              uploads/processed/*) continue ;;
++            esac
++            # A real ZIP starts with a "PK" local-file-header or empty-archive signature,
++            # regardless of what extension it was uploaded with (.zip, .zip1, no extension, ...).
++            sig="$(head -c 4 "$f" | od -An -tx1 | tr -d ' \n')"
++            case "$sig" in
++              504b0304|504b0506|504b0708) candidates+=("$f") ;;
++            esac
++          done
++          if [ ${#candidates[@]} -eq 0 ]; then
++            echo 'No ZIP-signature file found in uploads/.'
+             exit 0
+           fi
+-          if [ ${#zips[@]} -gt 1 ]; then
+-            echo 'More than one ZIP found; refusing to guess.' >&2
+-            printf '%s\n' "${zips[@]}" >&2
++          if [ ${#candidates[@]} -gt 1 ]; then
++            echo 'More than one candidate archive found; refusing to guess.' >&2
++            printf '%s\n' "${candidates[@]}" >&2
+             exit 1
+           fi
+-          echo "path=${zips[0]}" >> "$GITHUB_OUTPUT"
++          echo "path=${candidates[0]}" >> "$GITHUB_OUTPUT"
+ 
+-      - name: Validate and extract ZIP
++      - name: Validate, secure-check and extract ZIP
+         if: steps.zip.outputs.path != ''
+         shell: bash
+         run: |
+@@ -47,6 +62,20 @@
+           trap 'rm -rf "$TMP"' EXIT
+ 
+           unzip -q -t "$ZIP_FILE"
++
++          # Zip-slip protection: reject the whole archive if any entry would escape the
++          # extraction directory (absolute path, "../" traversal, or an unexpected leading '/').
++          while IFS= read -r entry; do
++            case "$entry" in
++              /*|*'../'*|*'..\'*)
++                echo "::error::Refusing to extract unsafe path in archive: $entry" >&2
++                exit 1
++                ;;
++            esac
++          done < <(unzip -Z1 "$ZIP_FILE")
++
++          # Extract to a private temp dir first (never straight into the repo root), so an
++          # aborted/partial extraction can't leave stray files behind in the working tree.
+           unzip -q "$ZIP_FILE" -d "$TMP/raw"
+ 
+           ROOT="$TMP/raw"
+@@ -55,14 +84,19 @@
+             ROOT="${entries[0]}"
+           fi
+ 
+-          find "$ROOT" -type d \( -name __pycache__ -o -name .pytest_cache \) -prune -exec rm -rf {} +
+-          find "$ROOT" -type f \( -name '*.pyc' -o -name 'debug.keystore' \) -delete
++          find "$ROOT" -type d \( -name __pycache__ -o -name .pytest_cache -o -name .mypy_cache -o -name .ruff_cache \) -prune -exec rm -rf {} +
++          find "$ROOT" -type f \( -name '*.pyc' -o -name '*.pyo' -o -name 'debug.keystore' -o -name '*.jks' -o -name '*.keystore' \) -delete
+           rm -rf "$ROOT/.git"
+ 
+           # Merge the supplied project snapshot without deleting repository-only
+-          # automation or metadata. Preserve uploads/ so the ZIP can be removed below.
++          # automation or metadata. Preserve uploads/ so a ZIP nested in the snapshot
++          # can never overwrite/duplicate into its own source directory.
+           rsync -a --exclude 'uploads/' "$ROOT/" ./
+-          rm -f "$ZIP_FILE"
++
++          # Stage the archive's new location now, but don't touch the original file yet:
++          # it must survive until the commit + push below actually succeeds.
++          mkdir -p uploads/processed
++          echo "ARCHIVE_BASENAME=$(basename "$ZIP_FILE")" >> "$GITHUB_ENV"
+ 
+       - name: Commit extracted project
+         if: steps.zip.outputs.path != ''
+@@ -72,6 +106,9 @@
+           git config user.name 'github-actions[bot]'
+           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+           git add -A
++          # Don't commit the archive itself as a source-tree change; it's relocated below only
++          # after this commit succeeds.
++          git reset -- "${{ steps.zip.outputs.path }}" 2>/dev/null || true
+           if git diff --cached --quiet; then
+             echo 'No extracted changes to commit.'
+             exit 0
+@@ -79,6 +116,19 @@
+           git commit -m 'chore: extract uploaded AI-Content-Factory snapshot'
+           git push origin HEAD:main
+ 
++      - name: Archive processed upload
++        if: steps.zip.outputs.path != ''
++        shell: bash
++        run: |
++          set -euo pipefail
++          # Only reached once extraction, merge, commit and push all succeeded above, so a
++          # mid-pipeline failure always leaves the original upload in place for retry/inspection.
++          ZIP_FILE="${{ steps.zip.outputs.path }}"
++          mkdir -p uploads/processed
++          git mv -f "$ZIP_FILE" "uploads/processed/$ARCHIVE_BASENAME"
++          git commit -m "chore: archive processed upload $ARCHIVE_BASENAME"
++          git push origin HEAD:main
++
+       - name: Start Android APK workflow
+         if: steps.zip.outputs.path != ''
+         env:
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/app/src/debug/AndroidManifest.xml AI-Content-Factory-latest/app/src/debug/AndroidManifest.xml
+--- orig/AI-Content-Factory-latest/app/src/debug/AndroidManifest.xml	1970-01-01 00:00:00.000000000 +0000
++++ AI-Content-Factory-latest/app/src/debug/AndroidManifest.xml	2026-09-24 21:11:55.078394021 +0000
+@@ -0,0 +1,11 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!--
++  Debug-only manifest override. Cleartext (HTTP) traffic is only ever needed to reach the
++  10.0.2.2 emulator loopback during local development (see NetworkClient.DEFAULT_EMULATOR_BASE_URL).
++  This file is merged into the app only for debug builds, so a release build never inherits it.
++-->
++<manifest xmlns:android="http://schemas.android.com/apk/res/android">
++
++    <application android:usesCleartextTraffic="true" />
++
++</manifest>
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/app/src/main/AndroidManifest.xml AI-Content-Factory-latest/app/src/main/AndroidManifest.xml
+--- orig/AI-Content-Factory-latest/app/src/main/AndroidManifest.xml	2026-09-15 21:33:22.000000000 +0000
++++ AI-Content-Factory-latest/app/src/main/AndroidManifest.xml	2026-09-24 21:11:58.684706811 +0000
+@@ -9,7 +9,6 @@
+         android:allowBackup="true"
+         android:dataExtractionRules="@xml/data_extraction_rules"
+         android:fullBackupContent="@xml/backup_rules"
+-        android:usesCleartextTraffic="true"
+         android:icon="@mipmap/ic_launcher"
+         android:label="@string/app_name"
+         android:roundIcon="@mipmap/ic_launcher_round"
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/app/src/main/java/com/example/data/local/FactoryDao.kt AI-Content-Factory-latest/app/src/main/java/com/example/data/local/FactoryDao.kt
+--- orig/AI-Content-Factory-latest/app/src/main/java/com/example/data/local/FactoryDao.kt	2026-09-15 21:33:22.000000000 +0000
++++ AI-Content-Factory-latest/app/src/main/java/com/example/data/local/FactoryDao.kt	2026-09-24 19:53:45.386685511 +0000
+@@ -68,6 +68,12 @@
+     @Insert(onConflict = OnConflictStrategy.REPLACE)
+     suspend fun insertJob(job: GenerationJob)
+ 
++    // Room runs a List<> @Insert as a single transaction, unlike calling insertJob() in a loop
++    // (one transaction per call). Use this whenever inserting/updating more than one job at once,
++    // e.g. syncing a full job list from the backend.
++    @Insert(onConflict = OnConflictStrategy.REPLACE)
++    suspend fun insertJobs(jobs: List<GenerationJob>)
++
+     @Update
+     suspend fun updateJob(job: GenerationJob)
+ }
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/app/src/main/java/com/example/data/remote/NetworkClient.kt AI-Content-Factory-latest/app/src/main/java/com/example/data/remote/NetworkClient.kt
+--- orig/AI-Content-Factory-latest/app/src/main/java/com/example/data/remote/NetworkClient.kt	2026-09-15 21:33:22.000000000 +0000
++++ AI-Content-Factory-latest/app/src/main/java/com/example/data/remote/NetworkClient.kt	2026-09-24 21:12:03.756988866 +0000
+@@ -20,6 +20,12 @@
+     private fun normalizedBaseUrl(): String {
+         val configured = BuildConfig.AICF_API_BASE_URL.trim()
+         val baseUrl = if (configured.isBlank() || configured == NOT_CONFIGURED) {
++            // A release build must never silently fall back to the emulator loopback address:
++            // if AICF_API_BASE_URL was forgotten at build time, fail loudly here instead of
++            // shipping an APK that can never reach a real backend.
++            check(BuildConfig.DEBUG) {
++                "AICF_API_BASE_URL must be configured for non-debug builds"
++            }
+             DEFAULT_EMULATOR_BASE_URL
+         } else {
+             configured
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/app/src/main/java/com/example/data/repository/Repository.kt AI-Content-Factory-latest/app/src/main/java/com/example/data/repository/Repository.kt
+--- orig/AI-Content-Factory-latest/app/src/main/java/com/example/data/repository/Repository.kt	2026-09-15 21:33:22.000000000 +0000
++++ AI-Content-Factory-latest/app/src/main/java/com/example/data/repository/Repository.kt	2026-09-24 19:53:48.290659408 +0000
+@@ -135,7 +135,8 @@
+     )
+ 
+     suspend fun syncJobs(projectId: String? = null) {
+-        api.listJobs(projectId = projectId, limit = 200).data.forEach { dao.insertJob(it.toLocalJob()) }
++        // Batch into a single transaction instead of one insert (and one transaction) per job.
++        dao.insertJobs(api.listJobs(projectId = projectId, limit = 200).data.map { it.toLocalJob() })
+     }
+ 
+     suspend fun cancelJob(jobId: String): GenerationJob? = api.cancelJob(jobId).data.toLocalJob().also { dao.insertJob(it) }
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/app/src/main/java/com/example/feature/NeonDashboardScreen.kt AI-Content-Factory-latest/app/src/main/java/com/example/feature/NeonDashboardScreen.kt
+--- orig/AI-Content-Factory-latest/app/src/main/java/com/example/feature/NeonDashboardScreen.kt	2026-09-15 21:33:22.000000000 +0000
++++ AI-Content-Factory-latest/app/src/main/java/com/example/feature/NeonDashboardScreen.kt	2026-09-24 19:53:51.938575915 +0000
+@@ -35,7 +35,7 @@
+             item { NeonHero(projects.size) { showDialog = true } }
+             item { QuickToolsSection() }
+             item { Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) { Column(Modifier.weight(1f)) { Text("مشاريعك", color = TextLight, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold); Text("إدارة مساحة عمل الإنتاج الإبداعي", color = TextMuted, style = MaterialTheme.typography.bodySmall) }; Text("${projects.size} إجماليًا", color = PrimaryCyan, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold) } }
+-            if (projects.isEmpty()) item { NeonEmptyState { showDialog = true } } else items(projects) { project -> NeonProjectCard(project) { onProjectClick(project.id) } }
++            if (projects.isEmpty()) item { NeonEmptyState { showDialog = true } } else items(projects, key = { it.id }) { project -> NeonProjectCard(project) { onProjectClick(project.id) } }
+         }
+         if (showDialog) AddProjectDialog(onDismiss = { showDialog = false }, onAdd = { name, desc -> viewModel.addProject(name, desc); showDialog = false })
+     }
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/app/src/main/java/com/example/feature/NeonProductionScreens.kt AI-Content-Factory-latest/app/src/main/java/com/example/feature/NeonProductionScreens.kt
+--- orig/AI-Content-Factory-latest/app/src/main/java/com/example/feature/NeonProductionScreens.kt	2026-09-15 21:33:22.000000000 +0000
++++ AI-Content-Factory-latest/app/src/main/java/com/example/feature/NeonProductionScreens.kt	2026-09-24 19:54:05.447996053 +0000
+@@ -23,14 +23,14 @@
+ @Composable fun NeonSeriesDetailScreen(seriesId: String, viewModel: FactoryViewModel, onBack: () -> Unit, onEpisodeClick: (String) -> Unit) {
+     val series by viewModel.series.collectAsState(); val episodes by viewModel.episodes.collectAsState(); val current = series.find { it.id == seriesId }; val list = episodes.filter { it.seriesId == seriesId }.sortedBy { it.number }; var showDialog by remember { mutableStateOf(false) }
+     Scaffold(topBar = { ProductionTopBar(current?.title ?: "المسلسل", "مساحة عمل المسلسل", onBack) }, floatingActionButton = { ExtendedFloatingActionButton(onClick = { showDialog = true }, containerColor = PrimaryCyan, contentColor = DarkBlue, icon = { Icon(Icons.Filled.Add, null) }, text = { Text("إضافة حلقة") }) }, containerColor = DarkBlue) { padding ->
+-        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 96.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { item { NeonHeroCard(current?.title ?: "المسلسل", "مساحة إنتاج الحلقات", "${list.size} حلقات") }; items(list) { ep -> Card(Modifier.fillMaxWidth().clickable { onEpisodeClick(ep.id) }, colors = CardDefaults.cardColors(SurfaceBlue), shape = RoundedCornerShape(20.dp)) { Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) { Surface(Modifier.size(52.dp), RoundedCornerShape(16.dp), color = DarkBlue) { Box(contentAlignment = Alignment.Center) { Text(ep.number.toString(), color = PrimaryCyan, style = MaterialTheme.typography.titleLarge) } }; Spacer(Modifier.width(14.dp)); Column(Modifier.weight(1f)) { Text(ep.title, color = TextLight, style = MaterialTheme.typography.titleMedium); Text("الحلقة ${ep.number} · ${if (ep.status == "DONE") "مكتملة" else ep.status}", color = TextMuted, style = MaterialTheme.typography.bodySmall) }; Icon(Icons.Filled.PlayArrow, null, tint = PrimaryCyan) } } } }
++        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 96.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { item { NeonHeroCard(current?.title ?: "المسلسل", "مساحة إنتاج الحلقات", "${list.size} حلقات") }; items(list, key = { it.id }) { ep -> Card(Modifier.fillMaxWidth().clickable { onEpisodeClick(ep.id) }, colors = CardDefaults.cardColors(SurfaceBlue), shape = RoundedCornerShape(20.dp)) { Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) { Surface(Modifier.size(52.dp), RoundedCornerShape(16.dp), color = DarkBlue) { Box(contentAlignment = Alignment.Center) { Text(ep.number.toString(), color = PrimaryCyan, style = MaterialTheme.typography.titleLarge) } }; Spacer(Modifier.width(14.dp)); Column(Modifier.weight(1f)) { Text(ep.title, color = TextLight, style = MaterialTheme.typography.titleMedium); Text("الحلقة ${ep.number} · ${if (ep.status == "DONE") "مكتملة" else ep.status}", color = TextMuted, style = MaterialTheme.typography.bodySmall) }; Icon(Icons.Filled.PlayArrow, null, tint = PrimaryCyan) } } } }
+         if (showDialog) AddProjectDialog({ showDialog = false }, { name, _ -> viewModel.addEpisode(seriesId, (list.maxOfOrNull { it.number } ?: 0) + 1, name); showDialog = false })
+     }
+ }
+ 
+ @Composable fun NeonEpisodeDetailScreen(episodeId: String, viewModel: FactoryViewModel, onBack: () -> Unit) {
+     val episodes by viewModel.episodes.collectAsState(); val scenes by viewModel.scenes.collectAsState(); val jobs by viewModel.jobs.collectAsState(); val episode = episodes.find { it.id == episodeId }; val list = scenes.filter { it.episodeId == episodeId }.sortedBy { it.number }
+-    Scaffold(topBar = { ProductionTopBar(episode?.title ?: "الحلقة", "إنتاج المشاهد", onBack) }, containerColor = DarkBlue) { padding -> LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { item { NeonHeroCard(episode?.title ?: "الحلقة", "إنشاء ومتابعة كل مشهد", "${list.size} مشاهد") }; items(list) { scene -> val job = jobs.find { it.targetId == scene.id }; Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(SurfaceBlue), shape = RoundedCornerShape(20.dp)) { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Row(verticalAlignment = Alignment.CenterVertically) { Text("المشهد ${scene.number}", color = PrimaryCyan, style = MaterialTheme.typography.labelLarge); Spacer(Modifier.weight(1f)); Text(if (scene.status == "DONE") "مكتمل" else scene.status, color = if (scene.status == "DONE") SuccessGreen else WarningOrange) }; Text(scene.description, color = TextLight, style = MaterialTheme.typography.titleMedium); Text("الموقع: ${scene.location}", color = TextMuted); Text("المشاعر: ${scene.emotion}", color = TextMuted); job?.let { Text("المهمة: ${it.status} · ${it.progress}%", color = PrimaryCyan) }; Button(onClick = { viewModel.generateScene(scene.id) }, colors = ButtonDefaults.buttonColors(containerColor = PrimaryCyan, contentColor = DarkBlue), shape = RoundedCornerShape(14.dp)) { Icon(Icons.Filled.PlayArrow, null); Spacer(Modifier.width(6.dp)); Text("إنشاء", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) } } } } } }
++    Scaffold(topBar = { ProductionTopBar(episode?.title ?: "الحلقة", "إنتاج المشاهد", onBack) }, containerColor = DarkBlue) { padding -> LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { item { NeonHeroCard(episode?.title ?: "الحلقة", "إنشاء ومتابعة كل مشهد", "${list.size} مشاهد") }; items(list, key = { it.id }) { scene -> val job = jobs.find { it.targetId == scene.id }; Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(SurfaceBlue), shape = RoundedCornerShape(20.dp)) { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Row(verticalAlignment = Alignment.CenterVertically) { Text("المشهد ${scene.number}", color = PrimaryCyan, style = MaterialTheme.typography.labelLarge); Spacer(Modifier.weight(1f)); Text(if (scene.status == "DONE") "مكتمل" else scene.status, color = if (scene.status == "DONE") SuccessGreen else WarningOrange) }; Text(scene.description, color = TextLight, style = MaterialTheme.typography.titleMedium); Text("الموقع: ${scene.location}", color = TextMuted); Text("المشاعر: ${scene.emotion}", color = TextMuted); job?.let { Text("المهمة: ${it.status} · ${it.progress}%", color = PrimaryCyan) }; Button(onClick = { viewModel.generateScene(scene.id) }, colors = ButtonDefaults.buttonColors(containerColor = PrimaryCyan, contentColor = DarkBlue), shape = RoundedCornerShape(14.dp)) { Icon(Icons.Filled.PlayArrow, null); Spacer(Modifier.width(6.dp)); Text("إنشاء", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) } } } } } }
+ }
+ 
+ @Composable private fun NeonHeroCard(title: String, subtitle: String, metric: String) { Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(SurfaceBlue), shape = RoundedCornerShape(26.dp)) { Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Row(verticalAlignment = Alignment.CenterVertically) { Surface(Modifier.size(44.dp), RoundedCornerShape(14.dp), color = PrimaryCyan) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Filled.Movie, null, tint = DarkBlue) } }; Spacer(Modifier.width(12.dp)); Column { Text(title, color = TextLight, style = MaterialTheme.typography.titleLarge); Text(subtitle, color = TextMuted, style = MaterialTheme.typography.bodySmall) } }; HorizontalDivider(color = TextMuted.copy(alpha = .12f)); Text(metric, color = SecondaryTeal, style = MaterialTheme.typography.labelLarge) } } }
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/app/src/main/java/com/example/feature/Screens.kt AI-Content-Factory-latest/app/src/main/java/com/example/feature/Screens.kt
+--- orig/AI-Content-Factory-latest/app/src/main/java/com/example/feature/Screens.kt	2026-09-15 21:33:22.000000000 +0000
++++ AI-Content-Factory-latest/app/src/main/java/com/example/feature/Screens.kt	2026-09-24 19:54:01.286185850 +0000
+@@ -64,7 +64,7 @@
+             if (projects.isEmpty()) {
+                 item { EmptyProjectsCard(onCreate = { showDialog = true }) }
+             } else {
+-                items(projects) { project -> ProjectCard(project, onClick = { onProjectClick(project.id) }) }
++                items(projects, key = { it.id }) { project -> ProjectCard(project, onClick = { onProjectClick(project.id) }) }
+             }
+         }
+         if (showDialog) {
+@@ -200,7 +200,7 @@
+     ) { padding ->
+         LazyColumn(modifier = Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+             item { Text("المسلسلات", style = MaterialTheme.typography.titleMedium, color = PrimaryCyan, modifier = Modifier.padding(bottom = 8.dp)) }
+-            items(seriesList) { series ->
++            items(seriesList, key = { it.id }) { series ->
+                 Card(modifier = Modifier.fillMaxWidth().clickable { onSeriesClick(series.id) }, colors = CardDefaults.cardColors(containerColor = SurfaceBlue)) {
+                     Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                         Icon(Icons.Filled.Movie, contentDescription = null, tint = SecondaryTeal)
+@@ -224,7 +224,7 @@
+     var showDialog by remember { mutableStateOf(false) }
+     Scaffold(topBar = { TopAppBar(title = { Text(series?.title ?: "المسلسل", color = TextLight) }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "رجوع", tint = TextLight) } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkBlue)) }, floatingActionButton = { FloatingActionButton(onClick = { showDialog = true }, containerColor = PrimaryCyan) { Icon(Icons.Filled.Add, "إضافة حلقة", tint = DarkBlue) } }, containerColor = DarkBlue) { padding ->
+         LazyColumn(modifier = Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+-            items(episodes.sortedBy { it.number }) { ep ->
++            items(episodes.sortedBy { it.number }, key = { it.id }) { ep ->
+                 Card(modifier = Modifier.fillMaxWidth().clickable { onEpisodeClick(ep.id) }, colors = CardDefaults.cardColors(containerColor = SurfaceBlue)) { Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) { Text(ep.number.toString(), style = MaterialTheme.typography.headlineSmall, color = PrimaryCyan); Spacer(modifier = Modifier.width(16.dp)); Column { Text(ep.title, style = MaterialTheme.typography.titleMedium, color = TextLight); Text("الحالة: ${ep.status}", style = MaterialTheme.typography.bodySmall, color = TextMuted) } } }
+             }
+         }
+@@ -240,7 +240,7 @@
+     Scaffold(topBar = { TopAppBar(title = { Text(episode?.title ?: "الحلقة", color = TextLight) }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "رجوع", tint = TextLight) } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkBlue)) }, containerColor = DarkBlue) { padding ->
+         LazyColumn(modifier = Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+             item { Text("المشاهد", style = MaterialTheme.typography.titleMedium, color = PrimaryCyan) }
+-            items(scenes) { scene ->
++            items(scenes, key = { it.id }) { scene ->
+                 val job = allJobs.find { it.targetId == scene.id }
+                 Card(colors = CardDefaults.cardColors(containerColor = SurfaceBlue), modifier = Modifier.fillMaxWidth()) { Column(modifier = Modifier.padding(14.dp)) { Row(verticalAlignment = Alignment.CenterVertically) { Text("المشهد ${scene.number}", style = MaterialTheme.typography.titleMedium, color = TextLight); Spacer(Modifier.weight(1f)); Text(if (scene.status == "DONE") "مكتمل" else scene.status, color = if (scene.status == "DONE") SuccessGreen else WarningOrange) }; Spacer(Modifier.height(6.dp)); Text(scene.description, color = TextMuted); Text("الموقع: ${scene.location}", color = TextMuted); Text("المشاعر: ${scene.emotion}", color = TextMuted); job?.let { Text("المهمة: ${it.status} · ${it.progress}%", color = PrimaryCyan) }; Spacer(Modifier.height(8.dp)); Button(onClick = { viewModel.generateScene(scene.id) }) { Icon(Icons.Filled.PlayArrow, contentDescription = null); Spacer(Modifier.width(6.dp)); Text("إنشاء") } } }
+             }
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/app/src/main/java/com/example/feature/SeriesControlScreen.kt AI-Content-Factory-latest/app/src/main/java/com/example/feature/SeriesControlScreen.kt
+--- orig/AI-Content-Factory-latest/app/src/main/java/com/example/feature/SeriesControlScreen.kt	2026-09-15 21:33:22.000000000 +0000
++++ AI-Content-Factory-latest/app/src/main/java/com/example/feature/SeriesControlScreen.kt	2026-09-24 19:54:12.738393108 +0000
+@@ -230,7 +230,10 @@
+             item { OutlinedTextField(value = threadText, onValueChange = { threadText = it }, label = { Text("إضافة خيط قصة مفتوح") }, modifier = Modifier.fillMaxWidth()) }
+             item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button(onClick = { saveContext() }, Modifier.weight(1f)) { Text("حفظ") }; OutlinedButton(onClick = { refresh() }, Modifier.weight(1f)) { Text("تحديث") } } }
+             item { Text("السجل • ${snapshots.size}", color = PrimaryCyan, style = MaterialTheme.typography.titleLarge) }
+-            items(snapshots.take(50)) { snapshot ->
++            items(
++                snapshots.take(50),
++                key = { snapshot -> "${snapshot["episodeId"]}:${snapshot["episodeNumber"]}" },
++            ) { snapshot ->
+                 Card(colors = neonCard, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                     Column(Modifier.padding(14.dp)) {
+                         Text("الحلقة ${snapshot["episodeNumber"] ?: "?"}", color = TextLight)
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/backend/app/api/jobs.py AI-Content-Factory-latest/backend/app/api/jobs.py
+--- orig/AI-Content-Factory-latest/backend/app/api/jobs.py	2026-09-15 21:33:22.000000000 +0000
++++ AI-Content-Factory-latest/backend/app/api/jobs.py	2026-09-24 19:53:41.190602238 +0000
+@@ -160,13 +160,17 @@
+ 
+     @router.get("/{job_id}/events/stream")
+     async def stream_job_events(job_id: str, request: Request, last_event_id: str | None = Header(default=None, alias="Last-Event-ID")):
+-        if repository.get(job_id) is None: raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
++        if await asyncio.to_thread(repository.get, job_id) is None: raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
+         if event_repository is None: raise HTTPException(status_code=503, detail="EVENTS_NOT_CONFIGURED")
+         async def generate():
+             cursor=last_event_id; idle=0
+             while idle < 150:
+                 if await request.is_disconnected(): break
+-                events_now=event_repository.list_for_job_after(job_id,cursor,100)
++                # list_for_job_after() is a blocking sqlite3 call. Running it directly on the
++                # event loop would stall every other request (including other open SSE streams)
++                # for its duration, once per client every poll interval. Offload it to a worker
++                # thread so the event loop stays responsive under concurrent streams.
++                events_now = await asyncio.to_thread(event_repository.list_for_job_after, job_id, cursor, 100)
+                 if events_now:
+                     for event in events_now:
+                         payload=json.dumps(_serialize_event(event),ensure_ascii=False,separators=(",",":"))
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/backend/app/core/config.py AI-Content-Factory-latest/backend/app/core/config.py
+--- orig/AI-Content-Factory-latest/backend/app/core/config.py	1970-01-01 00:00:00.000000000 +0000
++++ AI-Content-Factory-latest/backend/app/core/config.py	2026-09-24 21:17:51.289498190 +0000
+@@ -0,0 +1,119 @@
++"""Centralized, typed configuration snapshot.
++
++V2 foundation module (see V2 master plan, Phase 1 / "تثبيت الأساس").
++
++Today every ``AICF_*`` environment variable is read ad hoc, with
++``os.getenv("AICF_...", default)`` repeated at each call site (queue
++heartbeat interval, provider cache TTL, scheduler interval, asset root,
++database path, ...). That works, but it means the full list of
++configuration knobs is not documented anywhere in one place, and a typo in
++an env var name fails silently by falling back to the default instead of
++raising at startup.
++
++This module does **not** replace any of those existing ``os.getenv(...)``
++call sites yet — doing that is a mechanical but wide-reaching change
++across ~15 files, and the only safe way to do it is one file at a time
++with the test suite green after each, which this environment cannot run
++(no network access to install fastapi/pytest here). Introducing
++``Settings`` additively now means:
++
++- New V2 code has one typed object to depend on instead of adding a 30th
++  ad hoc ``os.getenv`` call site.
++- The full set of recognized environment variables is documented in one
++  place (this file), which the existing scattered call sites are not.
++- Migrating an existing call site later is a small, independently
++  reviewable diff: replace ``os.getenv("AICF_X", "default")`` with
++  ``get_settings().x`` in that one file, run that file's tests, move on.
++
++Usage::
++
++    from app.core.config import get_settings
++    settings = get_settings()
++    settings.provider_cache_ttl_seconds
++"""
++
++from __future__ import annotations
++
++import os
++from dataclasses import dataclass, field
++from functools import lru_cache
++
++
++def _bool_env(name: str, default: bool) -> bool:
++    raw = os.getenv(name)
++    if raw is None:
++        return default
++    return raw.strip().lower() in {"1", "true", "yes", "on"}
++
++
++def _float_env(name: str, default: float) -> float:
++    raw = os.getenv(name)
++    return float(raw) if raw is not None else default
++
++
++def _int_env(name: str, default: int) -> int:
++    raw = os.getenv(name)
++    return int(raw) if raw is not None else default
++
++
++@dataclass(frozen=True, slots=True)
++class Settings:
++    # Persistence
++    database_path: str = field(default_factory=lambda: os.getenv("AICF_DATABASE_PATH", "./data/factory.db"))
++    postgres_dsn: str = field(default_factory=lambda: os.getenv("AICF_POSTGRES_DSN", ""))
++    asset_root: str = field(default_factory=lambda: os.getenv("AICF_ASSET_ROOT", "./data/assets"))
++
++    # Auth
++    api_key: str = field(default_factory=lambda: os.getenv("AICF_API_KEY", "").strip())
++    test_mode: bool = field(default_factory=lambda: _bool_env("AICF_TEST_MODE", False))
++
++    # Worker / queue
++    worker_id: str = field(default_factory=lambda: os.getenv("AICF_WORKER_ID", "auto"))
++    worker_autostart: bool = field(default_factory=lambda: _bool_env("AICF_WORKER_AUTOSTART", False))
++    lease_heartbeat_seconds: float = field(default_factory=lambda: _float_env("AICF_LEASE_HEARTBEAT_SECONDS", 5.0))
++    progress_persist_seconds: float = field(default_factory=lambda: _float_env("AICF_PROGRESS_PERSIST_SECONDS", 0.5))
++
++    # Scheduler
++    scheduler_autostart: bool = field(default_factory=lambda: _bool_env("AICF_SCHEDULER_AUTOSTART", True))
++    scheduler_interval_seconds: float = field(default_factory=lambda: _float_env("AICF_SCHEDULER_INTERVAL_SECONDS", 5.0))
++
++    # Providers
++    openai_api_key: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", "").strip())
++    openai_base_url: str = field(default_factory=lambda: os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"))
++    text_model: str = field(default_factory=lambda: os.getenv("AICF_TEXT_MODEL", "gpt-5.6-luna"))
++    image_model: str = field(default_factory=lambda: os.getenv("AICF_IMAGE_MODEL", "gpt-image-2"))
++    tts_model: str = field(default_factory=lambda: os.getenv("AICF_TTS_MODEL", "gpt-4o-mini-tts"))
++    provider_timeout_seconds: float = field(default_factory=lambda: _float_env("AICF_PROVIDER_TIMEOUT_SECONDS", 120.0))
++
++    # Circuit breaker
++    circuit_fail_threshold: int = field(default_factory=lambda: _int_env("AICF_CIRCUIT_FAIL_THRESHOLD", 5))
++    circuit_success_threshold: int = field(default_factory=lambda: _int_env("AICF_CIRCUIT_SUCCESS_THRESHOLD", 2))
++    circuit_open_duration_seconds: float = field(default_factory=lambda: _float_env("AICF_CIRCUIT_OPEN_DURATION_SECONDS", 60.0))
++    circuit_half_open_max_calls: int = field(default_factory=lambda: _int_env("AICF_CIRCUIT_HALF_OPEN_MAX_CALLS", 2))
++
++    # Provider cache
++    provider_cache_ttl_seconds: int = field(default_factory=lambda: _int_env("AICF_PROVIDER_CACHE_TTL_SECONDS", 86400))
++    provider_cache_max_bytes: int = field(default_factory=lambda: _int_env("AICF_PROVIDER_CACHE_MAX_BYTES", 20 * 1024 * 1024))
++    provider_cache_lock_seconds: int = field(default_factory=lambda: _int_env("AICF_PROVIDER_CACHE_LOCK_SECONDS", 30))
++    provider_cache_wait_seconds: float = field(default_factory=lambda: _float_env("AICF_PROVIDER_CACHE_WAIT_SECONDS", 2.0))
++
++    # Rendering
++    ffmpeg_bin: str = field(default_factory=lambda: os.getenv("AICF_FFMPEG_BIN", "ffmpeg"))
++    ffprobe_bin: str = field(default_factory=lambda: os.getenv("AICF_FFPROBE_BIN", "ffprobe"))
++
++    # Library seeding
++    seed_default_library: bool = field(default_factory=lambda: _bool_env("AICF_SEED_DEFAULT_LIBRARY", True))
++    seed_libya_library: bool = field(default_factory=lambda: _bool_env("AICF_SEED_LIBYA_LIBRARY", True))
++    seed_country_libraries: bool = field(default_factory=lambda: _bool_env("AICF_SEED_COUNTRY_LIBRARIES", True))
++
++
++@lru_cache(maxsize=1)
++def get_settings() -> Settings:
++    """Return the process-wide settings snapshot, read once and cached.
++
++    Tests that need a different environment should call
++    ``get_settings.cache_clear()`` after changing ``os.environ`` (standard
++    ``lru_cache`` pattern) rather than constructing ``Settings()`` directly,
++    so production code always goes through one shared instance.
++    """
++    return Settings()
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/backend/app/core/errors.py AI-Content-Factory-latest/backend/app/core/errors.py
+--- orig/AI-Content-Factory-latest/backend/app/core/errors.py	1970-01-01 00:00:00.000000000 +0000
++++ AI-Content-Factory-latest/backend/app/core/errors.py	2026-09-24 21:17:25.473496656 +0000
+@@ -0,0 +1,105 @@
++"""Canonical application error hierarchy.
++
++V2 foundation module (see V2 master plan, Phase 1 / "تثبيت الأساس").
++
++``main.py`` already has a consistent JSON error envelope::
++
++    {"error": {"code": ..., "message": ..., "details": {...}, "requestId": ...}}
++
++but that shape is built ad hoc, inline, at each raise site (see the
++handlers in ``main.py`` and the scattered ``HTTPException(status_code=...,
++detail="SOME_CODE")`` calls across ``backend/app/api/v1/*``). This module
++gives new code a single typed exception to raise instead, so the envelope
++is built once, in one place.
++
++This is intentionally *not* wired into ``main.py`` or the existing routers
++in this pass: swapping every existing ``HTTPException`` call site for
++``AppError`` subclasses touches dozens of files at once, and the only way
++to be sure that doesn't silently change a response code or a test
++expectation is to run the full backend test suite after each file — which
++this environment cannot do (no network to install fastapi/pytest). Until
++that migration is done incrementally with tests passing at each step, new
++V2 code can raise these and they will still be handled by FastAPI's
++default exception handling; only ``main.py``'s registered handler for
++``AppError`` (once added) needs to translate it into the existing envelope.
++"""
++
++from __future__ import annotations
++
++from typing import Any
++
++
++class AppError(Exception):
++    """Base class for all domain/application errors with a stable error code.
++
++    Subclass per failure family (see below) rather than raising ``AppError``
++    directly, so callers can catch a specific kind without string-matching
++    ``code``.
++    """
++
++    code: str = "APPLICATION_ERROR"
++    status_code: int = 500
++
++    def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
++        super().__init__(message)
++        self.message = message
++        self.details = details or {}
++
++    def to_envelope(self, request_id: str) -> dict[str, Any]:
++        return {
++            "error": {
++                "code": self.code,
++                "message": self.message,
++                "details": self.details,
++                "requestId": request_id,
++            }
++        }
++
++
++class NotFoundError(AppError):
++    """The requested resource does not exist (or is not visible to the caller)."""
++
++    code = "NOT_FOUND"
++    status_code = 404
++
++
++class ValidationError(AppError):
++    """The request was well-formed but failed domain/business validation."""
++
++    code = "VALIDATION_ERROR"
++    status_code = 422
++
++
++class ConflictError(AppError):
++    """The request conflicts with the resource's current state (e.g. a terminal job)."""
++
++    code = "CONFLICT"
++    status_code = 409
++
++
++class UnauthorizedError(AppError):
++    """No valid credentials were presented."""
++
++    code = "UNAUTHORIZED"
++    status_code = 401
++
++
++class ForbiddenError(AppError):
++    """Valid credentials were presented, but they don't grant access to this resource.
++
++    Distinct from :class:`UnauthorizedError` on purpose: once project/user
++    ownership checks exist (V2 master plan, "Project Isolation"), a caller
++    who is authenticated but does not own the resource must get 403, not a
++    404 that leaks whether the resource exists, nor a 401 that wrongly
++    suggests their credentials themselves are invalid.
++    """
++
++    code = "FORBIDDEN"
++    status_code = 403
++
++
++class DependencyUnavailableError(AppError):
++    """A required external dependency (provider, ffmpeg, storage) is unavailable."""
++
++    code = "DEPENDENCY_UNAVAILABLE"
++    status_code = 503
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/backend/app/core/ids.py AI-Content-Factory-latest/backend/app/core/ids.py
+--- orig/AI-Content-Factory-latest/backend/app/core/ids.py	1970-01-01 00:00:00.000000000 +0000
++++ AI-Content-Factory-latest/backend/app/core/ids.py	2026-09-24 21:17:00.613495178 +0000
+@@ -0,0 +1,64 @@
++"""Canonical ID generation.
++
++V2 foundation module (see V2 master plan, Phase 1 / "تثبيت الأساس").
++
++The existing codebase already generates IDs several different ways
++(``uuid.uuid4().hex`` in ``provider_cache.py``, ``str(uuid4())`` elsewhere,
++Kotlin ``UUID.randomUUID().toString()`` on the Android side). This module
++does not change any of those existing call sites — that would touch many
++files at once with no way to run the test suite here to confirm nothing
++broke. Instead it gives *new* V2 entities (organizations, users, project
++memberships, job DAG nodes, ...) one canonical, sortable ID scheme to start
++from, so they don't add a fourth convention on top of the existing three.
++
++``new_id()`` returns a lowercase, hyphenated UUID4 — identical in shape to
++``str(uuid.uuid4())`` — so it is a drop-in match for existing TEXT/UUID
++primary key columns (SQLite ``TEXT`` and PostgreSQL ``uuid``/``text``).
++
++``new_sortable_id()`` prefixes that UUID with a millisecond UTC timestamp,
++so IDs generated later sort after IDs generated earlier — useful for
++job-DAG nodes and event logs where insertion order matters and you want
++that order without a separate ``created_at`` index lookup.
++"""
++
++from __future__ import annotations
++
++import time
++import uuid
++
++__all__ = ["new_id", "new_sortable_id", "is_valid_id"]
++
++
++def new_id() -> str:
++    """Return a new random UUID4 string, e.g. ``"3f1c9e6a-..."``."""
++    return str(uuid.uuid4())
++
++
++def new_sortable_id(prefix: str = "") -> str:
++    """Return a lexicographically time-sortable ID.
++
++    Format: ``[<prefix>_]<13-digit-millis><uuid4-hex>``. Safe as a TEXT
++    primary key in both SQLite and PostgreSQL.
++    """
++    millis = f"{int(time.time() * 1000):013d}"
++    raw = f"{millis}{uuid.uuid4().hex}"
++    return f"{prefix}_{raw}" if prefix else raw
++
++
++def is_valid_id(value: str) -> bool:
++    """Best-effort validity check for an ID produced by this module.
++
++    Accepts both plain UUID4 strings (:func:`new_id`) and sortable IDs
++    (:func:`new_sortable_id`). Intended for defensive validation of IDs
++    coming from an external client (e.g. a path parameter) before they are
++    used in a query — not a cryptographic or uniqueness guarantee.
++    """
++    if not value or len(value) > 128:
++        return False
++    try:
++        uuid.UUID(value)
++        return True
++    except ValueError:
++        pass
++    body = value.rsplit("_", 1)[-1]
++    return len(body) >= 13 + 32 and body[:13].isdigit()
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/backend/app/core/timestamps.py AI-Content-Factory-latest/backend/app/core/timestamps.py
+--- orig/AI-Content-Factory-latest/backend/app/core/timestamps.py	1970-01-01 00:00:00.000000000 +0000
++++ AI-Content-Factory-latest/backend/app/core/timestamps.py	2026-09-24 21:16:47.741494413 +0000
+@@ -0,0 +1,36 @@
++"""Canonical timestamp helpers.
++
++V2 foundation module (see REPAIR_ROADMAP.md / V2 master plan, Phase 1).
++
++Every persisted timestamp in this codebase should go through these three
++functions so there is exactly one definition of "now", one serialization
++format, and one parser. Existing call sites (``domain.jobs.utc_now`` and the
++private ``_dt`` / ``_parse_dt`` helpers in ``infrastructure/sqlite.py``) are
++left untouched for this pass — this module re-exports the same behaviour
++under ``app.core`` so *new* code has one obvious place to import from,
++without changing any already-tested call site in the same commit.
++"""
++
++from __future__ import annotations
++
++from datetime import datetime, timezone
++
++__all__ = ["utc_now", "to_iso", "from_iso"]
++
++
++def utc_now() -> datetime:
++    """Return the current time as a timezone-aware UTC datetime.
++
++    Equivalent to ``app.domain.jobs.utc_now`` — kept in sync deliberately.
++    """
++    return datetime.now(timezone.utc)
++
++
++def to_iso(value: datetime | None) -> str | None:
++    """Serialize a datetime the same way ``infrastructure/sqlite.py`` does."""
++    return value.isoformat() if value is not None else None
++
++
++def from_iso(value: str | None) -> datetime | None:
++    """Parse a timestamp previously produced by :func:`to_iso`."""
++    return datetime.fromisoformat(value) if value is not None else None
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/backend/app/maintenance/startup_checks.py AI-Content-Factory-latest/backend/app/maintenance/startup_checks.py
+--- orig/AI-Content-Factory-latest/backend/app/maintenance/startup_checks.py	1970-01-01 00:00:00.000000000 +0000
++++ AI-Content-Factory-latest/backend/app/maintenance/startup_checks.py	2026-09-24 21:18:25.573500228 +0000
+@@ -0,0 +1,104 @@
++"""Startup health checks.
++
++V2 foundation module (see V2 master plan, Phase 1 / "تثبيت الأساس").
++
++Today a missing dependency (ffmpeg not on PATH, an unwritable database
++directory, ``AICF_API_KEY`` unset outside test mode) surfaces later, as a
++confusing failure on the first request or the first job execution — e.g.
++``FfmpegRenderer.health_check()`` already exists and is called from the
++``/api/v1/system`` router, but nothing calls it *before* the server starts
++accepting traffic.
++
++``run_startup_checks()`` collects the same kind of checks into one report
++so an operator (or a CI job) can call it once, up front, and get every
++misconfiguration at once instead of one-at-a-time. It intentionally
++returns a report rather than raising or calling ``sys.exit`` itself: the
++existing offline/mock-first design (see REPAIR_ROADMAP.md) means a missing
++ffmpeg binary, for instance, should not always be fatal — that decision
++belongs to the entrypoint (``main.py``) or a CI step, not to this module.
++"""
++
++from __future__ import annotations
++
++import shutil
++import subprocess
++from dataclasses import dataclass, field
++from pathlib import Path
++
++from ..core.config import Settings
++
++
++@dataclass(frozen=True, slots=True)
++class CheckResult:
++    name: str
++    ok: bool
++    detail: str = ""
++
++
++@dataclass(frozen=True, slots=True)
++class StartupReport:
++    checks: list[CheckResult] = field(default_factory=list)
++
++    @property
++    def ok(self) -> bool:
++        return all(check.ok for check in self.checks)
++
++    @property
++    def failures(self) -> list[CheckResult]:
++        return [check for check in self.checks if not check.ok]
++
++
++def _check_database_writable(settings: Settings) -> CheckResult:
++    if settings.database_path == ":memory:":
++        return CheckResult("database_writable", True, "in-memory database")
++    path = Path(settings.database_path)
++    try:
++        path.parent.mkdir(parents=True, exist_ok=True)
++        probe = path.parent / ".aicf_startup_write_check"
++        probe.write_text("ok")
++        probe.unlink()
++        return CheckResult("database_writable", True, str(path.parent))
++    except OSError as exc:
++        return CheckResult("database_writable", False, f"{path.parent}: {exc}")
++
++
++def _check_asset_root_writable(settings: Settings) -> CheckResult:
++    path = Path(settings.asset_root)
++    try:
++        path.mkdir(parents=True, exist_ok=True)
++        probe = path / ".aicf_startup_write_check"
++        probe.write_text("ok")
++        probe.unlink()
++        return CheckResult("asset_root_writable", True, str(path))
++    except OSError as exc:
++        return CheckResult("asset_root_writable", False, f"{path}: {exc}")
++
++
++def _check_binary_available(name: str, binary: str) -> CheckResult:
++    resolved = shutil.which(binary)
++    if resolved is None:
++        return CheckResult(name, False, f"'{binary}' not found on PATH")
++    try:
++        completed = subprocess.run([binary, "-version"], capture_output=True, text=True, timeout=10)
++    except (OSError, subprocess.TimeoutExpired) as exc:
++        return CheckResult(name, False, f"'{binary}' found at {resolved} but did not respond: {exc}")
++    return CheckResult(name, completed.returncode == 0, resolved)
++
++
++def _check_auth_configured(settings: Settings) -> CheckResult:
++    if settings.test_mode:
++        return CheckResult("auth_configured", True, "AICF_TEST_MODE enabled; auth bypass expected")
++    if settings.api_key:
++        return CheckResult("auth_configured", True, "AICF_API_KEY set")
++    return CheckResult("auth_configured", False, "AICF_API_KEY is empty and AICF_TEST_MODE is not enabled")
++
++
++def run_startup_checks(settings: Settings) -> StartupReport:
++    checks = [
++        _check_database_writable(settings),
++        _check_asset_root_writable(settings),
++        _check_binary_available("ffmpeg_available", settings.ffmpeg_bin),
++        _check_binary_available("ffprobe_available", settings.ffprobe_bin),
++        _check_auth_configured(settings),
++    ]
++    return StartupReport(checks=checks)
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/backend/app/observability/logging.py AI-Content-Factory-latest/backend/app/observability/logging.py
+--- orig/AI-Content-Factory-latest/backend/app/observability/logging.py	1970-01-01 00:00:00.000000000 +0000
++++ AI-Content-Factory-latest/backend/app/observability/logging.py	2026-09-24 21:18:10.265499318 +0000
+@@ -0,0 +1,64 @@
++"""Structured (JSON) logging setup.
++
++V2 foundation module (see STATUS_AUDIT.md, immediate repair order item 5).
++
++Existing code already uses the standard ``logging`` module (e.g.
++``backend/app/orchestrator/job_executor.py``); this module does not
++replace those ``logger = logging.getLogger(__name__)`` call sites — it
++gives ``main.py`` (or a future entrypoint) one function to call once at
++startup to make every one of those existing loggers emit structured JSON
++lines with the correlation IDs from
++:mod:`app.observability.request_context` attached automatically, with no
++change needed at any individual ``logger.info(...)`` call site.
++
++Not wired into ``main.py`` in this pass: changing the process-wide logging
++configuration is exactly the kind of change that is safe in isolation but
++risky to make blind, since it can affect what existing tests assert about
++captured log output (``caplog``). It's ready to adopt with a one-line
++``setup_logging()`` call once the test suite can confirm nothing depends on
++the current plain-text format.
++"""
++
++from __future__ import annotations
++
++import json
++import logging
++import time
++from typing import Any
++
++from .request_context import current_job_id, current_request_id
++
++
++class JsonFormatter(logging.Formatter):
++    def format(self, record: logging.LogRecord) -> str:
++        payload: dict[str, Any] = {
++            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(record.created)),
++            "level": record.levelname,
++            "logger": record.name,
++            "message": record.getMessage(),
++        }
++        request_id = current_request_id()
++        job_id = current_job_id()
++        if request_id is not None:
++            payload["requestId"] = request_id
++        if job_id is not None:
++            payload["jobId"] = job_id
++        if record.exc_info:
++            payload["exception"] = self.formatException(record.exc_info)
++        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
++
++
++def setup_logging(level: int = logging.INFO) -> None:
++    """Configure the root logger to emit one JSON object per line.
++
++    Idempotent: safe to call more than once (e.g. once from ``main.py`` and
++    once from a worker entrypoint) — existing handlers on the root logger
++    are replaced rather than duplicated.
++    """
++    root = logging.getLogger()
++    root.setLevel(level)
++    for handler in list(root.handlers):
++        root.removeHandler(handler)
++    handler = logging.StreamHandler()
++    handler.setFormatter(JsonFormatter())
++    root.addHandler(handler)
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/backend/app/observability/request_context.py AI-Content-Factory-latest/backend/app/observability/request_context.py
+--- orig/AI-Content-Factory-latest/backend/app/observability/request_context.py	1970-01-01 00:00:00.000000000 +0000
++++ AI-Content-Factory-latest/backend/app/observability/request_context.py	2026-09-24 21:18:01.093498773 +0000
+@@ -0,0 +1,60 @@
++"""Request/job correlation ID propagation.
++
++V2 foundation module (see STATUS_AUDIT.md, immediate repair order item 5:
++"Add structured correlation IDs/logging and metrics").
++
++``main.py`` already assigns a per-request ID (``request.state.request_id``,
++returned as ``X-Request-Id``) for API requests. That mechanism is tied to
++Starlette's ``Request`` object, so it is only reachable from inside a route
++handler — background worker threads (``JobExecutor``, ``WorkerLoop``,
++render/publish workers) have no equivalent, so a log line emitted while
++executing a job cannot currently be correlated back to the job or the
++request that created it.
++
++``contextvars.ContextVar`` works across both: it is set per-request in API
++code and per-job in worker code, and automatically isolated between
++concurrent asyncio tasks *and* threads that copy the context (each
++``threading.Thread`` gets its own context unless explicitly copied, so
++worker threads should call :func:`bind` explicitly at the start of job
++execution — see the docstring on :func:`bind`).
++"""
++
++from __future__ import annotations
++
++import contextvars
++from contextlib import contextmanager
++from typing import Iterator
++
++_request_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("request_id", default=None)
++_job_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("job_id", default=None)
++
++
++def current_request_id() -> str | None:
++    return _request_id.get()
++
++
++def current_job_id() -> str | None:
++    return _job_id.get()
++
++
++@contextmanager
++def bind(*, request_id: str | None = None, job_id: str | None = None) -> Iterator[None]:
++    """Bind correlation IDs for the duration of a ``with`` block.
++
++    Unlike an asyncio task (which inherits the context of the coroutine
++    that spawned it), a plain ``threading.Thread`` starts with a *fresh*
++    context. A worker thread's run loop should therefore call this once
++    per job, right after leasing it::
++
++        with bind(job_id=job.id):
++            execute(job)
++    """
++    request_token = _request_id.set(request_id) if request_id is not None else None
++    job_token = _job_id.set(job_id) if job_id is not None else None
++    try:
++        yield
++    finally:
++        if request_token is not None:
++            _request_id.reset(request_token)
++        if job_token is not None:
++            _job_id.reset(job_token)
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/backend/migrations/002_multilingual_series.sql AI-Content-Factory-latest/backend/migrations/002_multilingual_series.sql
+--- orig/AI-Content-Factory-latest/backend/migrations/002_multilingual_series.sql	2026-09-15 21:33:22.000000000 +0000
++++ AI-Content-Factory-latest/backend/migrations/002_multilingual_series.sql	1970-01-01 00:00:00.000000000 +0000
+@@ -1,45 +0,0 @@
+--- AI Content Factory multilingual/country extension.
+--- Safe to apply after 001_initial.sql.
+-
+-ALTER TABLE projects
+-  ADD COLUMN IF NOT EXISTS country_id text,
+-  ADD COLUMN IF NOT EXISTS library_id text,
+-  ADD COLUMN IF NOT EXISTS source_language text,
+-  ADD COLUMN IF NOT EXISTS target_languages jsonb NOT NULL DEFAULT '[]'::jsonb,
+-  ADD COLUMN IF NOT EXISTS dialect text,
+-  ADD COLUMN IF NOT EXISTS translation_policy jsonb NOT NULL DEFAULT '{}'::jsonb,
+-  ADD COLUMN IF NOT EXISTS glossary jsonb NOT NULL DEFAULT '{}'::jsonb;
+-
+-CREATE INDEX IF NOT EXISTS idx_projects_country_library ON projects(country_id, library_id);
+-
+-CREATE TABLE IF NOT EXISTS translations (
+-  id text PRIMARY KEY,
+-  source_language text NOT NULL,
+-  target_language text NOT NULL,
+-  source_text text NOT NULL,
+-  translated_text text NOT NULL,
+-  content_type text NOT NULL,
+-  source_id text,
+-  source_version integer NOT NULL DEFAULT 1 CHECK(source_version > 0),
+-  provider text NOT NULL,
+-  model text,
+-  glossary_version integer NOT NULL DEFAULT 1 CHECK(glossary_version > 0),
+-  version integer NOT NULL DEFAULT 1 CHECK(version > 0),
+-  manual boolean NOT NULL DEFAULT false,
+-  source_fingerprint text NOT NULL,
+-  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+-  created_at timestamptz NOT NULL DEFAULT now()
+-);
+-
+-CREATE UNIQUE INDEX IF NOT EXISTS uq_translations_fingerprint_version
+-  ON translations(source_fingerprint, version);
+-CREATE INDEX IF NOT EXISTS idx_translations_source_target
+-  ON translations(source_id, target_language, version, created_at);
+-CREATE INDEX IF NOT EXISTS idx_translations_fingerprint
+-  ON translations(source_fingerprint);
+-CREATE INDEX IF NOT EXISTS idx_translations_current
+-  ON translations(source_fingerprint, manual DESC, version DESC, created_at DESC);
+-
+-ALTER TABLE translations ENABLE ROW LEVEL SECURITY;
+--- Translation rows are immutable history. If project-scoped ownership is introduced later,
+--- add project_id and a matching RLS policy without changing the translation payload.
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/backend/migrations/002_rls_policies.sql AI-Content-Factory-latest/backend/migrations/002_rls_policies.sql
+--- orig/AI-Content-Factory-latest/backend/migrations/002_rls_policies.sql	2026-09-15 21:33:22.000000000 +0000
++++ AI-Content-Factory-latest/backend/migrations/002_rls_policies.sql	1970-01-01 00:00:00.000000000 +0000
+@@ -1,21 +0,0 @@
+--- Transaction/session setup expected before queries:
+---   SET LOCAL app.project_id = '<project uuid>';
+--- The policies intentionally fail closed when app.project_id is absent or invalid.
+-
+-CREATE POLICY projects_project_scope ON projects
+-  USING (id = NULLIF(current_setting('app.project_id', true), '')::uuid)
+-  WITH CHECK (id = NULLIF(current_setting('app.project_id', true), '')::uuid);
+-CREATE POLICY jobs_project_scope ON jobs
+-  USING (project_id = NULLIF(current_setting('app.project_id', true), '')::uuid)
+-  WITH CHECK (project_id = NULLIF(current_setting('app.project_id', true), '')::uuid);
+-CREATE POLICY assets_project_scope ON assets
+-  USING (project_id = NULLIF(current_setting('app.project_id', true), '')::uuid)
+-  WITH CHECK (project_id = NULLIF(current_setting('app.project_id', true), '')::uuid);
+-CREATE POLICY schedules_project_scope ON schedules
+-  USING (project_id = NULLIF(current_setting('app.project_id', true), '')::uuid)
+-  WITH CHECK (project_id = NULLIF(current_setting('app.project_id', true), '')::uuid);
+-CREATE POLICY job_events_project_scope ON job_events
+-  USING (project_id = NULLIF(current_setting('app.project_id', true), '')::uuid)
+-  WITH CHECK (project_id = NULLIF(current_setting('app.project_id', true), '')::uuid);
+-
+--- A privileged migration role may own the tables. The application role should not bypass RLS.
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/backend/migrations/003_multilingual_series.sql AI-Content-Factory-latest/backend/migrations/003_multilingual_series.sql
+--- orig/AI-Content-Factory-latest/backend/migrations/003_multilingual_series.sql	1970-01-01 00:00:00.000000000 +0000
++++ AI-Content-Factory-latest/backend/migrations/003_multilingual_series.sql	2026-09-15 21:33:22.000000000 +0000
+@@ -0,0 +1,45 @@
++-- AI Content Factory multilingual/country extension.
++-- Safe to apply after 001_initial.sql.
++
++ALTER TABLE projects
++  ADD COLUMN IF NOT EXISTS country_id text,
++  ADD COLUMN IF NOT EXISTS library_id text,
++  ADD COLUMN IF NOT EXISTS source_language text,
++  ADD COLUMN IF NOT EXISTS target_languages jsonb NOT NULL DEFAULT '[]'::jsonb,
++  ADD COLUMN IF NOT EXISTS dialect text,
++  ADD COLUMN IF NOT EXISTS translation_policy jsonb NOT NULL DEFAULT '{}'::jsonb,
++  ADD COLUMN IF NOT EXISTS glossary jsonb NOT NULL DEFAULT '{}'::jsonb;
++
++CREATE INDEX IF NOT EXISTS idx_projects_country_library ON projects(country_id, library_id);
++
++CREATE TABLE IF NOT EXISTS translations (
++  id text PRIMARY KEY,
++  source_language text NOT NULL,
++  target_language text NOT NULL,
++  source_text text NOT NULL,
++  translated_text text NOT NULL,
++  content_type text NOT NULL,
++  source_id text,
++  source_version integer NOT NULL DEFAULT 1 CHECK(source_version > 0),
++  provider text NOT NULL,
++  model text,
++  glossary_version integer NOT NULL DEFAULT 1 CHECK(glossary_version > 0),
++  version integer NOT NULL DEFAULT 1 CHECK(version > 0),
++  manual boolean NOT NULL DEFAULT false,
++  source_fingerprint text NOT NULL,
++  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
++  created_at timestamptz NOT NULL DEFAULT now()
++);
++
++CREATE UNIQUE INDEX IF NOT EXISTS uq_translations_fingerprint_version
++  ON translations(source_fingerprint, version);
++CREATE INDEX IF NOT EXISTS idx_translations_source_target
++  ON translations(source_id, target_language, version, created_at);
++CREATE INDEX IF NOT EXISTS idx_translations_fingerprint
++  ON translations(source_fingerprint);
++CREATE INDEX IF NOT EXISTS idx_translations_current
++  ON translations(source_fingerprint, manual DESC, version DESC, created_at DESC);
++
++ALTER TABLE translations ENABLE ROW LEVEL SECURITY;
++-- Translation rows are immutable history. If project-scoped ownership is introduced later,
++-- add project_id and a matching RLS policy without changing the translation payload.
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/backend/migrations/004_rls_policies.sql AI-Content-Factory-latest/backend/migrations/004_rls_policies.sql
+--- orig/AI-Content-Factory-latest/backend/migrations/004_rls_policies.sql	1970-01-01 00:00:00.000000000 +0000
++++ AI-Content-Factory-latest/backend/migrations/004_rls_policies.sql	2026-09-15 21:33:22.000000000 +0000
+@@ -0,0 +1,21 @@
++-- Transaction/session setup expected before queries:
++--   SET LOCAL app.project_id = '<project uuid>';
++-- The policies intentionally fail closed when app.project_id is absent or invalid.
++
++CREATE POLICY projects_project_scope ON projects
++  USING (id = NULLIF(current_setting('app.project_id', true), '')::uuid)
++  WITH CHECK (id = NULLIF(current_setting('app.project_id', true), '')::uuid);
++CREATE POLICY jobs_project_scope ON jobs
++  USING (project_id = NULLIF(current_setting('app.project_id', true), '')::uuid)
++  WITH CHECK (project_id = NULLIF(current_setting('app.project_id', true), '')::uuid);
++CREATE POLICY assets_project_scope ON assets
++  USING (project_id = NULLIF(current_setting('app.project_id', true), '')::uuid)
++  WITH CHECK (project_id = NULLIF(current_setting('app.project_id', true), '')::uuid);
++CREATE POLICY schedules_project_scope ON schedules
++  USING (project_id = NULLIF(current_setting('app.project_id', true), '')::uuid)
++  WITH CHECK (project_id = NULLIF(current_setting('app.project_id', true), '')::uuid);
++CREATE POLICY job_events_project_scope ON job_events
++  USING (project_id = NULLIF(current_setting('app.project_id', true), '')::uuid)
++  WITH CHECK (project_id = NULLIF(current_setting('app.project_id', true), '')::uuid);
++
++-- A privileged migration role may own the tables. The application role should not bypass RLS.
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/backend/tests/test_core_foundation.py AI-Content-Factory-latest/backend/tests/test_core_foundation.py
+--- orig/AI-Content-Factory-latest/backend/tests/test_core_foundation.py	1970-01-01 00:00:00.000000000 +0000
++++ AI-Content-Factory-latest/backend/tests/test_core_foundation.py	2026-09-24 21:19:01.285010955 +0000
+@@ -0,0 +1,91 @@
++import time
++import uuid
++
++from app.core.config import Settings, get_settings
++from app.core.errors import ConflictError, ForbiddenError, NotFoundError
++from app.core.ids import is_valid_id, new_id, new_sortable_id
++from app.core.timestamps import from_iso, to_iso, utc_now
++from app.maintenance.startup_checks import run_startup_checks
++from app.observability.request_context import bind, current_job_id, current_request_id
++
++
++def test_new_id_is_a_valid_uuid() -> None:
++    value = new_id()
++    assert uuid.UUID(value)
++    assert is_valid_id(value)
++
++
++def test_sortable_ids_increase_with_time() -> None:
++    first = new_sortable_id()
++    # The millisecond-timestamp prefix only orders IDs generated in different
++    # milliseconds; two calls in the same millisecond differ only in their
++    # random suffix. Sleep past a millisecond boundary so the comparison
++    # below is deterministic rather than occasionally flaky.
++    time.sleep(0.002)
++    second = new_sortable_id()
++    assert first < second
++    assert is_valid_id(first)
++
++
++def test_sortable_id_with_prefix_round_trips_through_is_valid_id() -> None:
++    value = new_sortable_id(prefix="job")
++    assert value.startswith("job_")
++    assert is_valid_id(value)
++
++
++def test_timestamp_round_trip() -> None:
++    now = utc_now()
++    assert from_iso(to_iso(now)) == now
++    assert to_iso(None) is None
++    assert from_iso(None) is None
++
++
++def test_app_errors_build_the_existing_envelope_shape() -> None:
++    error = NotFoundError("Job not found", details={"jobId": "abc"})
++    envelope = error.to_envelope("req-1")
++    assert envelope == {
++        "error": {
++            "code": "NOT_FOUND",
++            "message": "Job not found",
++            "details": {"jobId": "abc"},
++            "requestId": "req-1",
++        }
++    }
++    assert error.status_code == 404
++    assert ConflictError("x").status_code == 409
++    assert ForbiddenError("x").status_code == 403
++
++
++def test_settings_reads_environment(monkeypatch) -> None:
++    monkeypatch.setenv("AICF_DATABASE_PATH", "/tmp/example.db")
++    monkeypatch.setenv("AICF_WORKER_AUTOSTART", "true")
++    get_settings.cache_clear()
++    try:
++        settings = get_settings()
++        assert settings.database_path == "/tmp/example.db"
++        assert settings.worker_autostart is True
++    finally:
++        get_settings.cache_clear()
++
++
++def test_request_context_bind_is_scoped_and_reset() -> None:
++    assert current_request_id() is None
++    assert current_job_id() is None
++    with bind(request_id="req-1", job_id="job-1"):
++        assert current_request_id() == "req-1"
++        assert current_job_id() == "job-1"
++    assert current_request_id() is None
++    assert current_job_id() is None
++
++
++def test_startup_checks_report_asset_root_writable(tmp_path) -> None:
++    settings = Settings(
++        database_path=str(tmp_path / "data" / "factory.db"),
++        asset_root=str(tmp_path / "assets"),
++        test_mode=True,
++    )
++    report = run_startup_checks(settings)
++    by_name = {check.name: check for check in report.checks}
++    assert by_name["database_writable"].ok
++    assert by_name["asset_root_writable"].ok
++    assert by_name["auth_configured"].ok
