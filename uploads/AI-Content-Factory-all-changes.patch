@@ -694,6 +694,432 @@ diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-lates
 +def from_iso(value: str | None) -> datetime | None:
 +    """Parse a timestamp previously produced by :func:`to_iso`."""
 +    return datetime.fromisoformat(value) if value is not None else None
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/backend/app/infrastructure/postgres_repositories.py AI-Content-Factory-latest/backend/app/infrastructure/postgres_repositories.py
+--- orig/AI-Content-Factory-latest/backend/app/infrastructure/postgres_repositories.py	1970-01-01 00:00:00.000000000 +0000
++++ AI-Content-Factory-latest/backend/app/infrastructure/postgres_repositories.py	2026-09-25 09:40:16.400091085 +0000
+@@ -0,0 +1,422 @@
++"""PostgreSQL-backed repository implementations.
++
++V2 master plan, Phase 3 ("PostgreSQL يصبح قاعدة الإنتاج").
++
++``app/domain/repositories.py`` already defines the target interfaces
++(``ProjectRepository``, ``EpisodeRepository``, ``SceneRepository``,
++``ShotRepository``, ``JobRepository``) and ``infrastructure/sqlite.py``
++already implements all of them for SQLite. ``postgres_repository.py`` only
++provided a bare connection factory with no repository classes at all, so
++until this file, "PostgreSQL as production" had no actual read/write path
++for the SQLite-only implemented above; every one of these subclasses of the
++domain ABCs implements the exact same domain contracts.
++
++Requires ``psycopg`` (v3) and the migrations under ``backend/migrations``
++applied in order (005_episodes_scenes_shots.sql adds the episodes/scenes/
++shots tables this file depends on — they did not previously exist in the
++PostgreSQL baseline).
++
++IMPORTANT — this module has not been run against a live PostgreSQL server:
++this environment has no network access to install ``psycopg`` or start a
++PostgreSQL instance, and no existing automated test exercises it. The SQL
++and psycopg3 API usage below is written to match the schema in
++``migrations/001_initial.sql`` / ``005_episodes_scenes_shots.sql`` and the
++domain dataclasses field-for-field, but treat it as a first draft: run
++``backend/tests/test_postgres_repositories.py`` (see the companion test
++file — it is skipped automatically unless ``AICF_POSTGRES_TEST_DSN`` points
++at a real, disposable database) before pointing any real deployment at it.
++
++ID convention: domain dataclasses store every ID as a plain ``str`` so the
++same domain object works against SQLite's ``TEXT`` primary keys (which
++accept arbitrary strings, e.g. ``"project-1"`` in tests) or PostgreSQL's
++``uuid`` primary keys (which only accept actual UUID-shaped strings). Code
++that creates entities meant for PostgreSQL must generate IDs with
++``app.core.ids.new_id()`` (or an equivalent valid UUID) — see NotFoundError
++usage below for the input-validation error this produces otherwise.
++"""
++
++from __future__ import annotations
++
++from threading import RLock
++from typing import Any
++
++from ..core.errors import NotFoundError
++from ..domain.jobs import GenerationJob, JobInput, JobOutput, JobStatus, JobType
++from ..domain.projects import Episode, Project, Scene, Shot
++from ..domain.repositories import (
++    EpisodeRepository,
++    IdempotencyResult,
++    JobRepository,
++    ProjectRepository,
++    SceneRepository,
++    ShotRepository,
++)
++from .postgres_repository import PostgresRepositoryFactory
++
++
++def _job_input_to_dict(value: JobInput) -> dict[str, Any]:
++    return {
++        "parameters": value.parameters,
++        "referenceAssetIds": value.reference_asset_ids,
++        "constraints": value.constraints,
++        "seed": value.seed,
++        "deterministic": value.deterministic,
++    }
++
++
++def _job_input_from_dict(value: dict[str, Any]) -> JobInput:
++    return JobInput(
++        parameters=value.get("parameters", {}),
++        reference_asset_ids=value.get("referenceAssetIds", []),
++        constraints=value.get("constraints", {}),
++        seed=value.get("seed"),
++        deterministic=value.get("deterministic", False),
++    )
++
++
++def _job_output_to_dict(value: JobOutput | None) -> dict[str, Any] | None:
++    if value is None:
++        return None
++    return {
++        "assetIds": value.asset_ids,
++        "metrics": value.metrics,
++        "providerRunId": value.provider_run_id,
++    }
++
++
++def _job_output_from_dict(value: dict[str, Any] | None) -> JobOutput | None:
++    if value is None:
++        return None
++    return JobOutput(
++        asset_ids=value.get("assetIds", []),
++        metrics=value.get("metrics", {}),
++        provider_run_id=value.get("providerRunId"),
++    )
++
++
++def _json_wrap(value: Any):
++    """Defer importing psycopg's Json wrapper to call time.
++
++    Keeps ``import app.infrastructure.postgres_repositories`` cheap and
++    side-effect-free for callers that only need the SQLite path and never
++    installed psycopg (mirrors the lazy ``import psycopg`` already used in
++    ``postgres_repository.py``).
++    """
++    from psycopg.types.json import Json
++
++    return Json(value)
++
++
++class PostgresStore:
++    """Owns a single PostgreSQL connection, mirroring ``SQLiteStore``'s shape.
++
++    A single shared connection guarded by a lock matches the concurrency
++    model already used for SQLite in this codebase (``SQLiteStore``), so
++    the two backends behave the same way under the existing thread-based
++    worker model. A pooled connection (``psycopg_pool``) would scale
++    better under concurrent API load, but that is a deliberate follow-up —
++    swapping the concurrency model and validating it under load belongs in
++    its own change, not bundled into "add PostgreSQL support at all".
++    """
++
++    def __init__(self, factory: PostgresRepositoryFactory) -> None:
++        self._lock = RLock()
++        self._connection = factory.connect()
++        # Autocommit: each single-statement write commits immediately, matching the semantics
++        # ``SQLiteStore`` gets from wrapping every write in ``with self._connection:``. Multi-
++        # statement atomicity (the idempotency check-and-insert) opts back into an explicit
++        # transaction with ``connection.transaction()`` — supported by psycopg3 even in
++        # autocommit mode. Without this, psycopg3's default manual-commit mode would leave
++        # every read in an open, uncommitted transaction until something else happened to
++        # commit it.
++        self._connection.autocommit = True
++
++    @property
++    def connection(self):
++        return self._connection
++
++    def close(self) -> None:
++        with self._lock:
++            self._connection.close()
++
++    def _get(self, table: str, entity_id: str) -> dict[str, Any] | None:
++        with self._lock, self._connection.cursor() as cursor:
++            cursor.execute(f"SELECT * FROM {table} WHERE id = %s", (entity_id,))
++            row = cursor.fetchone()
++            if row is None:
++                return None
++            columns = [column.name for column in cursor.description]
++            return dict(zip(columns, row))
++
++
++class PostgresProjectRepository(ProjectRepository):
++    def __init__(self, store: PostgresStore) -> None:
++        self.store = store
++
++    def create(self, project: Project) -> Project:
++        with self.store._lock:
++            self.store.connection.execute(
++                "INSERT INTO projects(id,name,description,settings,created_at,updated_at) "
++                "VALUES(%s,%s,%s,%s,%s,%s)",
++                (
++                    project.id, project.name, project.description,
++                    _json_wrap(project.settings), project.created_at, project.updated_at,
++                ),
++            )
++        return project
++
++    def get(self, project_id: str) -> Project | None:
++        row = self.store._get("projects", project_id)
++        if row is None:
++            return None
++        return Project(
++            id=str(row["id"]), name=row["name"], description=row["description"] or "",
++            settings=row["settings"] or {}, created_at=row["created_at"], updated_at=row["updated_at"],
++        )
++
++
++class PostgresEpisodeRepository(EpisodeRepository):
++    def __init__(self, store: PostgresStore) -> None:
++        self.store = store
++
++    def create(self, episode: Episode) -> Episode:
++        with self.store._lock:
++            self.store.connection.execute(
++                "INSERT INTO episodes(id,project_id,title,created_at,updated_at) VALUES(%s,%s,%s,%s,%s)",
++                (episode.id, episode.project_id, episode.title, episode.created_at, episode.updated_at),
++            )
++        return episode
++
++    def get(self, episode_id: str) -> Episode | None:
++        row = self.store._get("episodes", episode_id)
++        if row is None:
++            return None
++        return Episode(
++            id=str(row["id"]), project_id=str(row["project_id"]), title=row["title"],
++            created_at=row["created_at"], updated_at=row["updated_at"],
++        )
++
++
++class PostgresSceneRepository(SceneRepository):
++    def __init__(self, store: PostgresStore) -> None:
++        self.store = store
++
++    def create(self, scene: Scene) -> Scene:
++        with self.store._lock:
++            self.store.connection.execute(
++                "INSERT INTO scenes(id,episode_id,title,order_index,created_at) VALUES(%s,%s,%s,%s,%s)",
++                (scene.id, scene.episode_id, scene.title, scene.order_index, scene.created_at),
++            )
++        return scene
++
++    def get(self, scene_id: str) -> Scene | None:
++        row = self.store._get("scenes", scene_id)
++        if row is None:
++            return None
++        return Scene(
++            id=str(row["id"]), episode_id=str(row["episode_id"]), title=row["title"],
++            order_index=row["order_index"], created_at=row["created_at"],
++        )
++
++
++class PostgresShotRepository(ShotRepository):
++    def __init__(self, store: PostgresStore) -> None:
++        self.store = store
++
++    def create(self, shot: Shot) -> Shot:
++        with self.store._lock:
++            self.store.connection.execute(
++                "INSERT INTO shots(id,scene_id,order_index,prompt,created_at) VALUES(%s,%s,%s,%s,%s)",
++                (shot.id, shot.scene_id, shot.order_index, shot.prompt, shot.created_at),
++            )
++        return shot
++
++    def get(self, shot_id: str) -> Shot | None:
++        row = self.store._get("shots", shot_id)
++        if row is None:
++            return None
++        return Shot(
++            id=str(row["id"]), scene_id=str(row["scene_id"]), order_index=row["order_index"],
++            prompt=row["prompt"] or "", created_at=row["created_at"],
++        )
++
++
++def _job_from_row(row: dict[str, Any]) -> GenerationJob:
++    return GenerationJob(
++        id=str(row["id"]),
++        parent_job_id=str(row["parent_job_id"]) if row["parent_job_id"] else None,
++        project_id=str(row["project_id"]), type=JobType(row["type"]), target_type=row["target_type"],
++        target_id=row["target_id"], priority=row["priority"], status=JobStatus(row["status"]),
++        progress=row["progress"], attempt=row["attempt"], max_attempts=row["max_attempts"],
++        provider=row["provider"], model=row["model"],
++        input=_job_input_from_dict(row["input"] or {}),
++        output=_job_output_from_dict(row["output"]),
++        error_code=row["error_code"], error_message=row["error_message"],
++        created_at=row["created_at"], started_at=row["started_at"],
++        completed_at=row["completed_at"], updated_at=row["updated_at"],
++    )
++
++
++class PostgresJobRepository(JobRepository):
++    def __init__(self, store: PostgresStore) -> None:
++        self.store = store
++
++    def _insert_job(self, connection, job: GenerationJob) -> None:
++        connection.execute(
++            "INSERT INTO jobs(id,parent_job_id,project_id,type,target_type,target_id,priority,status,"
++            "progress,attempt,max_attempts,provider,model,input,output,error_code,error_message,"
++            "created_at,started_at,completed_at,updated_at) "
++            "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
++            (
++                job.id, job.parent_job_id, job.project_id, job.type.value, job.target_type, job.target_id,
++                job.priority, job.status.value, job.progress, job.attempt, job.max_attempts, job.provider,
++                job.model, _json_wrap(_job_input_to_dict(job.input)),
++                _json_wrap(_job_output_to_dict(job.output)) if job.output else None,
++                job.error_code, job.error_message, job.created_at, job.started_at,
++                job.completed_at, job.updated_at,
++            ),
++        )
++
++    def create(self, job: GenerationJob) -> GenerationJob:
++        with self.store._lock:
++            self._insert_job(self.store.connection, job)
++        return job
++
++    def create_with_idempotency(
++        self,
++        job: GenerationJob,
++        *,
++        key: str,
++        operation: str,
++        fingerprint: str,
++    ) -> IdempotencyResult:
++        with self.store._lock:
++            connection = self.store.connection
++            with connection.transaction(), connection.cursor() as cursor:
++                cursor.execute(
++                    "SELECT operation, request_fingerprint, resource_id FROM idempotency_keys "
++                    "WHERE key = %s FOR UPDATE",
++                    (key,),
++                )
++                existing = cursor.fetchone()
++                if existing is not None:
++                    operation_col, fingerprint_col, resource_id = existing
++                    matches = operation_col == operation and fingerprint_col == fingerprint
++                    return IdempotencyResult(
++                        job=None,
++                        existing_resource_id=str(resource_id) if matches else None,
++                        conflict=not matches,
++                    )
++                self._insert_job(cursor, job)
++                cursor.execute(
++                    "INSERT INTO idempotency_keys(key,operation,request_fingerprint,resource_id,created_at) "
++                    "VALUES(%s,%s,%s,%s,now())",
++                    (key, operation, fingerprint, job.id),
++                )
++                return IdempotencyResult(job=job)
++
++    def get(self, job_id: str) -> GenerationJob | None:
++        row = self.store._get("jobs", job_id)
++        return _job_from_row(row) if row else None
++
++    def update(self, job: GenerationJob) -> GenerationJob:
++        with self.store._lock:
++            cursor = self.store.connection.execute(
++                "UPDATE jobs SET parent_job_id=%s,project_id=%s,type=%s,target_type=%s,target_id=%s,"
++                "priority=%s,status=%s,progress=%s,attempt=%s,max_attempts=%s,provider=%s,model=%s,"
++                "input=%s,output=%s,error_code=%s,error_message=%s,started_at=%s,completed_at=%s,"
++                "updated_at=%s WHERE id=%s",
++                (
++                    job.parent_job_id, job.project_id, job.type.value, job.target_type, job.target_id,
++                    job.priority, job.status.value, job.progress, job.attempt, job.max_attempts,
++                    job.provider, job.model, _json_wrap(_job_input_to_dict(job.input)),
++                    _json_wrap(_job_output_to_dict(job.output)) if job.output else None,
++                    job.error_code, job.error_message, job.started_at, job.completed_at,
++                    job.updated_at, job.id,
++                ),
++            )
++            if cursor.rowcount != 1:
++                raise NotFoundError(f"Job not found: {job.id}", details={"jobId": job.id})
++        return job
++
++    def update_if_current(
++        self,
++        job: GenerationJob,
++        expected_status: JobStatus,
++        expected_attempt: int,
++    ) -> bool:
++        with self.store._lock:
++            cursor = self.store.connection.execute(
++                "UPDATE jobs SET parent_job_id=%s,project_id=%s,type=%s,target_type=%s,target_id=%s,"
++                "priority=%s,status=%s,progress=%s,attempt=%s,max_attempts=%s,provider=%s,model=%s,"
++                "input=%s,output=%s,error_code=%s,error_message=%s,started_at=%s,completed_at=%s,"
++                "updated_at=%s WHERE id=%s AND status=%s AND attempt=%s",
++                (
++                    job.parent_job_id, job.project_id, job.type.value, job.target_type, job.target_id,
++                    job.priority, job.status.value, job.progress, job.attempt, job.max_attempts,
++                    job.provider, job.model, _json_wrap(_job_input_to_dict(job.input)),
++                    _json_wrap(_job_output_to_dict(job.output)) if job.output else None,
++                    job.error_code, job.error_message, job.started_at, job.completed_at,
++                    job.updated_at, job.id, expected_status.value, expected_attempt,
++                ),
++            )
++            return cursor.rowcount == 1
++
++    def list_by_parent(self, parent_job_id: str) -> list[GenerationJob]:
++        with self.store._lock, self.store.connection.cursor() as cursor:
++            cursor.execute(
++                "SELECT * FROM jobs WHERE parent_job_id = %s ORDER BY created_at, id",
++                (parent_job_id,),
++            )
++            columns = [column.name for column in cursor.description]
++            rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
++        return [_job_from_row(row) for row in rows]
++
++    def list(
++        self,
++        *,
++        project_id: str | None = None,
++        status: JobStatus | None = None,
++        limit: int = 50,
++    ) -> list[GenerationJob]:
++        limit = max(1, min(limit, 200))
++        clauses: list[str] = []
++        params: list[Any] = []
++        if project_id:
++            clauses.append("project_id = %s")
++            params.append(project_id)
++        if status:
++            clauses.append("status = %s")
++            params.append(status.value)
++        where = " WHERE " + " AND ".join(clauses) if clauses else ""
++        with self.store._lock, self.store.connection.cursor() as cursor:
++            cursor.execute(
++                f"SELECT * FROM jobs{where} ORDER BY created_at DESC, id DESC LIMIT %s",
++                (*params, limit),
++            )
++            columns = [column.name for column in cursor.description]
++            rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
++        return [_job_from_row(row) for row in rows]
++
++
++class PostgresRepositories:
++    """Aggregates all PostgreSQL repositories, mirroring ``SQLiteRepositories``.
++
++    Usage (once ``AICF_POSTGRES_DSN`` is configured and ``psycopg`` is
++    installed)::
++
++        factory = PostgresRepositoryFactory()
++        repositories = PostgresRepositories(factory)
++        project = repositories.projects.get(project_id)
++    """
++
++    def __init__(self, factory: PostgresRepositoryFactory) -> None:
++        self.store = PostgresStore(factory)
++        self.projects = PostgresProjectRepository(self.store)
++        self.episodes = PostgresEpisodeRepository(self.store)
++        self.scenes = PostgresSceneRepository(self.store)
++        self.shots = PostgresShotRepository(self.store)
++        self.jobs = PostgresJobRepository(self.store)
++
++    def close(self) -> None:
++        self.store.close()
 diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/backend/app/maintenance/startup_checks.py AI-Content-Factory-latest/backend/app/maintenance/startup_checks.py
 --- orig/AI-Content-Factory-latest/backend/app/maintenance/startup_checks.py	1970-01-01 00:00:00.000000000 +0000
 +++ AI-Content-Factory-latest/backend/app/maintenance/startup_checks.py	2026-09-24 21:18:25.573500228 +0000
@@ -1082,6 +1508,46 @@ diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-lates
 +  WITH CHECK (project_id = NULLIF(current_setting('app.project_id', true), '')::uuid);
 +
 +-- A privileged migration role may own the tables. The application role should not bypass RLS.
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/backend/migrations/005_episodes_scenes_shots.sql AI-Content-Factory-latest/backend/migrations/005_episodes_scenes_shots.sql
+--- orig/AI-Content-Factory-latest/backend/migrations/005_episodes_scenes_shots.sql	1970-01-01 00:00:00.000000000 +0000
++++ AI-Content-Factory-latest/backend/migrations/005_episodes_scenes_shots.sql	2026-09-25 09:38:43.136222990 +0000
+@@ -0,0 +1,36 @@
++-- Structural content hierarchy (episodes/scenes/shots) that already exists in the SQLite
++-- schema (see infrastructure/sqlite.py SQLiteStore.initialize) but was missing from the
++-- PostgreSQL baseline in 001_initial.sql. Without this, PostgresEpisodeRepository /
++-- PostgresSceneRepository / PostgresShotRepository (infrastructure/postgres_repositories.py)
++-- have no tables to read from or write to on a fresh PostgreSQL database.
++
++CREATE TABLE IF NOT EXISTS episodes (
++  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
++  project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
++  title text NOT NULL,
++  created_at timestamptz NOT NULL DEFAULT now(),
++  updated_at timestamptz NOT NULL DEFAULT now()
++);
++CREATE INDEX IF NOT EXISTS idx_episodes_project ON episodes(project_id);
++
++CREATE TABLE IF NOT EXISTS scenes (
++  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
++  episode_id uuid NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
++  title text NOT NULL,
++  order_index integer NOT NULL,
++  created_at timestamptz NOT NULL DEFAULT now()
++);
++CREATE INDEX IF NOT EXISTS idx_scenes_episode_order ON scenes(episode_id, order_index);
++
++CREATE TABLE IF NOT EXISTS shots (
++  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
++  scene_id uuid NOT NULL REFERENCES scenes(id) ON DELETE CASCADE,
++  order_index integer NOT NULL,
++  prompt text NOT NULL DEFAULT '',
++  created_at timestamptz NOT NULL DEFAULT now()
++);
++CREATE INDEX IF NOT EXISTS idx_shots_scene_order ON shots(scene_id, order_index);
++
++ALTER TABLE episodes ENABLE ROW LEVEL SECURITY;
++-- scenes/shots are scoped indirectly through episodes/scenes; enable RLS directly on them too
++-- once a policy can join back to projects.project_id (tracked as V2 Phase "Project Isolation").
 diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/backend/tests/test_core_foundation.py AI-Content-Factory-latest/backend/tests/test_core_foundation.py
 --- orig/AI-Content-Factory-latest/backend/tests/test_core_foundation.py	1970-01-01 00:00:00.000000000 +0000
 +++ AI-Content-Factory-latest/backend/tests/test_core_foundation.py	2026-09-24 21:19:01.285010955 +0000
@@ -1177,3 +1643,137 @@ diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-lates
 +    assert by_name["database_writable"].ok
 +    assert by_name["asset_root_writable"].ok
 +    assert by_name["auth_configured"].ok
+diff -ruN '--exclude=.git' '--exclude=__pycache__' orig/AI-Content-Factory-latest/backend/tests/test_postgres_repositories.py AI-Content-Factory-latest/backend/tests/test_postgres_repositories.py
+--- orig/AI-Content-Factory-latest/backend/tests/test_postgres_repositories.py	1970-01-01 00:00:00.000000000 +0000
++++ AI-Content-Factory-latest/backend/tests/test_postgres_repositories.py	2026-09-25 09:40:38.152559485 +0000
+@@ -0,0 +1,130 @@
++"""Integration tests for ``app.infrastructure.postgres_repositories``.
++
++These need a real, disposable PostgreSQL database with ``migrations/001_initial.sql``
++and ``migrations/005_episodes_scenes_shots.sql`` applied, and the ``psycopg`` package
++installed (``pip install "psycopg[binary]"``). Neither is available in the environment
++that wrote this file, so every test here is skipped unless ``AICF_POSTGRES_TEST_DSN``
++is set — run it yourself once you have a scratch database, e.g.:
++
++    createdb aicf_test
++    psql aicf_test -f backend/migrations/001_initial.sql
++    psql aicf_test -f backend/migrations/002_runtime_hardening.sql
++    psql aicf_test -f backend/migrations/003_multilingual_series.sql
++    psql aicf_test -f backend/migrations/004_rls_policies.sql
++    psql aicf_test -f backend/migrations/005_episodes_scenes_shots.sql
++    AICF_POSTGRES_TEST_DSN=postgresql:///aicf_test pytest backend/tests/test_postgres_repositories.py
++
++This is the test the module docstring in ``postgres_repositories.py`` asks you to run
++before pointing a real deployment at it — treat a failure here as a bug in that file,
++not in your database.
++"""
++
++from __future__ import annotations
++
++import os
++
++import pytest
++
++pytestmark = pytest.mark.skipif(
++    not os.getenv("AICF_POSTGRES_TEST_DSN"),
++    reason="Set AICF_POSTGRES_TEST_DSN to a scratch PostgreSQL database to run these",
++)
++
++
++@pytest.fixture()
++def repositories():
++    from app.infrastructure.postgres_repositories import PostgresRepositories
++    from app.infrastructure.postgres_repository import PostgresRepositoryFactory
++
++    factory = PostgresRepositoryFactory(dsn=os.environ["AICF_POSTGRES_TEST_DSN"])
++    repos = PostgresRepositories(factory)
++    yield repos
++    # Best-effort cleanup so repeated local runs don't accumulate rows; a throwaway
++    # test database can also just be dropped/recreated between full runs instead.
++    with repos.store.connection.cursor() as cursor:
++        cursor.execute("DELETE FROM jobs")
++        cursor.execute("DELETE FROM shots")
++        cursor.execute("DELETE FROM scenes")
++        cursor.execute("DELETE FROM episodes")
++        cursor.execute("DELETE FROM projects")
++    repos.close()
++
++
++def test_project_round_trip(repositories) -> None:
++    from app.core.ids import new_id
++    from app.domain.projects import Project
++
++    project = Project(id=new_id(), name="Demo", description="A demo project", settings={"lang": "ar"})
++    repositories.projects.create(project)
++
++    fetched = repositories.projects.get(project.id)
++    assert fetched is not None
++    assert fetched.name == "Demo"
++    assert fetched.settings == {"lang": "ar"}
++
++
++def test_episode_scene_shot_hierarchy(repositories) -> None:
++    from app.core.ids import new_id
++    from app.domain.projects import Episode, Project, Scene, Shot
++
++    project = Project(id=new_id(), name="Demo")
++    repositories.projects.create(project)
++
++    episode = Episode(id=new_id(), project_id=project.id, title="Episode 1")
++    repositories.episodes.create(episode)
++    assert repositories.episodes.get(episode.id).title == "Episode 1"
++
++    scene = Scene(id=new_id(), episode_id=episode.id, title="Opening", order_index=0)
++    repositories.scenes.create(scene)
++    assert repositories.scenes.get(scene.id).order_index == 0
++
++    shot = Shot(id=new_id(), scene_id=scene.id, order_index=0, prompt="wide shot")
++    repositories.shots.create(shot)
++    assert repositories.shots.get(shot.id).prompt == "wide shot"
++
++
++def test_job_lifecycle_and_optimistic_update(repositories) -> None:
++    from app.core.ids import new_id
++    from app.domain.jobs import GenerationJob, JobStatus, JobType
++    from app.domain.projects import Project
++
++    project = Project(id=new_id(), name="Demo")
++    repositories.projects.create(project)
++
++    job = GenerationJob(id=new_id(), project_id=project.id, type=JobType.SCENE, target_type="scene")
++    repositories.jobs.create(job)
++
++    fetched = repositories.jobs.get(job.id)
++    assert fetched is not None
++    assert fetched.status == JobStatus.PENDING
++
++    fetched.status = JobStatus.RUNNING
++    fetched.attempt += 1
++    assert repositories.jobs.update_if_current(fetched, JobStatus.PENDING, fetched.attempt - 1)
++
++    # Stale caller (still thinks attempt is the old value) must be rejected.
++    stale = repositories.jobs.get(job.id)
++    stale.status = JobStatus.COMPLETED
++    assert not repositories.jobs.update_if_current(stale, JobStatus.PENDING, 0)
++
++
++def test_create_with_idempotency_returns_conflict_on_fingerprint_mismatch(repositories) -> None:
++    from app.core.ids import new_id
++    from app.domain.jobs import GenerationJob, JobType
++    from app.domain.projects import Project
++
++    project = Project(id=new_id(), name="Demo")
++    repositories.projects.create(project)
++
++    job_a = GenerationJob(id=new_id(), project_id=project.id, type=JobType.SCENE, target_type="scene")
++    result_a = repositories.jobs.create_with_idempotency(
++        job_a, key="idem-1", operation="create_scene_job", fingerprint="fp-1",
++    )
++    assert result_a.job is not None and result_a.conflict is False
++
++    job_b = GenerationJob(id=new_id(), project_id=project.id, type=JobType.SCENE, target_type="scene")
++    result_b = repositories.jobs.create_with_idempotency(
++        job_b, key="idem-1", operation="create_scene_job", fingerprint="fp-2",
++    )
++    assert result_b.job is None
++    assert result_b.conflict is True
