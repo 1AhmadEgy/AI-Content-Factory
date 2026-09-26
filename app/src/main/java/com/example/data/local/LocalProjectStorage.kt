@@ -88,8 +88,11 @@ class LocalProjectStorage(context: Context? = null, rootDirectory: File? = null)
     private fun resolveRelative(projectId: String, relativePath: String): File {
         validateProjectId(projectId)
         require(!relativePath.startsWith("/") && !relativePath.contains("..")) { "Invalid asset path" }
+        val normalized = relativePath.replace('\\', '/')
+        val projectPrefix = "$projectId/"
+        require(normalized.startsWith(projectPrefix)) { "Asset path does not belong to project" }
         val project = safeProjectDirectory(projectId).canonicalFile
-        val file = File(project, relativePath).canonicalFile
+        val file = File(root, normalized).canonicalFile
         check(file.path.startsWith(project.path + File.separator)) { "Asset path escapes project directory" }
         return file
     }
