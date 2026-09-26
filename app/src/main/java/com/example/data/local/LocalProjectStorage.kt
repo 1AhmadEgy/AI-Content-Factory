@@ -13,8 +13,16 @@ import java.security.MessageDigest
 import java.util.UUID
 
 /** Local-first, app-private binary storage. Room stores metadata only. */
-class LocalProjectStorage(context: Context) {
-    private val root = File(context.applicationContext.filesDir, "projects")
+class LocalProjectStorage(context: Context? = null, rootDirectory: File? = null) {
+    private val root = rootDirectory ?: File(
+        requireNotNull(context) { "Context is required when rootDirectory is not provided" }.applicationContext.filesDir,
+        "projects",
+    )
+
+    init {
+        check(root.exists() || root.mkdirs()) { "Unable to create local project storage root" }
+        check(root.isDirectory) { "Local project storage root is not a directory" }
+    }
 
     fun projectRoot(projectId: String): File = safeProjectDirectory(projectId)
     fun assetFile(asset: Asset): File = resolveRelative(asset.projectId, asset.relativePath)
@@ -54,7 +62,7 @@ class LocalProjectStorage(context: Context) {
 
         val dimensions = if (type == AssetType.IMAGE) readImageDimensions(finalFile) else null
         val duration = if (type == AssetType.AUDIO || type == AssetType.VIDEO) readDuration(finalFile) else null
-        val relativePath = root.toPath().relativize(finalFile.toPath()).toString().replace(File.separatorChar, '/')
+        val relativePath = finalFile.absolutePath.removePrefix(root.absolutePath.trimEnd(File.separatorChar) + File.separator).replace(File.separatorChar, '/')
 
         return Asset(
             projectId = projectId, type = type, mimeType = mimeType, fileName = safeName,
@@ -80,8 +88,11 @@ class LocalProjectStorage(context: Context) {
     private fun resolveRelative(projectId: String, relativePath: String): File {
         validateProjectId(projectId)
         require(!relativePath.startsWith("/") && !relativePath.contains("..")) { "Invalid asset path" }
+        val normalized = relativePath.replace('\\', '/')
+        val projectPrefix = "$projectId/"
+        require(normalized.startsWith(projectPrefix)) { "Asset path does not belong to project" }
         val project = safeProjectDirectory(projectId).canonicalFile
-        val file = File(project, relativePath).canonicalFile
+        val file = File(root, normalized).canonicalFile
         check(file.path.startsWith(project.path + File.separator)) { "Asset path escapes project directory" }
         return file
     }

@@ -22,7 +22,7 @@ def _clear_provider_env(monkeypatch) -> None:
 def test_production_registry_is_empty_without_real_credentials(monkeypatch) -> None:
     _clear_provider_env(monkeypatch)
     registry = default_provider_registry()
-    assert registry.ids() == []
+    assert sorted(registry.ids()) == []
 
 
 def test_production_registry_contains_only_configured_real_providers(monkeypatch) -> None:
@@ -42,6 +42,7 @@ def test_production_registry_contains_only_configured_real_providers(monkeypatch
 
     assert registry.ids() == [
         "claude-test-model",
+        "deepseek-test-model",
         "gemini-test-model",
         "image-test-model",
         "text-test-model",

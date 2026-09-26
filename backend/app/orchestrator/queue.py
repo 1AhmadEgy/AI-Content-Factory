@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 import math
 from typing import Any, Callable
 
+from ..domain.assets import Asset
+
 from ..domain.jobs import GenerationJob, JobStatus
 
 
@@ -52,6 +54,7 @@ class JobExecutionResult:
     error_code: str | None = None
     error_message: str | None = None
     retryable: bool = False
+    pending_assets: list[Asset] = field(default_factory=list)
 
 
 class JobQueue(ABC):

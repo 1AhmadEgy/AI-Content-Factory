@@ -7,6 +7,8 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
+from ..domain.assets import Asset
+
 from ..domain.job_events import JobEvent
 from ..domain.jobs import GenerationJob, JobOutput, JobStatus
 from ..domain.repositories import JobRepository
@@ -38,6 +40,7 @@ class JobExecutor:
         on_completed: Callable[[GenerationJob], None] | None = None,
         heartbeat_interval_seconds: float | None = None,
         completion_gate: CompletionGate | None = None,
+        commit_pending_assets: Callable[[GenerationJob, JobLease, list[Asset]], list[str]] | None = None,
     ) -> None:
         self.jobs = jobs
         self.queue = queue
@@ -45,6 +48,7 @@ class JobExecutor:
         self.emit = events or (lambda _event: None)
         self.on_completed = on_completed or (lambda _job: None)
         self.completion_gate = completion_gate
+        self.commit_pending_assets = commit_pending_assets
         configured_interval = heartbeat_interval_seconds
         if configured_interval is None:
             configured_interval = float(os.getenv("AICF_LEASE_HEARTBEAT_SECONDS", "5.0"))
@@ -86,9 +90,14 @@ class JobExecutor:
             raise RuntimeError("JOB_LEASE_LOST")
         if not result.success:
             return self._fail(job, lease, result.error_code or "WORKER_FAILED", result.error_message or "Worker execution failed", result.retryable)
-        if not result.asset_ids:
+        asset_ids = list(result.asset_ids)
+        if result.pending_assets:
+            if self.commit_pending_assets is None:
+                raise RuntimeError("PENDING_ASSET_COMMITTER_NOT_CONFIGURED")
+            asset_ids.extend(self.commit_pending_assets(job, lease, list(result.pending_assets)))
+        if not asset_ids:
             return self._fail(job, lease, "MISSING_OUTPUT_ASSET", "Successful worker execution returned no assets", retryable=False)
-        job.output = JobOutput(asset_ids=list(result.asset_ids), metrics=dict(result.metrics), provider_run_id=result.provider_run_id)
+        job.output = JobOutput(asset_ids=asset_ids, metrics=dict(result.metrics), provider_run_id=result.provider_run_id)
         job.error_code = None
         job.error_message = None
         if self.completion_gate is None:
@@ -107,7 +116,7 @@ class JobExecutor:
         self._require_persisted(job, lease)
         transition(job, JobStatus.COMPLETED)
         self.queue.acknowledge(lease, JobStatus.COMPLETED)
-        self._event(job, "JOB_COMPLETED", {"assetIds": result.asset_ids, "providerRunId": result.provider_run_id, "qcCount": len(gate.qc_results), "progress": 1.0})
+        self._event(job, "JOB_COMPLETED", {"assetIds": asset_ids, "providerRunId": result.provider_run_id, "qcCount": len(gate.qc_results), "progress": 1.0})
         self._clear_progress_state(job.id)
         self._notify_completed(job)
         return ExecutionResult(job, JobStatus.COMPLETED)

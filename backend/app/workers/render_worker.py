@@ -123,8 +123,7 @@ class RenderWorker(Worker):
         self._progress(context, 0.96, "provenance")
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"render:{job.id}:{digest}"))
         asset = Asset(id=asset_id, project_id=job.project_id, type=AssetType.VIDEO, path=path, mime_type="video/mp4", size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, source_asset_ids=[timeline_asset.id, *asset_paths.keys()], metadata={"width": width, "height": height, "fps": fps, "durationUs": timeline.duration_us, "engine": "ffmpeg", "brandId": brand_id, "brandName": brand_renderer.config.get("brand_name_en", brand_id), "finalQc": "passed", "language": job.input.parameters.get("language"), "locale": job.input.parameters.get("locale"), "languagePackVersion": job.input.parameters.get("languagePackVersion"), "languageRender": bool(job.input.parameters.get("languageRender"))}, license_status=LicenseStatus.VERIFIED))
-        self.assets.create(asset)
-        return JobExecutionResult(True, [asset_id], {"width": width, "height": height, "fps": fps, "durationUs": timeline.duration_us, "finalQc": "passed", "engine": "ffmpeg", "brandId": brand_id, "brandName": brand_renderer.config.get("brand_name_en", brand_id), "languageRender": bool(job.input.parameters.get("languageRender")), "language": job.input.parameters.get("language")}, f"ffmpeg-{job.id}")
+        return JobExecutionResult(True, [], {"width": width, "height": height, "fps": fps, "durationUs": timeline.duration_us, "finalQc": "passed", "engine": "ffmpeg", "brandId": brand_id, "brandName": brand_renderer.config.get("brand_name_en", brand_id), "languageRender": bool(job.input.parameters.get("languageRender")), "language": job.input.parameters.get("language")}, f"ffmpeg-{job.id}", pending_assets=[asset])
 
     @staticmethod
     def _timeline_from_manifest(manifest: dict[str, object], project_id: str, timeline_id: str) -> Timeline:
