@@ -54,7 +54,7 @@ class LocalProjectStorage(context: Context) {
 
         val dimensions = if (type == AssetType.IMAGE) readImageDimensions(finalFile) else null
         val duration = if (type == AssetType.AUDIO || type == AssetType.VIDEO) readDuration(finalFile) else null
-        val relativePath = root.toPath().relativize(finalFile.toPath()).toString().replace(File.separatorChar, '/')
+        val relativePath = root.canonicalFile.toURI().relativize(finalFile.canonicalFile.toURI()).path
 
         return Asset(
             projectId = projectId, type = type, mimeType = mimeType, fileName = safeName,
