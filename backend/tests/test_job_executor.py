@@ -67,6 +67,33 @@ def test_executor_persists_success_and_emits_events():
     assert [event.event_type for event in events] == ["JOB_STARTED", "JOB_PROGRESS", "JOB_COMPLETED"]
 
 
+
+def test_executor_commits_pending_assets_only_after_lease_gate():
+    job = make_job()
+    jobs, queue = FakeJobs(job), FakeQueue()
+    worker = FakeWorker(JobExecutionResult(True, pending_assets=[object()]))
+    registry = WorkerRegistry()
+    registry.register(worker, {"IMAGE"}, worker_id="worker-1")
+    committed = []
+
+    def commit_pending_assets(job, lease, assets):
+        committed.extend(assets)
+        return ["asset-committed"]
+
+    result = JobExecutor(
+        jobs,
+        queue,
+        registry,
+        completion_gate=AllowCompletion(),
+        commit_pending_assets=commit_pending_assets,
+    ).execute_claimed(job, make_lease())
+
+    assert result.status is JobStatus.COMPLETED
+    assert len(committed) == 1
+    assert jobs.job.output == JobOutput(["asset-committed"], {}, None)
+    assert queue.acknowledged == [JobStatus.COMPLETED]
+
+
 def test_executor_retries_retryable_failure_until_limit():
     job = make_job(max_attempts=2); jobs, queue = FakeJobs(job), FakeQueue()
     worker = FakeWorker(JobExecutionResult(False, error_code="TIMEOUT", error_message="temporary", retryable=True))
