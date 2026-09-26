@@ -43,6 +43,7 @@ def test_production_registry_contains_only_configured_real_providers(monkeypatch
     assert registry.ids() == [
         "claude-test-model",
         "gemini-test-model",
+        "deepseek-test-model",
         "image-test-model",
         "text-test-model",
         "tts-test-model",
