@@ -1,6 +1,5 @@
 package com.example.data.local
 
-import androidx.test.core.app.ApplicationProvider
 import com.example.core.model.AssetType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -12,10 +11,9 @@ import java.nio.file.Files
 class LocalProjectStorageTest {
     @Test
     fun importsBytes_intoProjectPrivateStorage_andVerifiesChecksum() {
-        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val root = testRoot()
         try {
-            val storage = LocalProjectStorage(context, root)
+            val storage = LocalProjectStorage(rootDirectory = root)
             val asset = storage.importBytes(
                 projectId = "project-test",
                 bytes = "hello-local".toByteArray(),
