@@ -35,7 +35,7 @@ class ModelRegistry:
     def get(self, model_id: str) -> RegisteredModel:
         return self._models[model_id]
 
-    def route(self, category: str, capability: str | None = None) -> RegisteredModel | None:
+    def route_candidates(self, category: str, capability: str | None = None) -> list[RegisteredModel]:
         candidates = [m for m in self._models.values() if m.enabled and m.adapter.health_check()]
         candidates = [m for m in candidates if m.adapter.capability().category == category]
         if capability:
@@ -45,7 +45,11 @@ class ModelRegistry:
                     m for m in self._models.values()
                     if m.enabled and m.adapter.health_check() and "text" in m.adapter.capability().capabilities
                 ]
-        return min(candidates, key=lambda m: (m.priority, m.id), default=None)
+        return sorted(candidates, key=lambda m: (m.priority, m.id))
+
+    def route(self, category: str, capability: str | None = None) -> RegisteredModel | None:
+        candidates = self.route_candidates(category, capability)
+        return candidates[0] if candidates else None
 
     def ids(self) -> list[str]:
         return sorted(self._models)
