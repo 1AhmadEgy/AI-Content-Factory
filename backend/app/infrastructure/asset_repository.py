@@ -43,9 +43,40 @@ class SQLiteAssetRepository(AssetRepository):
                          metadata=p.get("metadata", {})), created_at=_parse_dt(row["created_at"]))
 
     def create(self, asset: Asset) -> Asset:
-        self.store._insert("INSERT INTO assets(id,project_id,type,path,mime_type,size_bytes,sha256,status,provenance_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                           (asset.id, asset.project_id, asset.type.value, asset.path, asset.mime_type, asset.size_bytes,
-                            asset.sha256, asset.status.value, self._provenance(asset), _dt(asset.created_at)))
+        """Create an asset exactly once; identical retries are safe no-ops."""
+        with self.store._lock, self.store.connection:
+            existing_row = self.store.connection.execute(
+                "SELECT * FROM assets WHERE id=?",
+                (asset.id,),
+            ).fetchone()
+            if existing_row is not None:
+                existing = self._from_row(existing_row)
+                if (
+                    existing.project_id != asset.project_id
+                    or existing.type is not asset.type
+                    or existing.path != asset.path
+                    or existing.mime_type != asset.mime_type
+                    or existing.size_bytes != asset.size_bytes
+                    or existing.sha256 != asset.sha256
+                ):
+                    raise ValueError(f"ASSET_ID_CONFLICT: {asset.id}")
+                return existing
+
+            self.store.connection.execute(
+                "INSERT INTO assets(id,project_id,type,path,mime_type,size_bytes,sha256,status,provenance_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (
+                    asset.id,
+                    asset.project_id,
+                    asset.type.value,
+                    asset.path,
+                    asset.mime_type,
+                    asset.size_bytes,
+                    asset.sha256,
+                    asset.status.value,
+                    self._provenance(asset),
+                    _dt(asset.created_at),
+                ),
+            )
         return asset
 
     def get(self, asset_id: str) -> Asset | None:
