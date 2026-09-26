@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from .anthropic_adapter import AnthropicModelAdapter
 from .configuration import require_provider_model
 from .contracts import ModelAdapter
+from .builtin import AIMLAPIModelAdapter
 from .deepseek_adapter import DeepSeekModelAdapter
 from .gemini_adapter import GeminiModelAdapter
 from .openai_adapter import OpenAIModelAdapter
@@ -81,5 +82,9 @@ def default_provider_registry() -> ModelRegistry:
     if os.getenv("DEEPSEEK_API_KEY", "").strip():
         model = require_provider_model("AICF_DEEPSEEK_TEXT_MODEL")
         registry.register(RegisteredModel(model, "deepseek", DeepSeekModelAdapter(model), priority=40))
+
+    if os.getenv("AIMLAPI_API_KEY", "").strip():
+        model = require_provider_model("AICF_AIMLAPI_TEXT_MODEL")
+        registry.register(RegisteredModel(model, "aimlapi", AIMLAPIModelAdapter(model), priority=50))
 
     return registry
