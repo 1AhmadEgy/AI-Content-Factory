@@ -96,15 +96,14 @@ def default_provider_registry() -> ModelRegistry:
     if os.getenv("ELEVENLABS_API_KEY", "").strip():
         tts_model = os.getenv("AICF_ELEVENLABS_TTS_MODEL", "eleven_multilingual_v2").strip() or "eleven_multilingual_v2"
         voice_id = os.getenv("AICF_ELEVENLABS_VOICE_ID", "").strip()
-        if voice_id:
-            registry.register(
-                RegisteredModel(
-                    tts_model,
-                    "elevenlabs",
-                    ElevenLabsTTSAdapter(tts_model, default_voice_id=voice_id),
-                    priority=15,
-                )
+        registry.register(
+            RegisteredModel(
+                tts_model,
+                "elevenlabs",
+                ElevenLabsTTSAdapter(tts_model, default_voice_id=voice_id),
+                priority=15,
             )
+        )
 
     if os.getenv("RUNWAYML_API_SECRET", "").strip():
         video_model = os.getenv("AICF_RUNWAY_VIDEO_MODEL", "gen4.5").strip() or "gen4.5"
