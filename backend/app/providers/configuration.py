@@ -45,3 +45,9 @@ def validate_deepseek_configuration() -> None:
 
 def validate_aimlapi_configuration() -> None:
     _validate_provider_models("AIMLAPI_API_KEY", ("AICF_AIMLAPI_TEXT_MODEL",))
+
+
+def validate_llamagen_configuration() -> None:
+    """Validate LlamaGen only when the provider is explicitly enabled."""
+    if os.getenv("LLAMAGEN_API_KEY", "").strip() and not os.getenv("AICF_LLAMAGEN_VIDEO_MODEL", "").strip():
+        return
