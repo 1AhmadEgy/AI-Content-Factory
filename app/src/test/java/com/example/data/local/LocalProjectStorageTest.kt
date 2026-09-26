@@ -13,10 +13,7 @@ class LocalProjectStorageTest {
     fun importsBytes_intoProjectPrivateStorage_andVerifiesChecksum() {
         val root = testRoot()
         try {
-            val storage = LocalProjectStorage(
-                context = androidx.test.core.app.ApplicationProvider.getApplicationContext(),
-                rootDirectory = root,
-            )
+            val storage = LocalProjectStorage(root)
             val asset = storage.importBytes(
                 projectId = "project-test",
                 bytes = "hello-local".toByteArray(),
@@ -42,10 +39,7 @@ class LocalProjectStorageTest {
     fun rejectsPathTraversalProjectId() {
         val root = testRoot()
         try {
-            val storage = LocalProjectStorage(
-                context = androidx.test.core.app.ApplicationProvider.getApplicationContext(),
-                rootDirectory = root,
-            )
+            val storage = LocalProjectStorage(root)
             assertThrows(IllegalArgumentException::class.java) {
                 storage.importBytes("../escape", byteArrayOf(1), AssetType.OTHER, "application/octet-stream", "x.bin")
             }
@@ -58,10 +52,7 @@ class LocalProjectStorageTest {
     fun rejectsAssetPathOutsideProject() {
         val root = testRoot()
         try {
-            val storage = LocalProjectStorage(
-                context = androidx.test.core.app.ApplicationProvider.getApplicationContext(),
-                rootDirectory = root,
-            )
+            val storage = LocalProjectStorage(root)
             val asset = storage.importBytes(
                 projectId = "project-test",
                 bytes = byteArrayOf(1),
@@ -82,10 +73,7 @@ class LocalProjectStorageTest {
     fun keepsProjectIsolation_whenResolvingRelativeAssetPaths() {
         val root = testRoot()
         try {
-            val storage = LocalProjectStorage(
-                context = androidx.test.core.app.ApplicationProvider.getApplicationContext(),
-                rootDirectory = root,
-            )
+            val storage = LocalProjectStorage(root)
             val assetA = storage.importBytes(
                 projectId = "project-a",
                 bytes = byteArrayOf(1),
