@@ -255,7 +255,19 @@ class ProviderGenerationWorker(Worker):
 
     @staticmethod
     def _cache_key(provider: str, model: str, job: GenerationJob) -> str:
-        payload = {"provider": provider, "model": model, "jobType": job.type.value, "targetType": job.target_type, "parameters": job.input.parameters, "seed": job.input.seed}
+        payload = {
+            "provider": provider,
+            "model": model,
+            "projectId": job.project_id,
+            "jobType": job.type.value,
+            "targetType": job.target_type,
+            "targetId": job.target_id,
+            "parameters": job.input.parameters,
+            "referenceAssetIds": sorted(job.input.reference_asset_ids),
+            "constraints": job.input.constraints,
+            "seed": job.input.seed,
+            "deterministic": job.input.deterministic,
+        }
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
