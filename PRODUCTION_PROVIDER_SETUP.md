@@ -50,3 +50,13 @@ Override model IDs with environment variables rather than editing source code. T
 ## 6. Local development without provider credentials
 
 The repository may contain deterministic test doubles for unit tests, but they are not registered by the production runtime and must never be used to mark a production job as completed.
+
+### Character voice mapping
+
+Each character may define a provider-specific ElevenLabs voice id in its `voice` profile:
+
+```json
+{"voice":{"ttsVoiceId":"<elevenlabs-voice-id>"}}
+```
+
+Shot dialogue generation reads that id and creates a TTS job for the speaking character. This keeps one stable voice per character across episodes while allowing different characters to use different voices.
