@@ -44,3 +44,55 @@ class LocalModelAdapter(ModelAdapter):
 
     def cancel(self, provider_run_id: str) -> bool:
         return False
+
+
+class AIMLAPIModelAdapter(ModelAdapter):
+    """OpenAI-compatible AIMLAPI text adapter with a fixed provider endpoint."""
+
+    _CAPABILITIES = frozenset({"generation", "text", "story", "script", "scene", "shot", "character", "world", "real-provider"})
+
+    def __init__(self, model_id: str, api_key: str | None = None, timeout_seconds: int = 120) -> None:
+        import os
+        self.model_id = model_id
+        self.api_key = api_key or os.getenv("AIMLAPI_API_KEY", "")
+        self.timeout_seconds = timeout_seconds
+
+    def capability(self) -> ModelCapability:
+        return ModelCapability(category="generation", capabilities=self._CAPABILITIES, runtime="CLOUD", license_status="CONFIGURED")
+
+    def health_check(self) -> bool:
+        return bool(self.api_key)
+
+    def execute(self, request: ProviderRequest) -> ProviderResponse:
+        import os
+        if not self.api_key:
+            return ProviderResponse(False, error_code="AIMLAPI_API_KEY_MISSING")
+        messages = request.parameters.get("messages") or [{"role": "user", "content": request.parameters.get("prompt", "")}]
+        payload = {"model": request.model, "messages": messages}
+        for key in ("temperature", "top_p", "max_tokens", "response_format", "tools", "tool_choice"):
+            if key in request.parameters:
+                payload[key] = request.parameters[key]
+        try:
+            req = Request(
+                "https://api.aimlapi.com/v1/chat/completions",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(req, timeout=int(os.getenv("AICF_PROVIDER_TIMEOUT_SECONDS", str(self.timeout_seconds)))) as response:
+                data = json.loads(response.read().decode("utf-8"))
+            text = data["choices"][0]["message"]["content"]
+            if not isinstance(text, str) or not text.strip():
+                return ProviderResponse(False, error_code="AIMLAPI_EMPTY_TEXT")
+            usage = data.get("usage") or {}
+            metrics = {}
+            if usage.get("prompt_tokens") is not None:
+                metrics["input_tokens"] = float(usage["prompt_tokens"])
+            if usage.get("completion_tokens") is not None:
+                metrics["output_tokens"] = float(usage["completion_tokens"])
+            return ProviderResponse(True, output_text=text, provider_run_id=str(data.get("id") or "aimlapi"), metrics=metrics)
+        except (KeyError, IndexError, json.JSONDecodeError, OSError, URLError) as exc:
+            return ProviderResponse(False, error_code="AIMLAPI_PROVIDER_ERROR", error_message=str(exc)[:500])
+
+    def cancel(self, provider_run_id: str) -> bool:
+        return False
