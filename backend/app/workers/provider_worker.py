@@ -70,11 +70,38 @@ class ProviderGenerationWorker(Worker):
             return JobExecutionResult(False, error_code="CANCELLED", error_message="Cancellation requested")
 
         capability = self._required_capability(job.type)
-        model = self.providers.get(job.model) if job.model else None
-        if model is None or capability not in model.adapter.capability().capabilities:
-            model = self.providers.route("generation", capability)
-        if model is None:
-            return JobExecutionResult(False, error_code="MODEL_CAPABILITY_UNAVAILABLE", error_message=f"No real provider configured for {capability}", retryable=False)
+        requested = self.providers.get(job.model) if job.model else None
+        if requested is not None and capability in requested.adapter.capability().capabilities:
+            candidates = [requested]
+        else:
+            candidates = self.providers.route_candidates("generation", capability)
+
+        if not candidates:
+            return JobExecutionResult(
+                False,
+                error_code="MODEL_CAPABILITY_UNAVAILABLE",
+                error_message=f"No real provider configured for {capability}",
+                retryable=False,
+            )
+
+        last_result: JobExecutionResult | None = None
+        for model in candidates:
+            result = self._execute_model(job, capability, model)
+            if result.success:
+                return result
+            last_result = result
+            if not result.retryable:
+                return result
+            if context.cancellation_requested:
+                return JobExecutionResult(False, error_code="CANCELLED", error_message="Cancellation requested")
+        return last_result or JobExecutionResult(
+            False,
+            error_code="MODEL_CAPABILITY_UNAVAILABLE",
+            error_message=f"No usable provider configured for {capability}",
+            retryable=True,
+        )
+
+    def _execute_model(self, job: GenerationJob, capability: str, model) -> JobExecutionResult:
         if not model.enabled or not model.adapter.health_check():
             return JobExecutionResult(False, error_code="MODEL_UNHEALTHY", error_message=model.id, retryable=True)
 
@@ -118,10 +145,18 @@ class ProviderGenerationWorker(Worker):
 
         run_id = str(uuid.uuid4())
         if self.provider_runs:
-            self.provider_runs.create(ProviderRun(id=run_id, job_id=job.id, provider=model.provider, model=model.id,
-                request_metadata={"jobType": job.type.value, "targetType": job.target_type, "targetId": job.target_id, "capability": capability}, status="RUNNING"))
+            self.provider_runs.create(ProviderRun(
+                id=run_id,
+                job_id=job.id,
+                provider=model.provider,
+                model=model.id,
+                request_metadata={"jobType": job.type.value, "targetType": job.target_type, "targetId": job.target_id, "capability": capability},
+                status="RUNNING",
+            ))
         try:
-            response = model.adapter.execute(ProviderRequest(model=model.id, parameters=dict(job.input.parameters), seed=job.input.seed))
+            response = model.adapter.execute(
+                ProviderRequest(model=model.id, parameters=dict(job.input.parameters), seed=job.input.seed)
+            )
         except Exception as exc:
             kind = classify_exception(exc)
             if breaker is not None and kind is ErrorKind.TRANSIENT:
@@ -154,9 +189,17 @@ class ProviderGenerationWorker(Worker):
         if breaker is not None:
             breaker.record_success()
         if self._cache:
-            self._cache.put(cache_key, model.provider, model.id, output_text=response.output_text, output_bytes=response.output_bytes,
-                output_mime_type=response.output_mime_type, output_filename=response.output_filename,
-                output_metadata=dict(response.output_metadata), metrics=dict(response.metrics))
+            self._cache.put(
+                cache_key,
+                model.provider,
+                model.id,
+                output_text=response.output_text,
+                output_bytes=response.output_bytes,
+                output_mime_type=response.output_mime_type,
+                output_filename=response.output_filename,
+                output_metadata=dict(response.output_metadata),
+                metrics=dict(response.metrics),
+            )
             self._cache.release_lock(cache_key, lock_token)
         if self.provider_runs:
             self.provider_runs.complete(run_id, status="COMPLETED", response_metadata={"assetIds": asset_ids, **dict(response.metrics)})
