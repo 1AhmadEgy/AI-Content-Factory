@@ -3,9 +3,10 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from .anthropic_adapter import AnthropicModelAdapter
 from .configuration import require_provider_model
 from .contracts import ModelAdapter
-from .anthropic_adapter import AnthropicModelAdapter
+from .deepseek_adapter import DeepSeekModelAdapter
 from .gemini_adapter import GeminiModelAdapter
 from .openai_adapter import OpenAIModelAdapter
 
@@ -39,7 +40,10 @@ class ModelRegistry:
         if capability:
             candidates = [m for m in candidates if capability in m.adapter.capability().capabilities]
             if not candidates and capability in {"story", "script", "scene", "shot", "character", "world"}:
-                candidates = [m for m in self._models.values() if m.enabled and m.adapter.health_check() and "text" in m.adapter.capability().capabilities]
+                candidates = [
+                    m for m in self._models.values()
+                    if m.enabled and m.adapter.health_check() and "text" in m.adapter.capability().capabilities
+                ]
         return min(candidates, key=lambda m: (m.priority, m.id), default=None)
 
     def ids(self) -> list[str]:
@@ -74,5 +78,8 @@ def default_provider_registry() -> ModelRegistry:
         model = require_provider_model("AICF_ANTHROPIC_TEXT_MODEL")
         registry.register(RegisteredModel(model, "anthropic", AnthropicModelAdapter(model), priority=30))
 
+    if os.getenv("DEEPSEEK_API_KEY", "").strip():
+        model = require_provider_model("AICF_DEEPSEEK_TEXT_MODEL")
+        registry.register(RegisteredModel(model, "deepseek", DeepSeekModelAdapter(model), priority=40))
+
     return registry
-}
