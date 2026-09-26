@@ -13,7 +13,7 @@ class LocalProjectStorageTest {
     @Test
     fun importsBytes_intoProjectPrivateStorage_andVerifiesChecksum() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-        val root = testRoot(context)
+        val root = testRoot()
         val storage = LocalProjectStorage(context, root)
         val asset = storage.importBytes(
             projectId = "project-test",
@@ -37,15 +37,16 @@ class LocalProjectStorageTest {
     @Test
     fun rejectsPathTraversalProjectId() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-        val storage = LocalProjectStorage(context, testRoot(context))
+        val root = testRoot()
+        val storage = LocalProjectStorage(context, root)
         assertThrows(IllegalArgumentException::class.java) {
             storage.importBytes("../escape", byteArrayOf(1), AssetType.OTHER, "application/octet-stream", "x.bin")
         }
+        assertTrue(root.deleteRecursively())
     }
 
-    private fun testRoot(context: android.content.Context): File =
-        File(context.cacheDir, "aicf-local-storage-" + UUID.randomUUID()).apply {
-            parentFile?.mkdirs()
-            mkdirs()
+    private fun testRoot(): File =
+        File(System.getProperty("java.io.tmpdir"), "aicf-local-storage-" + UUID.randomUUID()).apply {
+            check(mkdirs()) { "Unable to create temporary test root: $absolutePath" }
         }
 }
