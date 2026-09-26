@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from .contracts import ModelAdapter, ModelCapability, ProviderRequest, ProviderResponse
