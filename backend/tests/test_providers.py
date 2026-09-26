@@ -1,4 +1,7 @@
+from app.domain.jobs import JobType
+from app.orchestrator.queue import JobExecutionResult, WorkerContext
 from app.providers.builtin import LlamaGenVideoAdapter, LocalModelAdapter
+from app.workers.provider_worker import ProviderGenerationWorker
 from app.providers.contracts import ProviderRequest
 from app.providers.openai_adapter import OpenAIModelAdapter
 from app.providers.registry import ModelRegistry, RegisteredModel, default_provider_registry
@@ -51,3 +54,50 @@ def test_llamagen_adapter_requires_credentials_without_network_call() -> None:
     response = adapter.execute(ProviderRequest("video-model", {"prompt": "test"}))
     assert not response.success
     assert response.error_code == "LLAMAGEN_API_KEY_MISSING"
+
+
+def _fallback_worker() -> ProviderGenerationWorker:
+    registry = ModelRegistry()
+    registry.register(RegisteredModel("first", "local", LocalModelAdapter("http://localhost:8001", frozenset({"text", "story"})), priority=10))
+    registry.register(RegisteredModel("second", "local", LocalModelAdapter("http://localhost:8002", frozenset({"text", "story"})), priority=20))
+    worker = ProviderGenerationWorker(registry, storage=None, assets=None)  # type: ignore[arg-type]
+    worker._initialized = True
+    return worker
+
+
+def _story_job():
+    return type("Job", (), {"model": None, "type": JobType.STORY})()
+
+
+def test_worker_falls_back_after_retryable_provider_failure() -> None:
+    worker = _fallback_worker()
+    attempts: list[str] = []
+
+    def fake_execute(job, capability, model):
+        attempts.append(model.id)
+        if model.id == "first":
+            return JobExecutionResult(False, error_code="TEMPORARY", retryable=True)
+        return JobExecutionResult(True, asset_ids=["asset-2"])
+
+    worker._execute_model = fake_execute  # type: ignore[method-assign]
+    result = worker.execute(_story_job(), WorkerContext("worker", "lease"))
+
+    assert result.success
+    assert attempts == ["first", "second"]
+    assert result.asset_ids == ["asset-2"]
+
+
+def test_worker_stops_after_permanent_provider_failure() -> None:
+    worker = _fallback_worker()
+    attempts: list[str] = []
+
+    def fake_execute(job, capability, model):
+        attempts.append(model.id)
+        return JobExecutionResult(False, error_code="PERMANENT", retryable=False)
+
+    worker._execute_model = fake_execute  # type: ignore[method-assign]
+    result = worker.execute(_story_job(), WorkerContext("worker", "lease"))
+
+    assert not result.success
+    assert attempts == ["first"]
+    assert result.error_code == "PERMANENT"
