@@ -5,7 +5,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable\n\nfrom ..domain.assets import Asset
 
 from ..domain.job_events import JobEvent
 from ..domain.jobs import GenerationJob, JobOutput, JobStatus
@@ -107,7 +107,7 @@ class JobExecutor:
         self._require_persisted(job, lease)
         transition(job, JobStatus.COMPLETED)
         self.queue.acknowledge(lease, JobStatus.COMPLETED)
-        self._event(job, "JOB_COMPLETED", {"assetIds": result.asset_ids, "providerRunId": result.provider_run_id, "qcCount": len(gate.qc_results), "progress": 1.0})
+        self._event(job, "JOB_COMPLETED", {"assetIds": asset_ids, "providerRunId": result.provider_run_id, "qcCount": len(gate.qc_results), "progress": 1.0})
         self._clear_progress_state(job.id)
         self._notify_completed(job)
         return ExecutionResult(job, JobStatus.COMPLETED)
