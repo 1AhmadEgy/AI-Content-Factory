@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 from ..application.ai_scene_planner import AIScenePlanner
 from ..application.ai_script_engine import AIScriptEngine
 from ..application.ai_story_engine import AIStoryEngine
-from ..domain.content import ContentBrief, StoryPlan
+from ..domain.assets import Asset\nfrom ..domain.content import ContentBrief, StoryPlan
 from ..domain.jobs import GenerationJob, JobStatus, JobType
 from ..infrastructure.asset_repository import SQLiteAssetRepository
 from ..infrastructure.character_repository import SQLiteCharacterRepository
@@ -86,7 +86,7 @@ class OrchestratorRuntime:
         self.library_seed = ensure_egypt_library(repositories)
         self.libya_library_seed = ensure_libya_library(repositories)
 
-    def _commit_pending_assets(self, job: GenerationJob, lease: JobLease, assets: list) -> list[str]:
+    def _commit_pending_assets(self, job: GenerationJob, lease: JobLease, assets: list[Asset]) -> list[str]:
         """Persist render output metadata only while the exact lease is still active."""
         now = datetime.now(timezone.utc)
         ids: list[str] = []
