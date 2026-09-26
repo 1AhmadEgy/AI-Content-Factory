@@ -118,16 +118,21 @@ def test_comfyui_adapter_applies_safe_node_input_overrides() -> None:
 
     def fake_request(method, path, payload, headers):
         captured.append(payload or {})
-        return {"prompt_id": "test-prompt"}
+        if method == "POST":
+            return {"prompt_id": "test-prompt"}
+        return {"test-prompt": {"status": {"status_str": "success"}, "outputs": {"9": {"images": [{"filename": "x.png"}]}}}}
 
     adapter._request_json = fake_request  # type: ignore[method-assign]
+    adapter._collect_outputs = lambda outputs, headers: (b"image", "image/png", "x.png", {})  # type: ignore[method-assign]
+    adapter.timeout_seconds = 1
+    adapter.poll_interval_seconds = 0.2
     response = adapter.execute(
         ProviderRequest(
             "comfy",
             {"workflow": workflow, "prompt_inputs": {"1.text": "new"}},
         )
     )
-    assert not response.success
-    assert response.error_code == "COMFYUI_TIMEOUT"
+    assert response.success
+    assert response.provider_run_id == "test-prompt"
     assert captured[0]["prompt"]["1"]["inputs"]["text"] == "new"
     assert workflow["1"]["inputs"]["text"] == "old"
