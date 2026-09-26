@@ -52,6 +52,7 @@ class JobExecutionResult:
     error_code: str | None = None
     error_message: str | None = None
     retryable: bool = False
+    pending_assets: list[Asset] = field(default_factory=list)
 
 
 class JobQueue(ABC):
