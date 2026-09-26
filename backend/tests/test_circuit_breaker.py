@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import threading
-import time
 
 import httpx
 
@@ -34,10 +33,11 @@ def test_circuit_opens_and_is_shared() -> None:
 
 def test_half_open_limits_concurrent_probes() -> None:
     store = SQLiteStore(":memory:")
-    cb = SQLiteCircuitBreaker(store, "t1", fail_threshold=1, open_duration=0.05, half_open_max_calls=2, success_threshold=2)
+    now = [100.0]
+    cb = SQLiteCircuitBreaker(store, "t1", fail_threshold=1, open_duration=10.0, half_open_max_calls=2, success_threshold=2, clock=lambda: now[0])
     assert cb.acquire()
     cb.record_failure()
-    time.sleep(0.08)
+    now[0] += 11.0
     results: list[bool] = []
     lock = threading.Lock()
 
@@ -56,12 +56,13 @@ def test_half_open_limits_concurrent_probes() -> None:
 
 def test_half_open_success_closes_and_failure_reopens() -> None:
     store = SQLiteStore(":memory:")
-    cb = SQLiteCircuitBreaker(store, "t2", fail_threshold=2, open_duration=0.03, half_open_max_calls=2, success_threshold=2)
+    now = [200.0]
+    cb = SQLiteCircuitBreaker(store, "t2", fail_threshold=2, open_duration=10.0, half_open_max_calls=2, success_threshold=2, clock=lambda: now[0])
     assert cb.acquire()
     cb.record_failure()
     cb.record_failure()
     assert cb.snapshot().state is CircuitState.OPEN
-    time.sleep(0.05)
+    now[0] += 11.0
     assert cb.acquire()
     assert cb.acquire()
     cb.record_success()
