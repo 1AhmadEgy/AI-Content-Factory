@@ -74,7 +74,7 @@ def _admin_api_key() -> str:
 
 
 PUBLIC_PATHS = {"/api/v1/health", "/api/v1/ready", "/api/v1/readiness"}
-WORKER_PATHS = {"/api/v1/jobs/maintenance/recover-expired"}
+ADMIN_PATHS = {"/api/v1/jobs/maintenance/recover-expired"}
 WORKER_PATH_SUFFIXES = ("/heartbeat",)
 
 
@@ -156,11 +156,15 @@ async def request_id_and_auth_middleware(request: Request, call_next):
             )
 
     if request.url.path not in PUBLIC_PATHS:
-        is_worker_endpoint = request.url.path in WORKER_PATHS or request.url.path.endswith(WORKER_PATH_SUFFIXES)
+        is_worker_endpoint = request.url.path in ADMIN_PATHS or request.url.path.endswith(WORKER_PATH_SUFFIXES)
         if is_worker_endpoint:
             expected = _worker_api_key()
             missing_code = "WORKER_AUTH_NOT_CONFIGURED"
             missing_message = "Worker API key is not configured"
+        elif request.url.path in ADMIN_PATHS:
+            expected = _admin_api_key()
+            missing_code = "ADMIN_AUTH_NOT_CONFIGURED"
+            missing_message = "Admin API key is not configured"
         else:
             expected = _api_key()
             missing_code = "AUTH_NOT_CONFIGURED"
