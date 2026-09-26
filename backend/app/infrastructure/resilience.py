@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from enum import Enum
+from typing import Callable
 
 from .sqlite import SQLiteStore
 
@@ -28,7 +29,7 @@ class SQLiteCircuitBreaker:
 
     def __init__(self, store: SQLiteStore, name: str, *, fail_threshold: int = 5,
                  open_duration: float = 60.0, half_open_max_calls: int = 2,
-                 success_threshold: int = 2) -> None:
+                 success_threshold: int = 2, clock: Callable[[], float] | None = None) -> None:
         if fail_threshold <= 0 or open_duration <= 0 or half_open_max_calls <= 0 or success_threshold <= 0:
             raise ValueError("circuit breaker thresholds must be positive")
         self.store = store
@@ -37,6 +38,7 @@ class SQLiteCircuitBreaker:
         self.open_duration = open_duration
         self.half_open_max_calls = half_open_max_calls
         self.success_threshold = success_threshold
+        self.clock = clock or time.time
         self._ensure_schema()
 
     def _ensure_schema(self) -> None:
@@ -48,7 +50,7 @@ class SQLiteCircuitBreaker:
             )""")
 
     def acquire(self) -> bool:
-        now = time.time()
+        now = self.clock()
         with self.store._lock:
             conn = self.store.connection
             conn.execute("BEGIN IMMEDIATE")
