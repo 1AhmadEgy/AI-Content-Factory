@@ -70,8 +70,10 @@ jobs:
       - name: Set up Gradle
         if: matrix.language == 'java-kotlin'
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.3.1"
       - name: Build Android
         if: matrix.language == 'java-kotlin'
-        run: ./gradlew assembleDebug
+        run: gradle assembleDebug
       - name: Analyze
         uses: github/codeql-action/analyze@v4
