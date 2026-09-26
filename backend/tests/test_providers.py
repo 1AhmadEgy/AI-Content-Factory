@@ -36,6 +36,16 @@ def test_registry_disable_and_enable() -> None:
     assert registry.route("generation", "text") is not None
 
 
+
+def test_registry_route_candidates_are_priority_ordered() -> None:
+    registry = ModelRegistry()
+    first = LocalModelAdapter("http://localhost:8001", frozenset({"text"}))
+    second = LocalModelAdapter("http://localhost:8002", frozenset({"text"}))
+    registry.register(RegisteredModel("second", "local", second, priority=20))
+    registry.register(RegisteredModel("first", "local", first, priority=10))
+    assert [model.id for model in registry.route_candidates("generation", "text")] == ["first", "second"]
+
+
 def test_llamagen_adapter_requires_credentials_without_network_call() -> None:
     adapter = LlamaGenVideoAdapter("video-model", api_key="")
     response = adapter.execute(ProviderRequest("video-model", {"prompt": "test"}))
