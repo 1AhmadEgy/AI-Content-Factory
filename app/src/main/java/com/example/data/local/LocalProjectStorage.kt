@@ -14,10 +14,9 @@ import java.util.UUID
 
 /** Local-first, app-private binary storage. Room stores metadata only. */
 class LocalProjectStorage(
-    context: Context,
-    rootDirectory: File = File(context.applicationContext.filesDir, "projects"),
+    private val root: File,
 ) {
-    private val root = rootDirectory
+    constructor(context: Context) : this(File(context.applicationContext.filesDir, "projects"))
 
     fun projectRoot(projectId: String): File = safeProjectDirectory(projectId)
     fun assetFile(asset: Asset): File = resolveRelative(asset.projectId, asset.relativePath)
