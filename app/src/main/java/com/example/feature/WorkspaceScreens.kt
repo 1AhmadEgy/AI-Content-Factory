@@ -1,6 +1,8 @@
 package com.example.feature
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -44,7 +46,7 @@ fun AIStudioScreen(onBack: () -> Unit = {}) {
         item {
             NeonSectionCard {
                 Text("نوع المحتوى", color = PrimaryCyan, fontWeight = FontWeight.Bold)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     types.forEach { item -> FilterChip(selected = type == item, onClick = { type = item }, label = { Text(item) }) }
                 }
             }
