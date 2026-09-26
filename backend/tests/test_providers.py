@@ -1,4 +1,4 @@
-from app.providers.builtin import LocalModelAdapter
+from app.providers.builtin import LlamaGenVideoAdapter, LocalModelAdapter
 from app.providers.contracts import ProviderRequest
 from app.providers.openai_adapter import OpenAIModelAdapter
 from app.providers.registry import ModelRegistry, RegisteredModel, default_provider_registry
@@ -34,3 +34,10 @@ def test_registry_disable_and_enable() -> None:
     assert registry.route("generation", "text") is None
     registry.enable("local-text")
     assert registry.route("generation", "text") is not None
+
+
+def test_llamagen_adapter_requires_credentials_without_network_call() -> None:
+    adapter = LlamaGenVideoAdapter("video-model", api_key="")
+    response = adapter.execute(ProviderRequest("video-model", {"prompt": "test"}))
+    assert not response.success
+    assert response.error_code == "LLAMAGEN_API_KEY_MISSING"
