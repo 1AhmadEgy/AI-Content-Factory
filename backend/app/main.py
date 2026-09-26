@@ -113,6 +113,37 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="AI Content Factory API", version="0.9.0", docs_url="/api/v1/docs", redoc_url="/api/v1/redoc", openapi_url="/api/v1/openapi.json", lifespan=lifespan)
 
 
+@app.get("/api/v1/health", tags=["system"])
+def health(request: Request):
+    return {"status": "ok", "data": {"status": "OK", "service": "ai-content-factory-backend", "version": app.version}, "requestId": request.state.request_id}
+
+
+@app.get("/api/v1/ready", tags=["system"])
+def readiness(request: Request):
+    try:
+        repositories.store.connection.execute("SELECT 1").fetchone()
+        return {"status": "ready", "data": {"status": "READY", "service": "ai-content-factory-backend", "version": app.version}, "requestId": request.state.request_id}
+    except Exception:
+        request_id = getattr(request.state, "request_id", "unknown")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": {
+                    "code": "RESOURCE_UNAVAILABLE",
+                    "message": "Required dependencies are not ready",
+                    "details": {},
+                    "requestId": request_id,
+                }
+            },
+            headers={"X-Request-Id": request_id},
+        )
+
+
+@app.get("/api/v1/readiness", include_in_schema=False)
+def readiness_alias(request: Request):
+    return readiness(request)
+
+
 @app.middleware("http")
 async def request_id_and_auth_middleware(request: Request, call_next):
     request_id = request.headers.get("X-Request-Id") or f"req_{uuid4().hex}"
@@ -149,26 +180,6 @@ async def http_exception(request: Request, exc: StarletteHTTPException):
 async def unhandled_exception(request: Request, exc: Exception):
     request_id = getattr(request.state, "request_id", "unknown")
     return JSONResponse(status_code=500, content={"error": {"code": "INTERNAL_ERROR", "message": "Internal server error", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
-
-
-@app.get("/api/v1/health", tags=["system"])
-def health(request: Request):
-    return {"status": "ok", "data": {"status": "OK", "service": "ai-content-factory-backend", "version": app.version}, "requestId": request.state.request_id}
-
-
-@app.get("/api/v1/ready", tags=["system"])
-def readiness(request: Request):
-    try:
-        repositories.store.connection.execute("SELECT 1").fetchone()
-        return {"status": "ready", "data": {"status": "READY", "service": "ai-content-factory-backend", "version": app.version}, "requestId": request.state.request_id}
-    except Exception:
-        request_id = getattr(request.state, "request_id", "unknown")
-        return JSONResponse(status_code=503, content={"error": {"code": "RESOURCE_UNAVAILABLE", "message": "Required dependencies are not ready", "details": {}, "requestId": request_id}}, headers={"X-Request-Id": request_id})
-
-
-@app.get("/api/v1/readiness", include_in_schema=False)
-def readiness_alias(request: Request):
-    return readiness(request)
 
 
 app.include_router(build_project_router(project_repository))
