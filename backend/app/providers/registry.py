@@ -10,6 +10,7 @@ from .builtin import AIMLAPIModelAdapter, LlamaGenVideoAdapter
 from .deepseek_adapter import DeepSeekModelAdapter
 from .gemini_adapter import GeminiModelAdapter
 from .openai_adapter import OpenAIModelAdapter
+from .runway_adapter import RunwayVideoAdapter
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +91,17 @@ def default_provider_registry() -> ModelRegistry:
     if os.getenv("AIMLAPI_API_KEY", "").strip():
         model = require_provider_model("AICF_AIMLAPI_TEXT_MODEL")
         registry.register(RegisteredModel(model, "aimlapi", AIMLAPIModelAdapter(model), priority=50))
+
+    if os.getenv("RUNWAYML_API_SECRET", "").strip():
+        video_model = os.getenv("AICF_RUNWAY_VIDEO_MODEL", "gen4.5").strip() or "gen4.5"
+        registry.register(
+            RegisteredModel(
+                video_model,
+                "runway",
+                RunwayVideoAdapter(video_model),
+                priority=50,
+            )
+        )
 
     if os.getenv("LLAMAGEN_API_KEY", "").strip():
         video_model = os.getenv("AICF_LLAMAGEN_VIDEO_MODEL", "").strip()
