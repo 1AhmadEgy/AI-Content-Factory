@@ -14,6 +14,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.NotificationsNone
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
@@ -55,16 +59,19 @@ fun DesignerLogo(modifier: Modifier = Modifier, contentDescription: String = "ش
 }
 
 @Composable
-fun BrandingHeader(modifier: Modifier = Modifier) {
+fun BrandingHeader(modifier: Modifier = Modifier, onSearch: () -> Unit = {}, onNotifications: () -> Unit = {}, onSettings: () -> Unit = {}) {
     val context = LocalContext.current
     Card(modifier = modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = DarkBlue), shape = RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp)) {
         Row(modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             DesignerLogo(modifier = Modifier.size(58.dp).clip(RoundedCornerShape(14.dp)))
-            Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                 Text("مصنع المحتوى بالذكاء الاصطناعي", style = MaterialTheme.typography.titleMedium)
                 Text("تصميم وتطوير أحمد رجب", style = MaterialTheme.typography.labelMedium)
                 Text(DESIGNER_EMAIL, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.clickable { context.startActivity(Intent(Intent.ACTION_SENDTO).apply { data = Uri.parse("mailto:$DESIGNER_EMAIL") }) })
             }
+            IconButton(onClick = onSearch) { Icon(Icons.Default.Search, "بحث", tint = MaterialTheme.colorScheme.primary) }
+            IconButton(onClick = onNotifications) { Icon(Icons.Default.NotificationsNone, "الإشعارات", tint = MaterialTheme.colorScheme.primary) }
+            IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, "الإعدادات", tint = MaterialTheme.colorScheme.primary) }
         }
     }
 }
