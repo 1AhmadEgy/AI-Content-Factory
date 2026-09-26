@@ -13,8 +13,10 @@ import java.security.MessageDigest
 import java.util.UUID
 
 /** Local-first, app-private binary storage. Room stores metadata only. */
-class LocalProjectStorage(context: Context) {
-    private val root = File(context.applicationContext.filesDir, "projects")
+class LocalProjectStorage(
+    private val root: File,
+) {
+    constructor(context: Context) : this(File(context.applicationContext.filesDir, "projects"))
 
     fun projectRoot(projectId: String): File = safeProjectDirectory(projectId)
     fun assetFile(asset: Asset): File = resolveRelative(asset.projectId, asset.relativePath)
@@ -54,7 +56,7 @@ class LocalProjectStorage(context: Context) {
 
         val dimensions = if (type == AssetType.IMAGE) readImageDimensions(finalFile) else null
         val duration = if (type == AssetType.AUDIO || type == AssetType.VIDEO) readDuration(finalFile) else null
-        val relativePath = root.toPath().relativize(finalFile.toPath()).toString().replace(File.separatorChar, '/')
+        val relativePath = root.canonicalFile.toURI().relativize(finalFile.canonicalFile.toURI()).path
 
         return Asset(
             projectId = projectId, type = type, mimeType = mimeType, fileName = safeName,
@@ -80,9 +82,12 @@ class LocalProjectStorage(context: Context) {
     private fun resolveRelative(projectId: String, relativePath: String): File {
         validateProjectId(projectId)
         require(!relativePath.startsWith("/") && !relativePath.contains("..")) { "Invalid asset path" }
-        val project = safeProjectDirectory(projectId).canonicalFile
-        val file = File(project, relativePath).canonicalFile
-        check(file.path.startsWith(project.path + File.separator)) { "Asset path escapes project directory" }
+        val rootCanonical = root.canonicalFile
+        val projectCanonical = File(rootCanonical, projectId).canonicalFile
+        val file = File(rootCanonical, relativePath).canonicalFile
+        check(file.path.startsWith(projectCanonical.path + File.separator)) {
+            "Asset path escapes project directory"
+        }
         return file
     }
 

@@ -35,7 +35,7 @@ class AIStoryEngine:
 
 def _validate_identity_scope(story: StoryPlan, characters: tuple[CharacterProfile, ...], locations: tuple[LocationProfile, ...]) -> None:
     allowed_characters = {c.id for c in characters}
-    allowed_locations = {l.id for l in locations}
+    allowed_locations = {location.id for location in locations}
     for scene in story.scenes:
         for shot in scene.shots:
             if set(shot.character_ids) - allowed_characters or set(shot.location_ids) - allowed_locations:
