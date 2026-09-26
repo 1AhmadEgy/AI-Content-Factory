@@ -6,6 +6,7 @@ from app.providers.configuration import (
     ProviderConfigurationError,
     require_provider_model,
     validate_anthropic_configuration,
+    validate_deepseek_configuration,
     validate_gemini_configuration,
     validate_openai_configuration,
 )
@@ -46,3 +47,10 @@ def test_anthropic_configuration_requires_model_when_key_is_present(monkeypatch)
     monkeypatch.delenv("AICF_ANTHROPIC_TEXT_MODEL", raising=False)
     with pytest.raises(ProviderConfigurationError):
         validate_anthropic_configuration()
+
+
+def test_deepseek_configuration_requires_model_when_key_is_present(monkeypatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "configured")
+    monkeypatch.delenv("AICF_DEEPSEEK_TEXT_MODEL", raising=False)
+    with pytest.raises(ProviderConfigurationError):
+        validate_deepseek_configuration()
