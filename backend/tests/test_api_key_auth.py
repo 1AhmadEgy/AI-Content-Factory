@@ -62,3 +62,18 @@ def test_android_authorization_header_shape_is_accepted(monkeypatch):
         headers={"Authorization": "Bearer android-backend-key"},
     )
     assert response.status_code == 200
+
+def test_test_mode_cannot_disable_auth_in_production(monkeypatch):
+    monkeypatch.setenv("AICF_API_KEY", "test-aicf-key")
+    monkeypatch.setenv("AICF_TEST_MODE", "true")
+    monkeypatch.setenv("AICF_ENV", "production")
+    response = TestClient(app).get(PROTECTED_PATH)
+    assert response.status_code == 401
+
+
+def test_test_mode_bypass_is_confined_to_test_environment(monkeypatch):
+    monkeypatch.setenv("AICF_API_KEY", "test-aicf-key")
+    monkeypatch.setenv("AICF_TEST_MODE", "true")
+    monkeypatch.setenv("AICF_ENV", "test")
+    response = TestClient(app).get(PROTECTED_PATH)
+    assert response.status_code == 200
