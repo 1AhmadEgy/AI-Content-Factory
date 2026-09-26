@@ -8,13 +8,21 @@ def _clear_provider_env(monkeypatch) -> None:
         "OPENAI_API_KEY",
         "GEMINI_API_KEY",
         "ANTHROPIC_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "AIMLAPI_API_KEY",
+        "LLAMAGEN_API_KEY",
         "AICF_TEXT_MODEL",
         "AICF_IMAGE_MODEL",
         "AICF_TTS_MODEL",
         "AICF_GEMINI_TEXT_MODEL",
         "AICF_ANTHROPIC_TEXT_MODEL",
-        "DEEPSEEK_API_KEY",
         "AICF_DEEPSEEK_TEXT_MODEL",
+        "AICF_AIMLAPI_TEXT_MODEL",
+        "AICF_LLAMAGEN_VIDEO_MODEL",
+        "AICF_COMFYUI_BASE_URL",
+        "AICF_COMFYUI_API_KEY",
+        "AICF_COMFYUI_MODEL",
+        "AICF_COMFYUI_CAPABILITIES",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -52,3 +60,4 @@ def test_production_registry_contains_only_configured_real_providers(monkeypatch
     assert registry.get("claude-test-model").provider == "anthropic"
     assert registry.get("deepseek-test-model").provider == "deepseek"
     assert registry.route("generation", "story") is not None
+}
