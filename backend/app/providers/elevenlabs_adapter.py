@@ -97,7 +97,8 @@ class ElevenLabsTTSAdapter(ModelAdapter):
                 "provider": "elevenlabs",
                 "model": model,
                 "voiceId": voice_id,
-                "language": language_code or "auto",
+                "language": language_code or "ar",
+                "dialect": parameters.get("dialect", "arabic"),
             }
             if request_id:
                 metadata["requestId"] = request_id
