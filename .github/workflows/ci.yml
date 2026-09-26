@@ -50,7 +50,7 @@ jobs:
       - name: Validate canonical brand configuration
         run: |
           python -m json.tool backend/app/config/brands/afham_wadhak.json >/dev/null
-          test -s assets/branding/afham_wadhak/*
+          find assets/branding/afham_wadhak -type f -size +0c -print -quit | grep -q .
 
       - name: Install backend dependencies
         run: |
