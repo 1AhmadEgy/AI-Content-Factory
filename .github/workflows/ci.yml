@@ -110,19 +110,18 @@ jobs:
           java-version: "17"
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v6
-
-      - name: Make Gradle wrapper executable
-        run: chmod +x ./gradlew
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.3.1"
 
       - name: Run Android unit tests
-        run: ./gradlew testDebugUnitTest --stacktrace
+        run: gradle testDebugUnitTest --no-daemon --stacktrace
 
       - name: Run Android lint
-        run: ./gradlew lintDebug --stacktrace
+        run: gradle lintDebug --no-daemon --stacktrace
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: gradle assembleDebug --no-daemon --stacktrace
 
       - name: Upload Android test reports
         if: always()
