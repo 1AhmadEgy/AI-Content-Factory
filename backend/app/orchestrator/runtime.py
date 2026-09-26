@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timezone
 from dataclasses import replace
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from ..infrastructure.location_repository import SQLiteLocationRepository
 from ..infrastructure.job_event_repository import SQLiteJobEventRepository
 from ..infrastructure.provider_run_repository import SQLiteProviderRunRepository
 from ..infrastructure.shot_composition_repository import SQLiteShotCompositionRepository
-from ..infrastructure.sqlite import SQLiteRepositories
+from ..infrastructure.sqlite import SQLiteRepositories, _dt, _json
 from ..infrastructure.sqlite_queue import SQLiteJobQueue
 from ..infrastructure.storage import LocalAssetStorage
 from ..library.country_catalog import get_country_library
@@ -80,10 +81,53 @@ class OrchestratorRuntime:
         self.job_service = JobService(repositories.jobs, context_provider=self.context_snapshot)
         self.pipeline = ProductionPipelineOrchestrator(self.job_service, self.queue.enqueue)
         self.completion_gate = CompletionGate(self.assets, self.storage)
-        self.executor = JobExecutor(repositories.jobs, self.queue, self.workers, self.events.append, self._on_job_completed, completion_gate=self.completion_gate)
+        self.executor = JobExecutor(repositories.jobs, self.queue, self.workers, self.events.append, self._on_job_completed, completion_gate=self.completion_gate, commit_pending_assets=self._commit_pending_assets)
         self.country_library_seed = ensure_country_library_projects(repositories)
         self.library_seed = ensure_egypt_library(repositories)
         self.libya_library_seed = ensure_libya_library(repositories)
+
+    def _commit_pending_assets(self, job: GenerationJob, lease: JobLease, assets: list) -> list[str]:
+        """Persist render output metadata only while the exact lease is still active."""
+        now = datetime.now(timezone.utc)
+        ids: list[str] = []
+        with self.repositories.store._lock:
+            self.repositories.store.connection.execute("BEGIN IMMEDIATE")
+            try:
+                lease_row = self.repositories.store.connection.execute(
+                    "SELECT job_id FROM job_leases WHERE job_id=? AND lease_id=? AND worker_id=? AND expires_at > ?",
+                    (lease.job_id, lease.lease_id, lease.worker_id, now.isoformat()),
+                ).fetchone()
+                if lease_row is None:
+                    raise RuntimeError("JOB_LEASE_LOST")
+                for asset in assets:
+                    provenance = asset.provenance
+                    self.repositories.store.connection.execute(
+                        """INSERT OR IGNORE INTO assets(
+                            id,project_id,type,path,mime_type,size_bytes,sha256,status,provenance_json,created_at
+                        ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            asset.id, asset.project_id, asset.type.value, asset.path,
+                            asset.mime_type, asset.size_bytes, asset.sha256, asset.status.value,
+                            _json({
+                                "provider": provenance.provider,
+                                "model": provenance.model,
+                                "prompt": provenance.prompt,
+                                "negativePrompt": provenance.negative_prompt,
+                                "seed": provenance.seed,
+                                "sourceAssetIds": provenance.source_asset_ids,
+                                "jobId": provenance.job_id,
+                                "licenseStatus": provenance.license_status.value,
+                                "metadata": provenance.metadata,
+                            }),
+                            _dt(asset.created_at),
+                        ),
+                    )
+                    ids.append(asset.id)
+                self.repositories.store.connection.commit()
+            except Exception:
+                self.repositories.store.connection.rollback()
+                raise
+        return ids
 
     def context_snapshot(self, project_id: str) -> dict:
         return self.series_bible.snapshot(project_id)
