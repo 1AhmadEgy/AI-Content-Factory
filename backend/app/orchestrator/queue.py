@@ -30,6 +30,12 @@ class WorkerContext:
     cancellation_requested: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
     progress_callback: Callable[[float, str], None] | None = None
+    lease_check: Callable[[], bool] | None = None
+
+    def ensure_lease(self) -> None:
+        """Fail closed before irreversible worker side effects when a lease is lost."""
+        if self.lease_check is not None and not self.lease_check():
+            raise RuntimeError("JOB_LEASE_LOST")
 
     def report_progress(self, progress: float, stage: str) -> None:
         """Publish only finite, bounded progress so invalid numerics never reach persistence/events."""
