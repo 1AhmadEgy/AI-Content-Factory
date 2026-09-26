@@ -225,3 +225,29 @@ def test_attempt_fencing_rejects_old_attempt() -> None:
         ) is True
     finally:
         repositories.close()
+
+
+def test_stale_worker_cannot_complete_after_reclaim() -> None:
+    repositories = _repositories()
+    try:
+        queue = SQLiteJobQueue(repositories.store, repositories.jobs)
+        claimed_a = queue.claim("job-1", "worker-a")
+        assert claimed_a is not None
+        _, lease_a = claimed_a
+
+        _set_lease_expiry(repositories, timedelta(seconds=-1))
+        assert queue.release_expired() == 1
+
+        claimed_b = queue.claim("job-1", "worker-b")
+        assert claimed_b is not None
+        _, lease_b = claimed_b
+
+        with pytest.raises(KeyError, match="JOB_LEASE_NOT_FOUND"):
+            queue.acknowledge(lease_a, JobStatus.COMPLETED)
+
+        current = repositories.jobs.get("job-1")
+        assert current is not None
+        assert current.status is JobStatus.RUNNING
+        assert queue.is_lease_active(lease_b) is True
+    finally:
+        repositories.close()
