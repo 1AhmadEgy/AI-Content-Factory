@@ -180,7 +180,7 @@ class OrchestratorRuntime:
         self._resolve_library_scope(brief)
         project_id = brief.project_id
         characters = tuple(c for cid in brief.character_ids if (c := self.characters.get(cid)) is not None and (project_id is None or c.project_id == project_id))
-        locations = tuple(l for lid in brief.location_ids if (l := self.locations.get(lid)) is not None and (project_id is None or l.project_id == project_id))
+        locations = tuple(location for lid in brief.location_ids if (location := self.locations.get(lid)) is not None and (project_id is None or location.project_id == project_id))
         if brief.character_ids and not characters:
             raise ValueError("CHARACTERS_NOT_FOUND_IN_PROJECT")
         if brief.location_ids and not locations:
