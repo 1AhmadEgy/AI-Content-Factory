@@ -1,79 +1,36 @@
 package com.example.data.local
 
-import com.example.core.model.*
-
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
+import com.example.core.model.*
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface FactoryDao {
-    @Query("SELECT * FROM projects")
-    fun getAllProjects(): Flow<List<Project>>
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertProject(project: Project)
-
-    @Query("SELECT * FROM series")
-    fun getAllSeries(): Flow<List<Series>>
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertSeries(series: Series)
-
-    @Query("SELECT * FROM episodes")
-    fun getAllEpisodes(): Flow<List<Episode>>
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertEpisode(episode: Episode)
-
-    @Query("SELECT * FROM scenes")
-    fun getAllScenes(): Flow<List<Scene>>
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertScene(scene: Scene)
-
-    @Update
-    suspend fun updateScene(scene: Scene)
-
+    @Query("SELECT * FROM projects") fun getAllProjects(): Flow<List<Project>>
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertProject(project: Project)
+    @Query("SELECT * FROM series") fun getAllSeries(): Flow<List<Series>>
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertSeries(series: Series)
+    @Query("SELECT * FROM episodes") fun getAllEpisodes(): Flow<List<Episode>>
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertEpisode(episode: Episode)
+    @Query("SELECT * FROM scenes") fun getAllScenes(): Flow<List<Scene>>
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertScene(scene: Scene)
+    @Update suspend fun updateScene(scene: Scene)
     @Query("SELECT series.projectId FROM scenes JOIN episodes ON episodes.id = scenes.episodeId JOIN series ON series.id = episodes.seriesId WHERE scenes.id = :sceneId LIMIT 1")
     suspend fun findProjectIdForScene(sceneId: String): String?
-
     @Query("SELECT projectId FROM series WHERE id = :seriesId LIMIT 1")
     suspend fun findProjectIdForSeries(seriesId: String): String?
-
-    @Query("SELECT * FROM characters")
-    fun getAllCharacters(): Flow<List<Character>>
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertCharacter(character: Character)
-
-    @Query("SELECT * FROM locations")
-    fun getAllLocations(): Flow<List<Location>>
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertLocation(location: Location)
-
-    @Query("SELECT * FROM shots")
-    fun getAllShots(): Flow<List<Shot>>
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertShot(shot: Shot)
-
-    @Query("SELECT * FROM jobs")
-    fun getAllJobs(): Flow<List<GenerationJob>>
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertJob(job: GenerationJob)
-
-    // Room runs a List<> @Insert as a single transaction, unlike calling insertJob() in a loop
-    // (one transaction per call). Use this whenever inserting/updating more than one job at once,
-    // e.g. syncing a full job list from the backend.
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertJobs(jobs: List<GenerationJob>)
-
-    @Update
-    suspend fun updateJob(job: GenerationJob)
+    @Query("SELECT * FROM characters") fun getAllCharacters(): Flow<List<Character>>
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertCharacter(character: Character)
+    @Query("SELECT * FROM locations") fun getAllLocations(): Flow<List<Location>>
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertLocation(location: Location)
+    @Query("SELECT * FROM shots") fun getAllShots(): Flow<List<Shot>>
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertShot(shot: Shot)
+    @Query("SELECT * FROM jobs") fun getAllJobs(): Flow<List<GenerationJob>>
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertJob(job: GenerationJob)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertJobs(jobs: List<GenerationJob>)
+    @Update suspend fun updateJob(job: GenerationJob)
 }

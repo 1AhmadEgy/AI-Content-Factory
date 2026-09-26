@@ -3,6 +3,7 @@ package com.example.data.repository
 import android.util.Log
 import com.example.core.model.*
 import com.example.data.local.FactoryDao
+import com.example.data.local.LocalProjectStorage
 import com.example.data.remote.BackendJob
 import com.example.data.remote.CreateJobRequest
 import com.example.data.remote.JobInputRequest
@@ -19,15 +20,10 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
 
-class Repository(private val dao: FactoryDao) {
+class Repository(private val dao: FactoryDao, private val assetRepository: AssetRepository) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    // Do not construct Retrofit during Application startup. A malformed build-time API URL
-    // would otherwise throw from Repository construction and force-close the app before UI.
-    // Lazy initialization lets the existing coroutine error handling surface the failure safely.
     private val api by lazy { NetworkClient.apiService }
-    private val isoParser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSX", Locale.US).apply {
-        timeZone = TimeZone.getTimeZone("UTC")
-    }
+    private val isoParser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSX", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
 
     val projects: StateFlow<List<Project>> = dao.getAllProjects().stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
     val series: StateFlow<List<Series>> = dao.getAllSeries().stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -37,63 +33,40 @@ class Repository(private val dao: FactoryDao) {
 
     init {
         scope.launch {
-            try {
-                syncJobs()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                Log.e("Repository", "Initial job sync failed; continuing offline", e)
-            }
+            try { syncJobs() } catch (e: CancellationException) { throw e }
+            catch (e: Throwable) { Log.e("Repository", "Initial job sync failed; continuing offline", e) }
         }
     }
 
     suspend fun addProject(name: String, description: String) {
-        try {
-            val project = api.createProject(ProjectCreateRequest(name, description)).data
-            dao.insertProject(Project(id = project.id, name = project.name, description = project.description))
-        } catch (e: Exception) {
-            Log.e("Repository", "createProject failed", e)
-            throw e
-        }
+        val project = api.createProject(ProjectCreateRequest(name, description)).data
+        dao.insertProject(Project(id = project.id, name = project.name, description = project.description))
     }
 
-    suspend fun addSeries(projectId: String, title: String) {
-        dao.insertSeries(Series(projectId = projectId, title = title))
-    }
+    suspend fun addSeries(projectId: String, title: String) = dao.insertSeries(Series(projectId = projectId, title = title))
 
     suspend fun addEpisode(seriesId: String, number: Int, title: String) {
         val episode = Episode(seriesId = seriesId, number = number, title = title)
         dao.insertEpisode(episode)
-        dao.findProjectIdForSeries(seriesId)?.let { projectId -> snapshotEpisodeContext(projectId, episode.id) }
+        dao.findProjectIdForSeries(seriesId)?.let { snapshotEpisodeContext(it, episode.id) }
     }
 
-    private suspend fun snapshotEpisodeContext(projectId: String, episodeId: String) {
-        api.snapshotEpisodeContext(projectId, episodeId)
-    }
+    private suspend fun snapshotEpisodeContext(projectId: String, episodeId: String) { api.snapshotEpisodeContext(projectId, episodeId) }
 
     suspend fun generateScene(sceneId: String) {
         val scene = scenes.value.find { it.id == sceneId } ?: return
-        val projectId = dao.findProjectIdForScene(sceneId) ?: run {
-            scene.status = "FAILED"
-            dao.updateScene(scene)
-            return
-        }
+        val projectId = dao.findProjectIdForScene(sceneId) ?: run { scene.status = "FAILED"; dao.updateScene(scene); return }
         scene.status = "QUEUED"
         dao.updateScene(scene)
         try {
             val response = api.createJob(
                 request = CreateJobRequest(
-                    projectId = projectId,
-                    type = "IMAGE",
-                    targetType = "scene",
-                    targetId = sceneId,
+                    projectId = projectId, type = "IMAGE", targetType = "scene", targetId = sceneId,
                     input = JobInputRequest(
                         parameters = mapOf(
                             "prompt" to "${scene.description}. Location: ${scene.location}. Emotion: ${scene.emotion}. Create a production-ready cinematic frame with consistent character and environment identity.",
-                            "sceneId" to sceneId,
-                            "description" to scene.description,
-                            "location" to scene.location,
-                            "emotion" to scene.emotion,
+                            "sceneId" to sceneId, "description" to scene.description,
+                            "location" to scene.location, "emotion" to scene.emotion,
                         ),
                         deterministic = false,
                     ),
@@ -116,53 +89,40 @@ class Repository(private val dao: FactoryDao) {
     }
 
     private fun BackendJob.toLocalJob(): GenerationJob = GenerationJob(
-        id = id,
-        jobType = type,
-        targetType = targetType,
-        targetId = targetId,
+        id = id, jobType = type, targetType = targetType, targetId = targetId,
         status = runCatching { JobStatus.valueOf(status.uppercase(Locale.US)) }.getOrDefault(JobStatus.FAILED),
-        priority = priority,
-        attempt = attempt,
-        maxAttempts = maxAttempts,
-        provider = provider,
-        model = model,
-        progress = (progress.coerceIn(0.0, 1.0) * 100).toInt(),
-        errorCode = errorCode,
-        errorMessage = errorMessage,
-        createdAt = parseTime(createdAt) ?: System.currentTimeMillis(),
-        startedAt = parseTime(startedAt),
-        completedAt = parseTime(completedAt),
+        priority = priority, attempt = attempt, maxAttempts = maxAttempts, provider = provider, model = model,
+        progress = (progress.coerceIn(0.0, 1.0) * 100).toInt(), errorCode = errorCode, errorMessage = errorMessage,
+        createdAt = parseTime(createdAt) ?: System.currentTimeMillis(), startedAt = parseTime(startedAt), completedAt = parseTime(completedAt),
     )
 
     suspend fun syncJobs(projectId: String? = null) {
-        // Batch into a single transaction instead of one insert (and one transaction) per job.
         dao.insertJobs(api.listJobs(projectId = projectId, limit = 200).data.map { it.toLocalJob() })
     }
 
-    suspend fun cancelJob(jobId: String): GenerationJob? = api.cancelJob(jobId).data.toLocalJob().also { dao.insertJob(it) }
-
-    suspend fun retryJob(jobId: String): GenerationJob? = api.retryJob(jobId).data.toLocalJob().also { dao.insertJob(it) }
-
-    suspend fun refreshJob(jobId: String) {
-        dao.insertJob(api.getJob(jobId).data.toLocalJob())
+    suspend fun materializeRemoteAsset(assetId: String): Asset {
+        val remote = api.getAsset(assetId).data
+        return assetRepository.importRemote(remote.projectId, remote, api.downloadAsset(assetId))
     }
+    suspend fun cancelJob(jobId: String): GenerationJob? = api.cancelJob(jobId).data.toLocalJob().also { dao.insertJob(it) }
+    suspend fun retryJob(jobId: String): GenerationJob? = api.retryJob(jobId).data.toLocalJob().also { dao.insertJob(it) }
+    suspend fun refreshJob(jobId: String) { dao.insertJob(api.getJob(jobId).data.toLocalJob()) }
 }
 
 object Graph {
     lateinit var repository: Repository
+    lateinit var assetRepository: AssetRepository
 
     fun provide(context: android.content.Context) {
         val appContext = context.applicationContext
         val database = try {
             com.example.data.local.FactoryDatabase.getDatabase(appContext)
         } catch (firstFailure: Throwable) {
-            // A corrupted/incompatible local database should not permanently brick the app.
-            // Room's normal migration fallback handles schema changes; this retry is a final
-            // recovery path for an unreadable database. It may discard local cached data.
             Log.e("Graph", "Database initialization failed; recreating local database", firstFailure)
             appContext.deleteDatabase("factory_database")
             com.example.data.local.FactoryDatabase.getDatabase(appContext)
         }
-        repository = Repository(database.factoryDao())
+        assetRepository = AssetRepository(database.assetDao(), LocalProjectStorage(appContext))
+        repository = Repository(database.factoryDao(), assetRepository)
     }
 }
