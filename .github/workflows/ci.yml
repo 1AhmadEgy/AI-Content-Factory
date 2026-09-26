@@ -16,6 +16,7 @@ concurrency:
 env:
   AICF_API_KEY: test-aicf-key
   AICF_TEST_MODE: "true"
+  AICF_ENV: test
 
 jobs:
   backend:
