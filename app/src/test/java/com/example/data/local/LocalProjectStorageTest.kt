@@ -8,6 +8,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 import java.util.UUID
+import java.util.UUID
 
 class LocalProjectStorageTest {
     @Test
@@ -43,8 +44,8 @@ class LocalProjectStorageTest {
         }
     }
     private fun testRoot(context: android.content.Context): File =
-        File.createTempFile("aicf-local-storage-", "", context.cacheDir).apply {
-            check(delete()) { "Unable to prepare temporary test root" }
-            check(mkdirs()) { "Unable to create temporary test root" }
+        File(context.cacheDir, "aicf-local-storage-" + UUID.randomUUID()).apply {
+            parentFile?.mkdirs()
+            mkdirs()
         }
 }
