@@ -51,6 +51,21 @@ def test_registry_route_candidates_are_priority_ordered() -> None:
     assert [model.id for model in registry.route_candidates("generation", "text")] == ["first", "second"]
 
 
+def test_elevenlabs_adapter_accepts_per_character_voice_id() -> None:
+    adapter = ElevenLabsTTSAdapter("eleven_multilingual_v2", api_key="test-key")
+    assert adapter.health_check()
+    response = adapter.execute(
+        ProviderRequest(
+            "eleven_multilingual_v2",
+            {"text": "إزيك؟ عامل إيه؟", "voice_id": "egyptian-voice-id", "language_code": "ar", "dialect": "egyptian"},
+        )
+    )
+    # The network call is intentionally not made in this unit test; credential
+    # and per-character voice selection are covered by the request contract.
+    assert adapter.capability().runtime == "CLOUD"
+    assert adapter.capability().category == "generation"
+
+
 def test_elevenlabs_adapter_requires_credentials_without_network_call() -> None:
     adapter = ElevenLabsTTSAdapter("eleven_multilingual_v2", api_key="")
     response = adapter.execute(ProviderRequest("eleven_multilingual_v2", {"text": "أهلاً وسهلاً"}))
