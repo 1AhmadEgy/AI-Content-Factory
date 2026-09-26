@@ -1,6 +1,7 @@
 from app.domain.jobs import JobType
 from app.orchestrator.queue import JobExecutionResult, WorkerContext
 from app.providers.builtin import LlamaGenVideoAdapter, LocalModelAdapter
+from app.providers.comfyui_adapter import ComfyUIModelAdapter
 from app.workers.provider_worker import ProviderGenerationWorker
 from app.providers.contracts import ProviderRequest
 from app.providers.openai_adapter import OpenAIModelAdapter
@@ -101,3 +102,32 @@ def test_worker_stops_after_permanent_provider_failure() -> None:
     assert not result.success
     assert attempts == ["first"]
     assert result.error_code == "PERMANENT"
+
+
+def test_comfyui_adapter_requires_workflow_without_network_call() -> None:
+    adapter = ComfyUIModelAdapter("comfy", base_url="http://127.0.0.1:8188")
+    response = adapter.execute(ProviderRequest("comfy", {"prompt": "test"}))
+    assert not response.success
+    assert response.error_code == "COMFYUI_WORKFLOW_REQUIRED"
+
+
+def test_comfyui_adapter_applies_safe_node_input_overrides() -> None:
+    adapter = ComfyUIModelAdapter("comfy", base_url="http://127.0.0.1:8188")
+    workflow = {"1": {"class_type": "CLIPTextEncode", "inputs": {"text": "old"}}}
+    captured: list[dict] = []
+
+    def fake_request(method, path, payload, headers):
+        captured.append(payload or {})
+        return {"prompt_id": "test-prompt"}
+
+    adapter._request_json = fake_request  # type: ignore[method-assign]
+    response = adapter.execute(
+        ProviderRequest(
+            "comfy",
+            {"workflow": workflow, "prompt_inputs": {"1.text": "new"}},
+        )
+    )
+    assert not response.success
+    assert response.error_code == "COMFYUI_TIMEOUT"
+    assert captured[0]["prompt"]["1"]["inputs"]["text"] == "new"
+    assert workflow["1"]["inputs"]["text"] == "old"
