@@ -5,6 +5,8 @@ from dataclasses import dataclass
 
 from .configuration import require_provider_model
 from .contracts import ModelAdapter
+from .anthropic_adapter import AnthropicModelAdapter
+from .gemini_adapter import GeminiModelAdapter
 from .openai_adapter import OpenAIModelAdapter
 
 
@@ -55,12 +57,22 @@ class ModelRegistry:
 def default_provider_registry() -> ModelRegistry:
     """Build the production registry from explicit environment configuration."""
     registry = ModelRegistry()
-    if not os.getenv("OPENAI_API_KEY", "").strip():
-        return registry
-    text_model = require_provider_model("AICF_TEXT_MODEL")
-    image_model = require_provider_model("AICF_IMAGE_MODEL")
-    tts_model = require_provider_model("AICF_TTS_MODEL")
-    registry.register(RegisteredModel(text_model, "openai", OpenAIModelAdapter(text_model, "TEXT"), priority=10))
-    registry.register(RegisteredModel(image_model, "openai", OpenAIModelAdapter(image_model, "IMAGE"), priority=10))
-    registry.register(RegisteredModel(tts_model, "openai", OpenAIModelAdapter(tts_model, "TTS"), priority=10))
+
+    if os.getenv("OPENAI_API_KEY", "").strip():
+        text_model = require_provider_model("AICF_TEXT_MODEL")
+        image_model = require_provider_model("AICF_IMAGE_MODEL")
+        tts_model = require_provider_model("AICF_TTS_MODEL")
+        registry.register(RegisteredModel(text_model, "openai", OpenAIModelAdapter(text_model, "TEXT"), priority=10))
+        registry.register(RegisteredModel(image_model, "openai", OpenAIModelAdapter(image_model, "IMAGE"), priority=10))
+        registry.register(RegisteredModel(tts_model, "openai", OpenAIModelAdapter(tts_model, "TTS"), priority=10))
+
+    if os.getenv("GEMINI_API_KEY", "").strip():
+        model = require_provider_model("AICF_GEMINI_TEXT_MODEL")
+        registry.register(RegisteredModel(model, "gemini", GeminiModelAdapter(model), priority=20))
+
+    if os.getenv("ANTHROPIC_API_KEY", "").strip():
+        model = require_provider_model("AICF_ANTHROPIC_TEXT_MODEL")
+        registry.register(RegisteredModel(model, "anthropic", AnthropicModelAdapter(model), priority=30))
+
     return registry
+}
