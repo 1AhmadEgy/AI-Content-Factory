@@ -20,7 +20,7 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
 
-class Repository(private val dao: FactoryDao) {
+class Repository(private val dao: FactoryDao, private val assetRepository: AssetRepository) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val api by lazy { NetworkClient.apiService }
     private val isoParser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSX", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
@@ -99,6 +99,11 @@ class Repository(private val dao: FactoryDao) {
     suspend fun syncJobs(projectId: String? = null) {
         dao.insertJobs(api.listJobs(projectId = projectId, limit = 200).data.map { it.toLocalJob() })
     }
+
+    suspend fun materializeRemoteAsset(assetId: String): Asset {
+        val remote = api.getAsset(assetId).data
+        return assetRepository.importRemote(remote.projectId, remote, api.downloadAsset(assetId))
+    }
     suspend fun cancelJob(jobId: String): GenerationJob? = api.cancelJob(jobId).data.toLocalJob().also { dao.insertJob(it) }
     suspend fun retryJob(jobId: String): GenerationJob? = api.retryJob(jobId).data.toLocalJob().also { dao.insertJob(it) }
     suspend fun refreshJob(jobId: String) { dao.insertJob(api.getJob(jobId).data.toLocalJob()) }
@@ -117,7 +122,7 @@ object Graph {
             appContext.deleteDatabase("factory_database")
             com.example.data.local.FactoryDatabase.getDatabase(appContext)
         }
-        repository = Repository(database.factoryDao())
         assetRepository = AssetRepository(database.assetDao(), LocalProjectStorage(appContext))
+        repository = Repository(database.factoryDao(), assetRepository)
     }
 }
