@@ -83,9 +83,12 @@ class LocalProjectStorage(
     private fun resolveRelative(projectId: String, relativePath: String): File {
         validateProjectId(projectId)
         require(!relativePath.startsWith("/") && !relativePath.contains("..")) { "Invalid asset path" }
-        val project = safeProjectDirectory(projectId).canonicalFile
-        val file = File(project, relativePath).canonicalFile
-        check(file.path.startsWith(project.path + File.separator)) { "Asset path escapes project directory" }
+        val rootCanonical = root.canonicalFile
+        val projectCanonical = File(rootCanonical, projectId).canonicalFile
+        val file = File(rootCanonical, relativePath).canonicalFile
+        check(file.path.startsWith(projectCanonical.path + File.separator)) {
+            "Asset path escapes project directory"
+        }
         return file
     }
 
