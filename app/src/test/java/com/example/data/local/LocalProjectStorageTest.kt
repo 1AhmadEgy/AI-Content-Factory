@@ -3,6 +3,7 @@ package com.example.data.local
 import androidx.test.core.app.ApplicationProvider
 import com.example.core.model.AssetType
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -11,7 +12,8 @@ class LocalProjectStorageTest {
     @Test
     fun importsBytes_intoProjectPrivateStorage_andVerifiesChecksum() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-        val storage = LocalProjectStorage(context)
+        val root = File(context.cacheDir, "local-project-storage-${System.nanoTime()}")
+        val storage = LocalProjectStorage(context, root)
         val asset = storage.importBytes(
             projectId = "project-test",
             bytes = "hello-local".toByteArray(),
@@ -27,12 +29,16 @@ class LocalProjectStorageTest {
         assertTrue(!asset.fileName.contains("/"))
         assertTrue(!asset.fileName.contains(".."))
 
-        storage.delete(asset)
+        assertTrue(storage.delete(asset))
+        assertTrue(root.deleteRecursively())
     }
 
-    @Test(expected = IllegalArgumentException::class)
+    @Test
     fun rejectsPathTraversalProjectId() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-        LocalProjectStorage(context).importBytes("../escape", byteArrayOf(1), AssetType.OTHER, "application/octet-stream", "x.bin")
+        val storage = LocalProjectStorage(context, File(context.cacheDir, "local-project-storage-${System.nanoTime()}"))
+        assertThrows(IllegalArgumentException::class.java) {
+            storage.importBytes("../escape", byteArrayOf(1), AssetType.OTHER, "application/octet-stream", "x.bin")
+        }
     }
 }
