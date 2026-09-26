@@ -13,6 +13,8 @@ def _clear_provider_env(monkeypatch) -> None:
         "AICF_TTS_MODEL",
         "AICF_GEMINI_TEXT_MODEL",
         "AICF_ANTHROPIC_TEXT_MODEL",
+        "DEEPSEEK_API_KEY",
+        "AICF_DEEPSEEK_TEXT_MODEL",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -33,6 +35,8 @@ def test_production_registry_contains_only_configured_real_providers(monkeypatch
     monkeypatch.setenv("AICF_GEMINI_TEXT_MODEL", "gemini-test-model")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
     monkeypatch.setenv("AICF_ANTHROPIC_TEXT_MODEL", "claude-test-model")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+    monkeypatch.setenv("AICF_DEEPSEEK_TEXT_MODEL", "deepseek-test-model")
 
     registry = default_provider_registry()
 
@@ -45,4 +49,5 @@ def test_production_registry_contains_only_configured_real_providers(monkeypatch
     ]
     assert registry.get("gemini-test-model").provider == "gemini"
     assert registry.get("claude-test-model").provider == "anthropic"
+    assert registry.get("deepseek-test-model").provider == "deepseek"
     assert registry.route("generation", "story") is not None
