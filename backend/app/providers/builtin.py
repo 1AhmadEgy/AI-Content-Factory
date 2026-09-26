@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import urlparse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -117,7 +118,7 @@ class LlamaGenVideoAdapter(ModelAdapter):
         self.poll_interval_seconds = max(1, poll_interval_seconds)
 
     def capability(self) -> ModelCapability:
-        return ModelCapability(category="video", capabilities=self._CAPABILITIES, runtime="CLOUD", license_status="CONFIGURED")
+        return ModelCapability(category="generation", capabilities=self._CAPABILITIES, runtime="CLOUD", license_status="CONFIGURED")
 
     def health_check(self) -> bool:
         return bool(self.api_key)
@@ -165,8 +166,15 @@ class LlamaGenVideoAdapter(ModelAdapter):
                 if state in {"completed", "complete", "succeeded", "success", "done", "finished"}:
                     url = self._extract_media_url(last)
                     if url:
+                        media = self._download_media(url, timeout)
+                        if media is None:
+                            return ProviderResponse(False, provider_run_id=str(provider_id), error_code="LLAMAGEN_MEDIA_DOWNLOAD_FAILED", error_message="Generated media URL was not an allowed LlamaGen HTTPS resource")
+                        body, mime = media
                         return ProviderResponse(
                             True,
+                            output_bytes=body,
+                            output_mime_type=mime or "video/mp4",
+                            output_filename=f"{provider_id}.mp4",
                             output_metadata={"provider": "llamagen", "status": state, "remote_url": url},
                             provider_run_id=str(provider_id),
                         )
@@ -236,6 +244,36 @@ class LlamaGenVideoAdapter(ModelAdapter):
                     if found:
                         return found
         return None
+
+    @staticmethod
+    def _download_media(url: str, timeout: int) -> tuple[bytes, str] | None:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme != "https" or not (host == "llamagen.ai" or host.endswith(".llamagen.ai")):
+            return None
+        request = Request(url, headers={"Accept": "video/*,application/octet-stream"}, method="GET")
+        try:
+            with urlopen(request, timeout=min(timeout, 60)) as response:
+                content_type = response.headers.get("Content-Type", "video/mp4").split(";", 1)[0].strip()
+                if not content_type.startswith("video/"):
+                    return None
+                max_bytes = 500 * 1024 * 1024
+                length = response.headers.get("Content-Length")
+                if length and int(length) > max_bytes:
+                    return None
+                chunks: list[bytes] = []
+                total = 0
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > max_bytes:
+                        return None
+                    chunks.append(chunk)
+                return b"".join(chunks), content_type
+        except (HTTPError, OSError, URLError, ValueError):
+            return None
 
     @staticmethod
     def _extract_error(data: object) -> str:
