@@ -5,6 +5,8 @@ import com.example.core.model.AssetStatus
 import com.example.core.model.AssetType
 import com.example.data.local.AssetDao
 import com.example.data.local.LocalProjectStorage
+import com.example.data.remote.RemoteAsset
+import okhttp3.ResponseBody
 import kotlinx.coroutines.flow.Flow
 import java.io.File
 
@@ -42,6 +44,21 @@ class AssetRepository(private val dao: AssetDao, private val storage: LocalProje
         val valid = storage.verify(asset)
         if (!valid) dao.update(asset.copy(status = AssetStatus.CORRUPTED))
         return valid
+    }
+
+    suspend fun importRemote(projectId: String, remote: RemoteAsset, body: ResponseBody): Asset {
+        require(remote.projectId == projectId) { "Remote asset belongs to another project" }
+        require(remote.status == "READY") { "Remote asset is not ready" }
+        body.use {
+            val type = runCatching { AssetType.valueOf(remote.type.uppercase()) }.getOrDefault(AssetType.OTHER)
+            val fileName = remote.path.substringAfterLast('/').ifBlank { remote.id }
+            val asset = storage.importStream(projectId, it.byteStream(), type, remote.mimeType, fileName)
+            require(asset.sha256.equals(remote.sha256, ignoreCase = true)) { "Remote asset checksum mismatch" }
+            val existing = dao.findByHash(projectId, asset.sha256)
+            if (existing != null) { storage.delete(asset); return existing }
+            dao.insert(asset)
+            return asset
+        }
     }
 
     suspend fun projectBytes(projectId: String): Long = dao.projectBytes(projectId)
