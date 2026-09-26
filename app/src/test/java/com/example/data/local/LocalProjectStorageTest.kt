@@ -37,10 +37,9 @@ class LocalProjectStorageTest {
 
     @Test
     fun rejectsPathTraversalProjectId() {
-        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val root = testRoot()
         try {
-            val storage = LocalProjectStorage(context, root)
+            val storage = LocalProjectStorage(rootDirectory = root)
             assertThrows(IllegalArgumentException::class.java) {
                 storage.importBytes("../escape", byteArrayOf(1), AssetType.OTHER, "application/octet-stream", "x.bin")
             }
