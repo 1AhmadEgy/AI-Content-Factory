@@ -66,7 +66,9 @@ def _api_key() -> str:
 
 
 def _auth_test_mode() -> bool:
-    return os.getenv("AICF_TEST_MODE", "false").strip().lower() in {"1", "true", "yes", "on"}
+    enabled = os.getenv("AICF_TEST_MODE", "false").strip().lower() in {"1", "true", "yes", "on"}
+    environment = os.getenv("AICF_ENV", "production").strip().lower()
+    return enabled and environment == "test"
 
 
 PUBLIC_PATHS = {"/api/v1/health", "/api/v1/ready", "/api/v1/readiness"}
