@@ -56,13 +56,13 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      - name: Verify Gradle wrapper
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f ./gradlew
-          chmod +x ./gradlew
-          ./gradlew --version
+      - name: Set up Gradle 9.3.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.3.1"
+
+      - name: Verify Gradle toolchain
+        run: gradle --version
 
       - name: Calculate Android versionCode
         id: version
@@ -108,7 +108,7 @@ jobs:
           set -euo pipefail
           test -n "${STORE_PASSWORD:-}"
           test -n "${KEY_PASSWORD:-}"
-          ./gradlew :app:testReleaseUnitTest :app:assembleRelease :app:bundleRelease --no-daemon --stacktrace
+          gradle :app:testReleaseUnitTest :app:assembleRelease :app:bundleRelease --no-daemon --stacktrace
 
       - name: Verify signed artifacts
         shell: bash
