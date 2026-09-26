@@ -41,3 +41,7 @@ def validate_anthropic_configuration() -> None:
 
 def validate_deepseek_configuration() -> None:
     _validate_provider_models("DEEPSEEK_API_KEY", ("AICF_DEEPSEEK_TEXT_MODEL",))
+
+
+def validate_aimlapi_configuration() -> None:
+    _validate_provider_models("AIMLAPI_API_KEY", ("AICF_AIMLAPI_TEXT_MODEL",))
