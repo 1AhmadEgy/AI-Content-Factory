@@ -124,9 +124,10 @@ class RenderWorker(Worker):
             if errors:
                 return JobExecutionResult(False, error_code="FINAL_QC_FAILED", error_message=";".join(errors), retryable=False)
             self._progress(context, 0.90, "ffprobe_qc_passed")
-            if context is not None:
-                context.ensure_lease()
-            digest, path, size = self.storage.put_file(str(branded_output))
+            digest, path, size = self.storage.put_file(
+                str(branded_output),
+                commit_guard=context.ensure_lease if context is not None else None,
+            )
         except (OSError, RuntimeError, ValueError) as exc:
             return JobExecutionResult(False, error_code="RENDER_IO_ERROR", error_message=str(exc), retryable=True)
         finally:
