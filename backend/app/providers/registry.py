@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from .anthropic_adapter import AnthropicModelAdapter
 from .configuration import require_provider_model
+from .comfyui_adapter import ComfyUIModelAdapter
 from .contracts import ModelAdapter
 from .builtin import AIMLAPIModelAdapter, LlamaGenVideoAdapter
 from .deepseek_adapter import DeepSeekModelAdapter
@@ -90,6 +91,22 @@ def default_provider_registry() -> ModelRegistry:
     if os.getenv("AIMLAPI_API_KEY", "").strip():
         model = require_provider_model("AICF_AIMLAPI_TEXT_MODEL")
         registry.register(RegisteredModel(model, "aimlapi", AIMLAPIModelAdapter(model), priority=50))
+
+    if os.getenv("AICF_COMFYUI_BASE_URL", "").strip():
+        capabilities = frozenset(
+            value.strip()
+            for value in os.getenv("AICF_COMFYUI_CAPABILITIES", "image,video").split(",")
+            if value.strip()
+        )
+        model_id = os.getenv("AICF_COMFYUI_MODEL", "comfyui-workflow").strip() or "comfyui-workflow"
+        registry.register(
+            RegisteredModel(
+                model_id,
+                "comfyui",
+                ComfyUIModelAdapter(model_id, capabilities=capabilities),
+                priority=55,
+            )
+        )
 
     if os.getenv("LLAMAGEN_API_KEY", "").strip():
         video_model = os.getenv("AICF_LLAMAGEN_VIDEO_MODEL", "").strip()
