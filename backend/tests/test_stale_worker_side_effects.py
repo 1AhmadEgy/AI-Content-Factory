@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from app.domain.jobs import GenerationJob, JobStatus, JobType
 from app.orchestrator.job_executor import JobExecutor
 from app.orchestrator.queue import JobExecutionResult, JobLease, JobQueue, Worker
@@ -23,11 +25,10 @@ class ExpiringQueue(JobQueue):
         return 0
 
 
-class SideEffectWorker(Worker):
+class StagedRenderWorker(Worker):
     worker_type = "render"
 
-    def __init__(self, side_effects, queue):
-        self.side_effects = side_effects
+    def __init__(self, queue):
         self.queue = queue
         self.initialized = True
 
@@ -35,17 +36,18 @@ class SideEffectWorker(Worker):
     def health_check(self): return self.initialized
 
     def execute(self, job, context):
-        # Characterize the current RenderWorker boundary: the worker can persist
-        # an output-side effect before JobExecutor performs its final lease check.
-        self.side_effects.append({"job_id": job.id, "asset_id": "orphan-asset"})
+        # The worker only returns a staged output. It does not persist Asset metadata.
         self.queue.active = False
-        return JobExecutionResult(True, ["orphan-asset"])
+        return JobExecutionResult(
+            True,
+            pending_assets=[SimpleNamespace(id="staged-asset")],
+        )
 
     def cancel(self, job_id): pass
     def shutdown(self): self.initialized = False
 
 
-def test_stale_worker_can_leave_output_side_effect_before_executor_rejects_completion():
+def test_stale_render_cannot_commit_pending_asset_after_lease_loss():
     job = GenerationJob(
         id="job-1",
         project_id="project-1",
@@ -57,15 +59,20 @@ def test_stale_worker_can_leave_output_side_effect_before_executor_rejects_compl
     job.attempt = 1
     lease = JobLease("job-1", "worker-a", "lease-a", "2099-01-01T00:00:00+00:00")
     queue = ExpiringQueue()
-    side_effects = []
+    committed = []
 
     registry = WorkerRegistry()
-    registry.register(SideEffectWorker(side_effects, queue), {"VIDEO"}, worker_id="worker-a")
+    registry.register(StagedRenderWorker(queue), {"VIDEO"}, worker_id="worker-a")
+
+    def commit_pending_assets(job, lease, assets):
+        committed.extend(asset.id for asset in assets)
+        return [asset.id for asset in assets]
 
     executor = JobExecutor(
         jobs=type("Jobs", (), {})(),
         queue=queue,
         workers=registry,
+        commit_pending_assets=commit_pending_assets,
     )
 
     try:
@@ -75,5 +82,5 @@ def test_stale_worker_can_leave_output_side_effect_before_executor_rejects_compl
     else:
         raise AssertionError("stale completion must be rejected")
 
-    assert side_effects == [{"job_id": "job-1", "asset_id": "orphan-asset"}]
+    assert committed == []
     assert queue.acknowledged == []
