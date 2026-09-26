@@ -1,6 +1,7 @@
 from app.domain.jobs import JobType
 from app.orchestrator.queue import JobExecutionResult, WorkerContext
 from app.providers.builtin import LlamaGenVideoAdapter, LocalModelAdapter
+from app.providers.runway_adapter import RunwayVideoAdapter
 from app.workers.provider_worker import ProviderGenerationWorker
 from app.providers.contracts import ProviderRequest
 from app.providers.openai_adapter import OpenAIModelAdapter
@@ -47,6 +48,13 @@ def test_registry_route_candidates_are_priority_ordered() -> None:
     registry.register(RegisteredModel("second", "local", second, priority=20))
     registry.register(RegisteredModel("first", "local", first, priority=10))
     assert [model.id for model in registry.route_candidates("generation", "text")] == ["first", "second"]
+
+
+def test_runway_adapter_requires_credentials_without_network_call() -> None:
+    adapter = RunwayVideoAdapter("gen4.5", api_key="")
+    response = adapter.execute(ProviderRequest("gen4.5", {"prompt": "test"}))
+    assert not response.success
+    assert response.error_code == "RUNWAY_API_KEY_MISSING"
 
 
 def test_llamagen_adapter_requires_credentials_without_network_call() -> None:
