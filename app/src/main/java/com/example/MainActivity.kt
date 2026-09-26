@@ -6,6 +6,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.*
@@ -41,13 +42,21 @@ fun MainScreen() {
     LaunchedEffect(errorMessage) { errorMessage?.let { snackbarHostState.showSnackbar(it); viewModel.clearError() } }
 
     Scaffold(
-        topBar = { if (route != "designer") BrandingHeader() },
+        topBar = { if (route != "designer") BrandingHeader(
+            onSearch = { navController.navigate("search") },
+            onNotifications = { navController.navigate("notifications") },
+            onSettings = { navController.navigate("settings") }
+        ) },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             NavigationBar(containerColor = DarkBlue) {
                 NavigationBarItem(icon = { Icon(Icons.Filled.VideoLibrary, "المشاريع") }, label = { Text("المشاريع") },
                     selected = route?.startsWith("projects") == true,
                     onClick = { navController.navigate("projects") { launchSingleTop = true } },
+                    colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan))
+                NavigationBarItem(icon = { Icon(Icons.Filled.AutoAwesome, "الاستوديو") }, label = { Text("الاستوديو") },
+                    selected = route == "studio",
+                    onClick = { navController.navigate("studio") { launchSingleTop = true } },
                     colors = NavigationBarItemDefaults.colors(selectedIconColor = DarkBlue, selectedTextColor = PrimaryCyan, indicatorColor = PrimaryCyan))
                 NavigationBarItem(icon = { Icon(Icons.Filled.List, "الشخصيات") }, label = { Text("الشخصيات") },
                     selected = route == "characters" || route?.startsWith("character/") == true || route == "scene-builder",
@@ -88,6 +97,21 @@ fun MainScreen() {
             composable("scene-builder") { SceneBuilderScreen { navController.popBackStack() } }
             composable("control") { NeonControlCenterScreen() }
             composable("designer") { DesignerProfileScreen { navController.popBackStack() } }
+            composable("studio") { AIStudioScreen { navController.popBackStack() } }
+            composable("search") { SearchScreen { navController.popBackStack() } }
+            composable("notifications") { NotificationsScreen { navController.popBackStack() } }
+            composable("settings") {
+                SettingsScreen(
+                    onBack = { navController.popBackStack() },
+                    onProviders = { navController.navigate("providers") },
+                    onBackend = { navController.navigate("backend-status") },
+                    onHelp = { navController.navigate("help") }
+                )
+            }
+            composable("providers") { ProviderSettingsScreen { navController.popBackStack() } }
+            composable("backend-status") { BackendStatusScreen { navController.popBackStack() } }
+            composable("generation-history") { GenerationHistoryScreen { navController.popBackStack() } }
+            composable("help") { HelpAboutScreen { navController.popBackStack() } }
         }
     }
 }
