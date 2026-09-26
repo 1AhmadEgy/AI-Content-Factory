@@ -6,6 +6,7 @@ from secrets import compare_digest
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -112,11 +113,41 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="AI Content Factory API", version="0.9.0", docs_url="/api/v1/docs", redoc_url="/api/v1/redoc", openapi_url="/api/v1/openapi.json", lifespan=lifespan)
 
+def _cors_origins() -> list[str]:
+    raw = os.getenv("AICF_CORS_ORIGINS", "").strip()
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins(),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Request-Id", "X-Lease-Id", "X-Worker-Id"],
+)
+
+MAX_REQUEST_BYTES = max(1024, int(os.getenv("AICF_MAX_REQUEST_BYTES", str(10 * 1024 * 1024))))
+
 
 @app.middleware("http")
 async def request_id_and_auth_middleware(request: Request, call_next):
     request_id = request.headers.get("X-Request-Id") or f"req_{uuid4().hex}"
     request.state.request_id = request_id
+
+    content_length = request.headers.get("Content-Length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_REQUEST_BYTES:
+                return JSONResponse(
+                    status_code=413,
+                    content={"error": {"code": "REQUEST_TOO_LARGE", "message": "Request body exceeds configured limit", "details": {"maxBytes": MAX_REQUEST_BYTES}, "requestId": request_id}},
+                    headers={"X-Request-Id": request_id},
+                )
+        except ValueError:
+            return JSONResponse(
+                status_code=400,
+                content={"error": {"code": "INVALID_CONTENT_LENGTH", "message": "Invalid Content-Length header", "details": {}, "requestId": request_id}},
+                headers={"X-Request-Id": request_id},
+            )
 
     if request.url.path not in PUBLIC_PATHS and not _auth_test_mode():
         expected = _api_key()
