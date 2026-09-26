@@ -10,7 +10,9 @@ import retrofit2.http.Header
 import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.Path
+import okhttp3.ResponseBody
 import retrofit2.http.Query
+import retrofit2.http.Streaming
 
 interface FactoryApiService {
     @POST("api/v1/projects") suspend fun createProject(@Body request: ProjectCreateRequest): ProjectEnvelope
@@ -23,6 +25,10 @@ interface FactoryApiService {
     @POST("api/v1/jobs/{job_id}/retry") suspend fun retryJob(@Path("job_id") jobId: String): JobEnvelope
     @GET("api/v1/jobs/{job_id}/events") suspend fun getJobEvents(@Path("job_id") jobId: String, @Query("limit") limit: Int = 200): JobEventsFeed
     @GET("api/v1/jobs/{job_id}/provider-runs") suspend fun getProviderRuns(@Path("job_id") jobId: String, @Query("limit") limit: Int = 50): ProviderRunsFeed
+
+    @GET("api/v1/assets") suspend fun listAssets(@Query("projectId") projectId: String? = null, @Query("type") type: String? = null, @Query("status") status: String? = "READY", @Query("page") page: Int = 1, @Query("pageSize") pageSize: Int = 50): AssetsFeed
+    @GET("api/v1/assets/{asset_id}") suspend fun getAsset(@Path("asset_id") assetId: String): AssetEnvelope
+    @Streaming @GET("api/v1/assets/{asset_id}/download") suspend fun downloadAsset(@Path("asset_id") assetId: String): ResponseBody
 
     @GET("api/v1/characters") suspend fun listCharacters(@Query("projectId") projectId: String? = null, @Query("limit") limit: Int = 100): CharacterListEnvelope
     @GET("api/v1/characters/{character_id}") suspend fun getCharacter(@Path("character_id") characterId: String): CharacterEnvelope
