@@ -62,3 +62,17 @@ def test_android_authorization_header_shape_is_accepted(monkeypatch):
         headers={"Authorization": "Bearer android-backend-key"},
     )
     assert response.status_code == 200
+
+
+def test_privileged_job_endpoints_require_authentication(monkeypatch):
+    monkeypatch.setenv("AICF_API_KEY", "test-aicf-key")
+    monkeypatch.setenv("AICF_TEST_MODE", "false")
+    client = TestClient(app)
+    for path, method, kwargs in [
+        ("/api/v1/jobs/maintenance/recover-expired", "post", {}),
+        ("/api/v1/jobs/missing/execute", "post", {}),
+        ("/api/v1/jobs/missing/heartbeat", "post", {"headers": {"X-Lease-Id": "lease", "X-Worker-Id": "worker"}}),
+    ]:
+        response = getattr(client, method)(path, **kwargs)
+        assert response.status_code == 401, (path, response.status_code, response.text)
+        assert response.headers["www-authenticate"] == "Bearer"
