@@ -65,7 +65,17 @@ def _api_key() -> str:
     return os.getenv("AICF_API_KEY", "").strip()
 
 
+def _worker_api_key() -> str:
+    return os.getenv("AICF_WORKER_API_KEY", "").strip()
+
+
+def _admin_api_key() -> str:
+    return os.getenv("AICF_ADMIN_API_KEY", "").strip()
+
+
 PUBLIC_PATHS = {"/api/v1/health", "/api/v1/ready", "/api/v1/readiness"}
+WORKER_PATHS = {"/api/v1/jobs/maintenance/recover-expired"}
+WORKER_PATH_SUFFIXES = ("/heartbeat",)
 
 
 def _authentication_error(request_id: str, message: str = "Authentication required") -> JSONResponse:
@@ -146,11 +156,19 @@ async def request_id_and_auth_middleware(request: Request, call_next):
             )
 
     if request.url.path not in PUBLIC_PATHS:
-        expected = _api_key()
+        is_worker_endpoint = request.url.path in WORKER_PATHS or request.url.path.endswith(WORKER_PATH_SUFFIXES)
+        if is_worker_endpoint:
+            expected = _worker_api_key()
+            missing_code = "WORKER_AUTH_NOT_CONFIGURED"
+            missing_message = "Worker API key is not configured"
+        else:
+            expected = _api_key()
+            missing_code = "AUTH_NOT_CONFIGURED"
+            missing_message = "Backend API key is not configured"
         if not expected:
             return JSONResponse(
                 status_code=503,
-                content={"error": {"code": "AUTH_NOT_CONFIGURED", "message": "Backend API key is not configured", "details": {}, "requestId": request_id}},
+                content={"error": {"code": missing_code, "message": missing_message, "details": {}, "requestId": request_id}},
                 headers={"X-Request-Id": request_id},
             )
         authorization = request.headers.get("Authorization", "")
