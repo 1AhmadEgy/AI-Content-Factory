@@ -9,7 +9,8 @@ from pathlib import Path
 from ..application.ai_scene_planner import AIScenePlanner
 from ..application.ai_script_engine import AIScriptEngine
 from ..application.ai_story_engine import AIStoryEngine
-from ..domain.assets import Asset\nfrom ..domain.content import ContentBrief, StoryPlan
+from ..domain.assets import Asset
+from ..domain.content import ContentBrief, StoryPlan
 from ..domain.jobs import GenerationJob, JobStatus, JobType
 from ..infrastructure.asset_repository import SQLiteAssetRepository
 from ..infrastructure.character_repository import SQLiteCharacterRepository
