@@ -29,17 +29,16 @@ android {
   signingConfigs {
     create("release") {
       val keystorePath = System.getenv("KEYSTORE_PATH")
-      require(!keystorePath.isNullOrBlank()) {
-        "KEYSTORE_PATH must be set for release signing; refusing implicit keystore fallback."
-      }
       val storePassword = System.getenv("STORE_PASSWORD")
       val keyPassword = System.getenv("KEY_PASSWORD")
-      require(!storePassword.isNullOrBlank()) { "STORE_PASSWORD must be set for release signing." }
-      require(!keyPassword.isNullOrBlank()) { "KEY_PASSWORD must be set for release signing." }
-      storeFile = file(keystorePath)
-      this.storePassword = storePassword
-      keyAlias = "upload"
-      this.keyPassword = keyPassword
+      if (!keystorePath.isNullOrBlank() && !storePassword.isNullOrBlank() && !keyPassword.isNullOrBlank()) {
+        storeFile = file(keystorePath)
+        this.storePassword = storePassword
+        keyAlias = "upload"
+        this.keyPassword = keyPassword
+      } else {
+        logger.lifecycle("Release signing credentials are not configured; release signing will fail if a release artifact is requested.")
+      }
     }
     create("debugConfig") {
       storeFile = file("${rootDir}/debug.keystore")
