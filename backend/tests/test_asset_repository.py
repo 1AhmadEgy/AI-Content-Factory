@@ -1,3 +1,5 @@
+import pytest
+
 from app.domain.assets import Asset, AssetStatus, AssetType
 from app.infrastructure.asset_repository import SQLiteAssetRepository
 from app.infrastructure.sqlite import SQLiteRepositories
@@ -39,7 +41,6 @@ def test_asset_create_rejects_id_reuse_with_different_content(tmp_path):
         assets = SQLiteAssetRepository(repositories.store)
         assets.create(make_asset())
 
-        import pytest
         with pytest.raises(ValueError, match="ASSET_ID_CONFLICT"):
             assets.create(make_asset(sha256="b" * 64))
     finally:
