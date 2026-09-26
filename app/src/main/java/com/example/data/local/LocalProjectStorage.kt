@@ -13,8 +13,13 @@ import java.security.MessageDigest
 import java.util.UUID
 
 /** Local-first, app-private binary storage. Room stores metadata only. */
-class LocalProjectStorage(context: Context) {
-    private val root = File(context.applicationContext.filesDir, "projects")
+class LocalProjectStorage(context: Context, rootDirectory: File? = null) {
+    private val root = rootDirectory ?: File(context.applicationContext.filesDir, "projects")
+
+    init {
+        check(root.exists() || root.mkdirs()) { "Unable to create local project storage root" }
+        check(root.isDirectory) { "Local project storage root is not a directory" }
+    }
 
     fun projectRoot(projectId: String): File = safeProjectDirectory(projectId)
     fun assetFile(asset: Asset): File = resolveRelative(asset.projectId, asset.relativePath)
