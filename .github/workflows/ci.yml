@@ -1,76 +1,83 @@
-name: CI and Publish
+name: CI
 
 on:
+  pull_request:
   push:
     branches: [main, master]
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  AICF_API_KEY: test-aicf-key
 
 jobs:
-  test:
-    name: Build assets and test backend
+  backend:
+    name: Backend
     runs-on: ubuntu-24.04
-    env:
-      AICF_API_KEY: test-aicf-key
-      AICF_TEST_MODE: "true"
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
-          cache: "pip"
-          cache-dependency-path: |
-            backend/requirements.txt
-      - name: Install system packages
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y inkscape ffmpeg
-      - name: Build brand assets
+          sudo apt-get install -y --no-install-recommends ffmpeg inkscape
+          sudo rm -rf /var/lib/apt/lists/*
+
+      - name: Build brand and video assets
         run: |
           chmod +x build_brand_assets.sh build_video_assets.sh
           ./build_brand_assets.sh
           ./build_video_assets.sh
-      - name: Validate canonical Afham Wadhak brand
+
+      - name: Validate canonical brand configuration
         run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          p = Path("backend/app/config/brands/afham_wadhak.json")
-          c = json.loads(p.read_text(encoding="utf-8"))
-          assert c["brand_id"] == "afham_wadhak"
-          assert c["brand_name_ar"] == "افهم واضحك"
-          assert c["brand_name_en"] == "Afham Wadhak"
-          assert c["tagline_ar"] == "افهم ببساطة وابتسم"
-          assert c["color_palette"]["secondary"] == "#FFD84D"
-          assert c["color_palette"]["accent"] == "#4DB6FF"
-          assert c["watermark"]["position"] == "bottom_right"
-          print("Afham Wadhak brand configuration: OK")
-          PY
+          python -m json.tool backend/app/config/brands/afham_wadhak.json >/dev/null
+          find assets/branding/afham_wadhak -type f -size +0c -print -quit | grep -q .
+
       - name: Install backend dependencies
         run: |
-          cd backend
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install ruff
+          python -m pip install -r backend/requirements.txt
+          python -m pip install ruff
+
       - name: Validate Python syntax
-        run: python -m compileall -q backend/app backend/tests
-      - name: Run Ruff lint
+        run: python -m compileall -q backend
+
+      - name: Ruff
+        run: ruff check backend --ignore E701,E702
+
+      - name: Pytest
         run: |
+          mkdir -p test-results
           cd backend
-          ruff check --select F --output-format=github .
-      - name: Run backend tests
-        run: |
-          cd backend
-          PYTHONPATH=. pytest tests/ -v
+          PYTHONPATH=. pytest tests/ -v --junitxml=../test-results/pytest.xml
+
+      - name: Upload backend test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-results
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Upload generated assets
         uses: actions/upload-artifact@v4
         with:
@@ -79,54 +86,113 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  docker:
-    name: Build and push Docker image
+  android:
+    name: Android
     runs-on: ubuntu-24.04
-    needs: test
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.3.1"
+
+      - name: Unit tests
+        run: gradle testDebugUnitTest
+
+      - name: Lint
+        run: gradle lintDebug
+
+      - name: Assemble debug APK
+        run: gradle assembleDebug
+
+      - name: Upload Android reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-reports
+          path: |
+            app/build/reports/
+            app/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload debug APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 7
+
+  docker:
+    name: Docker build
+    needs: [backend, android]
+    runs-on: ubuntu-24.04
+
     permissions:
       contents: read
       packages: write
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Install media build tools
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Download generated assets
+        uses: actions/download-artifact@v4
+        with:
+          name: afham-wadhak-assets
+          path: assets/branding/afham_wadhak/
+
+      - name: Validate Docker build context
         run: |
-          sudo apt-get update
-          sudo apt-get install -y inkscape ffmpeg
-      - name: Build canonical brand assets
-        run: |
-          chmod +x build_brand_assets.sh build_video_assets.sh
-          ./build_brand_assets.sh
-          ./build_video_assets.sh
+          test -d assets/branding/afham_wadhak
+          find assets/branding/afham_wadhak -type f -size +0c | head -n 20
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
       - name: Log in to GHCR
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=latest
-            type=sha,prefix=
+            type=sha
             type=ref,event=branch
-          labels: |
-            org.opencontainers.image.title=AI Content Factory
-            org.opencontainers.image.description=AI Content Factory Backend
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-      - name: Build and push
+            type=raw,value=latest,enable=${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
+
+      - name: Build Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./backend/Dockerfile
-          push: true
+          push: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true

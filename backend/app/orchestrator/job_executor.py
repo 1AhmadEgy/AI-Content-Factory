@@ -76,6 +76,7 @@ class JobExecutor:
                     lease_id=lease.lease_id,
                     metadata={"attempt": job.attempt},
                     progress_callback=lambda progress, stage: self._set_progress(job, stage, progress, lease=lease),
+                    lease_check=lambda: self.queue.is_lease_active(lease),
                 ),
             )
         except Exception as exc:

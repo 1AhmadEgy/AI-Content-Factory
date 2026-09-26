@@ -1,9 +1,13 @@
+import os
+
+os.environ.setdefault("AICF_API_KEY", "test-aicf-key")
+
 from fastapi.testclient import TestClient
 
 from app.main import app
 
 
-client = TestClient(app)
+client = TestClient(app, headers={"Authorization": "Bearer test-aicf-key"})
 
 
 def test_pipeline_api_rejects_incomplete_timeline_without_fake_rendering():

@@ -81,6 +81,17 @@ class RenderWorker(Worker):
                     return JobExecutionResult(False, error_code="RENDER_ASSET_MISSING", error_message=clip.asset_id)
                 asset_paths[clip.asset_id] = str(path)
         subtitle_path = str(job.input.parameters.get("subtitlePath", "")).strip() or None
+        if subtitle_path:
+            subtitle_file = Path(subtitle_path)
+            try:
+                subtitle_file = subtitle_file.resolve(strict=True)
+                storage_root = self.storage.root.resolve()
+                subtitle_file.relative_to(storage_root)
+            except (OSError, ValueError):
+                return JobExecutionResult(False, error_code="RENDER_SUBTITLE_PATH_INVALID", error_message="subtitlePath must resolve to a file inside asset storage")
+            if not subtitle_file.is_file():
+                return JobExecutionResult(False, error_code="RENDER_SUBTITLE_PATH_INVALID", error_message="subtitlePath is not a regular file")
+            subtitle_path = str(subtitle_file)
         subtitle_asset_id = job.input.parameters.get("subtitleAssetId")
         if not subtitle_path and subtitle_asset_id:
             subtitle_asset = self.assets.get(str(subtitle_asset_id))
@@ -113,7 +124,10 @@ class RenderWorker(Worker):
             if errors:
                 return JobExecutionResult(False, error_code="FINAL_QC_FAILED", error_message=";".join(errors), retryable=False)
             self._progress(context, 0.90, "ffprobe_qc_passed")
-            digest, path, size = self.storage.put_file(str(branded_output))
+            digest, path, size = self.storage.put_file(
+                str(branded_output),
+                commit_guard=context.ensure_lease if context is not None else None,
+            )
         except (OSError, RuntimeError, ValueError) as exc:
             return JobExecutionResult(False, error_code="RENDER_IO_ERROR", error_message=str(exc), retryable=True)
         finally:
@@ -123,6 +137,8 @@ class RenderWorker(Worker):
         self._progress(context, 0.96, "provenance")
         asset_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"render:{job.id}:{digest}"))
         asset = Asset(id=asset_id, project_id=job.project_id, type=AssetType.VIDEO, path=path, mime_type="video/mp4", size_bytes=size, sha256=digest, status=AssetStatus.READY, provenance=build_provenance(job, source_asset_ids=[timeline_asset.id, *asset_paths.keys()], metadata={"width": width, "height": height, "fps": fps, "durationUs": timeline.duration_us, "engine": "ffmpeg", "brandId": brand_id, "brandName": brand_renderer.config.get("brand_name_en", brand_id), "finalQc": "passed", "language": job.input.parameters.get("language"), "locale": job.input.parameters.get("locale"), "languagePackVersion": job.input.parameters.get("languagePackVersion"), "languageRender": bool(job.input.parameters.get("languageRender"))}, license_status=LicenseStatus.VERIFIED))
+        if context is not None:
+            context.ensure_lease()
         self.assets.create(asset)
         return JobExecutionResult(True, [asset_id], {"width": width, "height": height, "fps": fps, "durationUs": timeline.duration_us, "finalQc": "passed", "engine": "ffmpeg", "brandId": brand_id, "brandName": brand_renderer.config.get("brand_name_en", brand_id), "languageRender": bool(job.input.parameters.get("languageRender")), "language": job.input.parameters.get("language")}, f"ffmpeg-{job.id}")
 

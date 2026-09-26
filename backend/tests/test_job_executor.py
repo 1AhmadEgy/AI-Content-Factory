@@ -86,3 +86,40 @@ def test_executor_does_not_retry_non_retryable_failure():
     result = JobExecutor(jobs, queue, registry).execute_claimed(job, make_lease())
     assert result.status is JobStatus.FAILED
     assert queue.acknowledged == [JobStatus.FAILED]
+
+
+class LeaseLosingQueue(FakeQueue):
+    def __init__(self):
+        super().__init__()
+        self.active = True
+
+    def is_lease_active(self, lease):
+        return self.active
+
+
+class LeaseLosingWorker(FakeWorker):
+    def __init__(self, queue):
+        super().__init__(JobExecutionResult(True, ["asset-1"], {"score": 1.0}, "run-1"))
+        self.queue = queue
+
+    def execute(self, job, context):
+        self.queue.active = False
+        return self.result
+
+
+def test_executor_rejects_completion_after_lease_loss():
+    job = make_job()
+    jobs = FakeJobs(job)
+    queue = LeaseLosingQueue()
+    worker = LeaseLosingWorker(queue)
+    registry = WorkerRegistry()
+    registry.register(worker, {"IMAGE"}, worker_id="worker-1")
+
+    executor = JobExecutor(jobs, queue, registry, completion_gate=AllowCompletion())
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="JOB_LEASE_LOST"):
+        executor.execute_claimed(job, make_lease())
+
+    assert queue.acknowledged == []

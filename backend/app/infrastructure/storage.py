@@ -4,6 +4,7 @@ import hashlib
 import os
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from typing import Callable
 
 from ..domain.assets import Asset
 
@@ -35,7 +36,7 @@ class LocalAssetStorage:
                     raise
         return digest, str(target), len(data)
 
-    def put_file(self, source: str | Path) -> tuple[str, str, int]:
+    def put_file(self, source: str | Path, *, commit_guard: Callable[[], None] | None = None) -> tuple[str, str, int]:
         """Stream a file into content-addressed storage without loading it into RAM."""
         source_path = Path(source)
         if not source_path.is_file():
@@ -61,6 +62,8 @@ class LocalAssetStorage:
             directory.mkdir(parents=True, exist_ok=True)
             target = directory / digest
             if not target.exists():
+                if commit_guard is not None:
+                    commit_guard()
                 os.replace(temporary, target)
                 temporary = None
             return digest, str(target), size

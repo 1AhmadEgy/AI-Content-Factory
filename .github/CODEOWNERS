@@ -1,0 +1,5 @@
+# Critical repository paths require owner review.
+.github/workflows/** @1AhmadEgy
+backend/** @1AhmadEgy
+backend/Dockerfile @1AhmadEgy
+app/** @1AhmadEgy

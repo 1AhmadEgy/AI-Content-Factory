@@ -62,3 +62,52 @@ def test_android_authorization_header_shape_is_accepted(monkeypatch):
         headers={"Authorization": "Bearer android-backend-key"},
     )
     assert response.status_code == 200
+
+def test_test_mode_cannot_disable_auth_in_production(monkeypatch):
+    monkeypatch.setenv("AICF_API_KEY", "test-aicf-key")
+    monkeypatch.setenv("AICF_TEST_MODE", "true")
+    monkeypatch.setenv("AICF_ENV", "production")
+    response = TestClient(app).get(PROTECTED_PATH)
+    assert response.status_code == 401
+
+
+def test_test_mode_bypass_is_confined_to_test_environment(monkeypatch):
+    monkeypatch.setenv("AICF_API_KEY", "test-aicf-key")
+    monkeypatch.setenv("AICF_TEST_MODE", "true")
+    monkeypatch.setenv("AICF_ENV", "test")
+    response = TestClient(app).get(PROTECTED_PATH)
+    assert response.status_code == 200
+
+
+def test_worker_endpoint_requires_worker_capability(monkeypatch):
+    monkeypatch.setenv("AICF_API_KEY", "user-key")
+    monkeypatch.setenv("AICF_WORKER_API_KEY", "worker-key")
+    monkeypatch.setenv("AICF_TEST_MODE", "false")
+    response = TestClient(app).post(
+        "/api/v1/jobs/job-1/heartbeat",
+        headers={"Authorization": "Bearer user-key", "X-Lease-Id": "lease-1", "X-Worker-Id": "worker-1"},
+    )
+    assert response.status_code == 401
+
+
+def test_admin_endpoint_requires_admin_capability(monkeypatch):
+    monkeypatch.setenv("AICF_API_KEY", "user-key")
+    monkeypatch.setenv("AICF_ADMIN_API_KEY", "admin-key")
+    monkeypatch.setenv("AICF_TEST_MODE", "false")
+    response = TestClient(app).post(
+        "/api/v1/jobs/maintenance/recover-expired",
+        headers={"Authorization": "Bearer user-key"},
+    )
+    assert response.status_code == 401
+
+
+def test_worker_endpoint_fails_closed_when_worker_key_missing(monkeypatch):
+    monkeypatch.setenv("AICF_API_KEY", "user-key")
+    monkeypatch.delenv("AICF_WORKER_API_KEY", raising=False)
+    monkeypatch.setenv("AICF_TEST_MODE", "false")
+    response = TestClient(app).post(
+        "/api/v1/jobs/job-1/heartbeat",
+        headers={"Authorization": "Bearer user-key", "X-Lease-Id": "lease-1", "X-Worker-Id": "worker-1"},
+    )
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "WORKER_AUTH_NOT_CONFIGURED"
