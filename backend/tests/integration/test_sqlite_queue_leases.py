@@ -76,7 +76,7 @@ def test_expired_lease_can_be_reclaimed_with_new_lease_and_attempt() -> None:
         assert claimed_a is not None
         job_a, lease_a = claimed_a
 
-        _expire_lease(repositories)
+        _set_lease_expiry(repositories, timedelta(seconds=-1))
         assert queue.release_expired() == 1
 
         claimed_b = queue.claim("job-1", "worker-b")
@@ -98,7 +98,7 @@ def test_stale_worker_cannot_update_after_reclaim() -> None:
         assert claimed_a is not None
         job_a, lease_a = claimed_a
 
-        _expire_lease(repositories)
+        _set_lease_expiry(repositories, timedelta(seconds=-1))
         assert queue.release_expired() == 1
 
         claimed_b = queue.claim("job-1", "worker-b")
@@ -139,7 +139,7 @@ def test_stale_worker_cannot_heartbeat_after_reclaim() -> None:
         assert claimed_a is not None
         _, lease_a = claimed_a
 
-        _expire_lease(repositories)
+        _set_lease_expiry(repositories, timedelta(seconds=-1))
         assert queue.release_expired() == 1
         assert queue.claim("job-1", "worker-b") is not None
 
@@ -201,7 +201,7 @@ def test_attempt_fencing_rejects_old_attempt() -> None:
         assert claimed_a is not None
         job_a, _ = claimed_a
 
-        _expire_lease(repositories)
+        _set_lease_expiry(repositories, timedelta(seconds=-1))
         assert queue.release_expired() == 1
 
         claimed_b = queue.claim("job-1", "worker-b")
