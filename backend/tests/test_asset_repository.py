@@ -1,6 +1,7 @@
 from app.domain.assets import Asset, AssetStatus, AssetType
 from app.infrastructure.asset_repository import SQLiteAssetRepository
 from app.infrastructure.sqlite import SQLiteRepositories
+from app.domain.projects import Project
 
 
 def make_asset(asset_id="asset-1", project_id="project-1", sha256="a" * 64):
@@ -19,7 +20,7 @@ def make_asset(asset_id="asset-1", project_id="project-1", sha256="a" * 64):
 def test_asset_create_is_idempotent_for_identical_commit(tmp_path):
     repositories = SQLiteRepositories(tmp_path / "assets.db")
     try:
-        repositories.projects.create(__import__("app.domain.projects", fromlist=["Project"]).Project(id="project-1", name="Test"))
+        repositories.projects.create(Project(id="project-1", name="Test"))
         assets = SQLiteAssetRepository(repositories.store)
         first = assets.create(make_asset())
         second = assets.create(make_asset())
