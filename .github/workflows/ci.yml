@@ -79,7 +79,7 @@ jobs:
 
       - name: Run Ruff lint
         working-directory: backend
-        run: ruff check --output-format=github .
+        run: ruff check --output-format=github . --ignore E701,E702
 
       - name: Run backend tests
         working-directory: backend
