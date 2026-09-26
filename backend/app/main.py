@@ -65,12 +65,6 @@ def _api_key() -> str:
     return os.getenv("AICF_API_KEY", "").strip()
 
 
-def _auth_test_mode() -> bool:
-    enabled = os.getenv("AICF_TEST_MODE", "false").strip().lower() in {"1", "true", "yes", "on"}
-    environment = os.getenv("AICF_ENV", "production").strip().lower()
-    return enabled and environment == "test"
-
-
 PUBLIC_PATHS = {"/api/v1/health", "/api/v1/ready", "/api/v1/readiness"}
 
 
@@ -151,7 +145,7 @@ async def request_id_and_auth_middleware(request: Request, call_next):
                 headers={"X-Request-Id": request_id},
             )
 
-    if request.url.path not in PUBLIC_PATHS and not _auth_test_mode():
+    if request.url.path not in PUBLIC_PATHS:
         expected = _api_key()
         if not expected:
             return JSONResponse(
