@@ -37,3 +37,7 @@ def validate_gemini_configuration() -> None:
 
 def validate_anthropic_configuration() -> None:
     _validate_provider_models("ANTHROPIC_API_KEY", ("AICF_ANTHROPIC_TEXT_MODEL",))
+
+
+def validate_deepseek_configuration() -> None:
+    _validate_provider_models("DEEPSEEK_API_KEY", ("AICF_DEEPSEEK_TEXT_MODEL",))
