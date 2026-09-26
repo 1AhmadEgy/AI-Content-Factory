@@ -12,6 +12,8 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 AICF_TEXT_MODEL=gpt-5.6-luna
 AICF_IMAGE_MODEL=gpt-image-2
 AICF_TTS_MODEL=gpt-4o-mini-tts
+RUNWAYML_API_SECRET=...
+AICF_RUNWAY_VIDEO_MODEL=gen4.5
 AICF_FFMPEG_BIN=ffmpeg
 AICF_FFPROBE_BIN=ffprobe
 ```
@@ -23,6 +25,7 @@ Never commit the API key.
 - Story/script/scene/shot planning uses the configured OpenAI text model.
 - Image jobs use the configured OpenAI image model and persist the returned image bytes as a real asset.
 - TTS jobs use the configured OpenAI speech model and persist the returned audio bytes.
+- Video jobs can use Runway Dev (`gen4.5`) when `RUNWAYML_API_SECRET` is configured; the adapter submits an async task, polls it, downloads the ephemeral result URL, and persists the video as a local asset.
 - Provider errors fail the job with a structured error; the system does not silently fabricate a result.
 - If no provider key is configured, the production registry is empty and generation fails explicitly with `AI_PROVIDER_UNAVAILABLE`.
 
@@ -38,7 +41,7 @@ The Android client no longer creates a fake demo project on first launch and no 
 
 ## 5. Provider model selection
 
-Override model IDs with environment variables rather than editing source code. The backend will only route models when `OPENAI_API_KEY` is present.
+Override model IDs with environment variables rather than editing source code. The backend routes each provider only when its own credential is present. Runway video routing requires `RUNWAYML_API_SECRET`.
 
 ## 6. Local development without provider credentials
 
