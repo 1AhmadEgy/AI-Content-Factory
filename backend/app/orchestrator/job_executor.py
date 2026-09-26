@@ -5,7 +5,9 @@ import os
 import threading
 import time
 from dataclasses import dataclass
-from typing import Callable\n\nfrom ..domain.assets import Asset
+from typing import Callable
+
+from ..domain.assets import Asset
 
 from ..domain.job_events import JobEvent
 from ..domain.jobs import GenerationJob, JobOutput, JobStatus
