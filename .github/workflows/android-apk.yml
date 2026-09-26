@@ -85,7 +85,7 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          printf 'AICF_API_BASE_URL=%s\nAICF_API_KEY=%s\n' "$AICF_API_BASE_URL" "$AICF_API_KEY" > .env
+          printf 'AICF_API_BASE_URL=%s\nAICF_API_KEY=%s\n' "${AICF_API_BASE_URL:-__NOT_CONFIGURED__}" "${AICF_API_KEY:-__NOT_CONFIGURED__}" > .env
 
       - name: Run Android lint
         run: gradle lint --no-daemon --stacktrace
