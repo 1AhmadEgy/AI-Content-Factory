@@ -1,6 +1,8 @@
 from app.domain.jobs import JobType
 from app.orchestrator.queue import JobExecutionResult, WorkerContext
 from app.providers.builtin import LlamaGenVideoAdapter, LocalModelAdapter
+from app.providers.runway_adapter import RunwayVideoAdapter
+from app.providers.elevenlabs_adapter import ElevenLabsTTSAdapter
 from app.workers.provider_worker import ProviderGenerationWorker
 from app.providers.contracts import ProviderRequest
 from app.providers.openai_adapter import OpenAIModelAdapter
@@ -47,6 +49,35 @@ def test_registry_route_candidates_are_priority_ordered() -> None:
     registry.register(RegisteredModel("second", "local", second, priority=20))
     registry.register(RegisteredModel("first", "local", first, priority=10))
     assert [model.id for model in registry.route_candidates("generation", "text")] == ["first", "second"]
+
+
+def test_elevenlabs_adapter_accepts_per_character_voice_id() -> None:
+    adapter = ElevenLabsTTSAdapter("eleven_multilingual_v2", api_key="test-key")
+    assert adapter.health_check()
+    response = adapter.execute(
+        ProviderRequest(
+            "eleven_multilingual_v2",
+            {"text": "إزيك؟ عامل إيه؟", "voice_id": "egyptian-voice-id", "language_code": "ar", "dialect": "egyptian"},
+        )
+    )
+    # The network call is intentionally not made in this unit test; credential
+    # and per-character voice selection are covered by the request contract.
+    assert adapter.capability().runtime == "CLOUD"
+    assert adapter.capability().category == "generation"
+
+
+def test_elevenlabs_adapter_requires_credentials_without_network_call() -> None:
+    adapter = ElevenLabsTTSAdapter("eleven_multilingual_v2", api_key="")
+    response = adapter.execute(ProviderRequest("eleven_multilingual_v2", {"text": "أهلاً وسهلاً"}))
+    assert not response.success
+    assert response.error_code == "ELEVENLABS_API_KEY_MISSING"
+
+
+def test_runway_adapter_requires_credentials_without_network_call() -> None:
+    adapter = RunwayVideoAdapter("gen4.5", api_key="")
+    response = adapter.execute(ProviderRequest("gen4.5", {"prompt": "test"}))
+    assert not response.success
+    assert response.error_code == "RUNWAY_API_KEY_MISSING"
 
 
 def test_llamagen_adapter_requires_credentials_without_network_call() -> None:

@@ -211,17 +211,19 @@ def build_router(runtime: OrchestratorRuntime) -> APIRouter:
         project_id = row[0]
         bible = runtime.context_snapshot(project_id)
         created = []
-        model = os.getenv("AICF_TTS_MODEL", "gpt-4o-mini-tts")
+        model = os.getenv("AICF_ELEVENLABS_TTS_MODEL", "eleven_multilingual_v2")
+        provider = "elevenlabs" if os.getenv("ELEVENLABS_API_KEY", "").strip() else "auto"
         for link in links.list_characters(shot_id):
             if not link.is_speaking or not link.dialogue:
                 continue
             character = runtime.characters.get(link.character_id)
             if character is None:
                 continue
-            voice = character.voice.get("ttsVoiceId") or character.voice.get("voice") or "alloy"
+            voice = character.voice.get("ttsVoiceId") or character.voice.get("voiceId") or ""
+            voice_parameters = {"voice_id": voice} if voice else {}
             job = jobs.create(project_id=project_id, job_type=JobType.TTS, target_type="shot_character", target_id=link.id,
-                              priority=60, provider="openai", model=model,
-                              input=JobInput(parameters={"text": link.dialogue, "voice": voice, "response_format": "mp3", "shotId": shot_id, "characterId": character.id,
+                              priority=60, provider=provider, model=model,
+                              input=JobInput(parameters={"text": link.dialogue, **voice_parameters, "language_code": "ar", "dialect": "egyptian", "shotId": shot_id, "characterId": character.id,
                                                          "contextVersion": bible["contextVersion"], "seriesBible": bible}))
             runtime.queue.enqueue(job)
             created.append({"jobId": job.id, "characterId": character.id, "dialogue": link.dialogue, "contextVersion": bible["contextVersion"]})
