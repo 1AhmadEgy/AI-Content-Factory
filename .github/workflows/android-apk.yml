@@ -80,6 +80,8 @@ jobs:
 
       - name: Prepare Android build configuration
         env:
+          AICF_API_BASE_URL: ${{ secrets.AICF_API_BASE_URL }}
+          AICF_API_KEY: ${{ secrets.AICF_API_KEY }}
         run: |
           set -euo pipefail
           umask 077
@@ -96,8 +98,6 @@ jobs:
           KEYSTORE_PATH: ${{ github.workspace }}/ci-release.jks
           STORE_PASSWORD: android
           KEY_PASSWORD: android
-          AICF_API_BASE_URL: ${{ secrets.AICF_API_BASE_URL }}
-          AICF_API_KEY: ${{ secrets.AICF_API_KEY }}
         run: gradle :app:assembleRelease --no-daemon --stacktrace
 
       - name: Verify APK
