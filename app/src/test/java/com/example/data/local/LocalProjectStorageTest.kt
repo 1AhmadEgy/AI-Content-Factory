@@ -8,7 +8,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 import java.util.UUID
-import java.util.UUID
 
 class LocalProjectStorageTest {
     @Test
@@ -43,6 +42,7 @@ class LocalProjectStorageTest {
             storage.importBytes("../escape", byteArrayOf(1), AssetType.OTHER, "application/octet-stream", "x.bin")
         }
     }
+
     private fun testRoot(context: android.content.Context): File =
         File(context.cacheDir, "aicf-local-storage-" + UUID.randomUUID()).apply {
             parentFile?.mkdirs()
