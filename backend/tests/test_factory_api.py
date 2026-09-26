@@ -1,6 +1,7 @@
 import os
 
 os.environ["AICF_DATABASE_PATH"] = ":memory:"
+os.environ.setdefault("AICF_API_KEY", "test-aicf-key")
 os.environ.pop("OPENAI_API_KEY", None)
 
 from fastapi.testclient import TestClient
@@ -9,7 +10,7 @@ from app.main import app
 
 
 def test_factory_plan_fails_closed_without_real_provider() -> None:
-    client = TestClient(app)
+    client = TestClient(app, headers={"Authorization": "Bearer test-aicf-key"})
     response = client.post(
         "/api/v1/factory/plan",
         json={
