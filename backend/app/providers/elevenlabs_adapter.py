@@ -40,7 +40,7 @@ class ElevenLabsTTSAdapter(ModelAdapter):
         )
 
     def health_check(self) -> bool:
-        return bool(self.api_key and self.default_voice_id)
+        return bool(self.api_key)
 
     def execute(self, request: ProviderRequest) -> ProviderResponse:
         if not self.api_key:
