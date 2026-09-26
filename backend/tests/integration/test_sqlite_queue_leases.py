@@ -32,12 +32,12 @@ def _repositories(path: str | Path = ":memory:") -> SQLiteRepositories:
     return repositories
 
 
-def _expire_lease(repositories: SQLiteRepositories, job_id: str = "job-1") -> None:
-    expired = utc_now() - timedelta(seconds=1)
+def _set_lease_expiry(repositories: SQLiteRepositories, delta: timedelta, job_id: str = "job-1") -> None:
+    expires_at = utc_now() + delta
     with repositories.store._lock, repositories.store.connection:
         repositories.store.connection.execute(
             "UPDATE job_leases SET expires_at=? WHERE job_id=?",
-            (expired.isoformat(), job_id),
+            (expires_at.isoformat(), job_id),
         )
 
 
@@ -184,7 +184,7 @@ def test_current_heartbeat_prevents_reclaim() -> None:
         assert claimed is not None
         _, lease = claimed
 
-        _expire_lease(repositories)
+        _set_lease_expiry(repositories, timedelta(seconds=1))
         queue.heartbeat(lease)
 
         assert queue.release_expired() == 0
