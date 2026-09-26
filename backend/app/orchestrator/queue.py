@@ -10,7 +10,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 import math
-from typing import Any, Callable\n\nfrom ..domain.assets import Asset
+from typing import Any, Callable
+
+from ..domain.assets import Asset
 
 from ..domain.jobs import GenerationJob, JobStatus
 
