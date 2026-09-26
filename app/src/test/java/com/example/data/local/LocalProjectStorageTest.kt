@@ -12,7 +12,7 @@ class LocalProjectStorageTest {
     @Test
     fun importsBytes_intoProjectPrivateStorage_andVerifiesChecksum() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-        val root = File(context.cacheDir, "local-project-storage-${System.nanoTime()}")
+        val root = testRoot(context)
         val storage = LocalProjectStorage(context, root)
         val asset = storage.importBytes(
             projectId = "project-test",
@@ -36,9 +36,14 @@ class LocalProjectStorageTest {
     @Test
     fun rejectsPathTraversalProjectId() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-        val storage = LocalProjectStorage(context, File(context.cacheDir, "local-project-storage-${System.nanoTime()}"))
+        val storage = LocalProjectStorage(context, testRoot(context))
         assertThrows(IllegalArgumentException::class.java) {
             storage.importBytes("../escape", byteArrayOf(1), AssetType.OTHER, "application/octet-stream", "x.bin")
         }
     }
+    private fun testRoot(context: android.content.Context): File =
+        File.createTempFile("aicf-local-storage-", "", context.cacheDir).apply {
+            check(delete()) { "Unable to prepare temporary test root" }
+            check(mkdirs()) { "Unable to create temporary test root" }
+        }
 }
