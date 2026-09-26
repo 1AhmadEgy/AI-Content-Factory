@@ -87,6 +87,12 @@ jobs:
           PYTHONPATH: .
         run: pytest tests/ -v
 
+      - name: Verify generated asset layout
+        run: |
+          set -euo pipefail
+          test -d assets/branding/afham_wadhak
+          test -n "$(find assets/branding/afham_wadhak -type f -print -quit)"
+
       - name: Upload generated assets
         uses: actions/upload-artifact@v4
         with:
