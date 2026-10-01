@@ -6,7 +6,6 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
-import java.nio.file.Files
 
 class LocalProjectStorageTest {
     @Test
@@ -98,5 +97,8 @@ class LocalProjectStorageTest {
         }
     }
 
-    private fun testRoot(): File = Files.createTempDirectory("aicf-local-storage-").toFile()
+    private fun testRoot(): File =
+        File(System.getProperty("java.io.tmpdir"), "aicf-local-storage-" + System.nanoTime()).apply {
+            check(mkdirs()) { "Unable to create temporary test directory" }
+        }
 }
