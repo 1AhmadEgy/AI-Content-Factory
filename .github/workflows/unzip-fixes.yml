@@ -10,14 +10,19 @@ permissions:
   contents: write
   actions: write
 
+concurrency:
+  group: unzip-fixes-main
+  cancel-in-progress: true
+
 jobs:
   unzip:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout main
+      - name: Checkout exact triggering revision
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.sha }}
 
       - name: Find uploaded ZIP
         id: zip
@@ -30,12 +35,44 @@ jobs:
             echo 'No ZIP found in uploads/.'
             exit 0
           fi
+
+          # Never guess when multiple snapshots are present. Select explicitly
+          # via workflow_dispatch input in a future revision rather than merging
+          # two unrelated project states.
           if [ ${#zips[@]} -gt 1 ]; then
-            echo 'More than one ZIP found; refusing to guess.' >&2
-            printf '%s\n' "${zips[@]}" >&2
+            echo 'More than one ZIP found; refusing to guess:' >&2
+            printf ' - %s\n' "${zips[@]}" >&2
             exit 1
           fi
-          echo "path=${zips[0]}" >> "$GITHUB_OUTPUT"
+          printf 'path=%s\n' "${zips[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate archive paths
+        if: steps.zip.outputs.path != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP_FILE="${{ steps.zip.outputs.path }}"
+          python3 - "$ZIP_FILE" <<'PY'
+          import sys
+          import zipfile
+          from pathlib import PurePosixPath
+
+          archive = sys.argv[1]
+          with zipfile.ZipFile(archive) as zf:
+              for info in zf.infolist():
+                  name = info.filename.replace("\\", "/")
+                  p = PurePosixPath(name)
+                  if p.is_absolute() or ".." in p.parts:
+                      raise SystemExit(f"Unsafe ZIP path: {info.filename!r}")
+                  if name.startswith("./") or name == ".":
+                      raise SystemExit(f"Unsafe ZIP path: {info.filename!r}")
+                  # Reject symlinks and other non-regular entries. The project
+                  # snapshot must contain ordinary files/directories only.
+                  mode = (info.external_attr >> 16) & 0o170000
+                  if mode == 0o120000:
+                      raise SystemExit(f"Symlink entries are not allowed: {info.filename!r}")
+          print("ZIP path validation passed")
+          PY
 
       - name: Validate and extract ZIP
         if: steps.zip.outputs.path != ''
@@ -47,6 +84,7 @@ jobs:
           trap 'rm -rf "$TMP"' EXIT
 
           unzip -q -t "$ZIP_FILE"
+          mkdir -p "$TMP/raw"
           unzip -q "$ZIP_FILE" -d "$TMP/raw"
 
           ROOT="$TMP/raw"
@@ -59,8 +97,8 @@ jobs:
           find "$ROOT" -type f \( -name '*.pyc' -o -name 'debug.keystore' \) -delete
           rm -rf "$ROOT/.git"
 
-          # Merge the supplied project snapshot without deleting repository-only
-          # automation or metadata. Preserve uploads/ so the ZIP can be removed below.
+          # Snapshot files must not replace repository-only automation or the
+          # uploads staging area. Copy only the validated project contents.
           rsync -a --exclude 'uploads/' "$ROOT/" ./
           rm -f "$ZIP_FILE"
 
@@ -84,6 +122,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
-        run: |
-          set -euo pipefail
-          gh workflow run android-apk.yml --ref main
+        run: gh workflow run android-apk.yml --ref main
